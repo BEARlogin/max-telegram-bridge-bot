@@ -31,12 +31,20 @@ chmod +x max-telegram-bridge-bot
 docker run -e TG_TOKEN=your_token -e MAX_TOKEN=your_token ghcr.io/bearlogin/max-telegram-bridge-bot:latest
 ```
 
-Для сохранения БД между перезапусками:
+### Docker Compose (с PostgreSQL)
 
 ```bash
-docker run -e TG_TOKEN=your_token -e MAX_TOKEN=your_token \
-  -v ./data:/data -e DB_PATH=/data/bridge.db \
-  ghcr.io/bearlogin/max-telegram-bridge-bot:latest
+cp .env.example .env
+# Заполните TG_TOKEN и MAX_TOKEN в .env
+docker compose up -d
+```
+
+PostgreSQL настраивается через `.env`:
+
+```env
+POSTGRES_USER=bridge
+POSTGRES_PASSWORD=bridge
+POSTGRES_DB=bridge
 ```
 
 ### Из исходников
