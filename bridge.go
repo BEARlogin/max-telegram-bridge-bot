@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -12,9 +14,12 @@ import (
 
 // Config — настройки bridge, читаемые из env.
 type Config struct {
-	MaxToken  string // токен MAX API (нужен для direct-send/upload)
-	TgBotURL  string // ссылка на TG-бота для /help
-	MaxBotURL string // ссылка на MAX-бота для /help
+	MaxToken     string // токен MAX API (нужен для direct-send/upload)
+	TgBotURL     string // ссылка на TG-бота для /help
+	MaxBotURL    string // ссылка на MAX-бота для /help
+	WebhookURL    string // URL для TG webhook (если пусто — long polling)
+	MaxWebhookURL string // URL для MAX webhook (если пусто — long polling)
+	WebhookPort   string // порт для webhook сервера
 }
 
 // Bridge — основная структура, объединяющая зависимости.
@@ -49,6 +54,16 @@ func (b *Bridge) Run(ctx context.Context) {
 			}
 		}
 	}()
+
+	if b.cfg.WebhookURL != "" || b.cfg.MaxWebhookURL != "" {
+		go func() {
+			addr := ":" + b.cfg.WebhookPort
+			slog.Info("Webhook server starting", "addr", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				slog.Error("Webhook server failed", "err", err)
+			}
+		}()
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)

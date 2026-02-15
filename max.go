@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
@@ -13,7 +14,21 @@ import (
 )
 
 func (b *Bridge) listenMax(ctx context.Context) {
-	updates := b.maxApi.GetUpdates(ctx)
+	var updates <-chan maxschemes.UpdateInterface
+
+	if b.cfg.MaxWebhookURL != "" {
+		ch := make(chan maxschemes.UpdateInterface, 100)
+		http.HandleFunc("/max-webhook", b.maxApi.GetHandler(ch))
+		if _, err := b.maxApi.Subscriptions.Subscribe(ctx, b.cfg.MaxWebhookURL, nil, ""); err != nil {
+			slog.Error("MAX webhook subscribe failed", "err", err)
+			return
+		}
+		updates = ch
+		slog.Info("MAX webhook mode", "url", b.cfg.MaxWebhookURL)
+	} else {
+		updates = b.maxApi.GetUpdates(ctx)
+		slog.Info("MAX polling mode")
+	}
 
 	for {
 		select {

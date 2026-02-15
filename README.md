@@ -95,3 +95,6 @@ export MAX_TOKEN=your_token
 | `DATABASE_URL` | DSN для PostgreSQL (если задана — SQLite игнорируется) | — |
 | `TG_BOT_URL` | Ссылка на TG-бота (показывается в `/help`) | `https://t.me/MaxTelegramBridgeBot` |
 | `MAX_BOT_URL` | Ссылка на MAX-бота (показывается в `/help`) | `https://max.ru/id710708943262_bot` |
+| `TG_WEBHOOK_URL` | Внешний URL для Telegram webhook (если не задан — long polling) | — |
+| `MAX_WEBHOOK_URL` | Внешний URL для MAX webhook (если не задан — long polling) | — |
+| `WEBHOOK_PORT` | Порт для webhook сервера | `8443` |
