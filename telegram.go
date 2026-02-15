@@ -383,17 +383,24 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
 		}
 	} else {
-		slog.Info("TG→MAX sending")
-		var format string
+		// Текст — через SDK (SetFormat работает)
+		m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
 		if hasFormatting {
-			format = "markdown"
+			m.SetFormat("markdown")
 		}
-		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, "", "", replyTo, format)
+		if replyTo != "" {
+			m.SetReply(mdCaption, replyTo)
+			if hasFormatting {
+				m.SetFormat("markdown")
+			}
+		}
+		slog.Info("TG→MAX sending", "format", hasFormatting)
+		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {
-			slog.Info("TG→MAX sent", "mid", mid)
-			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
+			slog.Info("TG→MAX sent", "mid", result.Body.Mid)
+			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
 		}
 	}
 }
