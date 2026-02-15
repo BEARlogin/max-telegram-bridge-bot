@@ -353,6 +353,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
+			if len(msgUpd.Message.Body.Markups) > 0 {
+				slog.Info("MAX→TG markups", "text", msgUpd.Message.Body.Text, "markups", msgUpd.Message.Body.Markups)
+			}
 			caption := formatMaxCrosspostCaption(msgUpd)
 			b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
 		}
