@@ -136,6 +136,12 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if err == nil {
 					adminCheckOk = true
 					isAdmin = isMaxUserAdmin(admins.Members, msgUpd.Message.Sender.UserId)
+					if !isAdmin {
+						slog.Warn("MAX user not in admin list", "userId", msgUpd.Message.Sender.UserId, "adminCount", len(admins.Members), "chat", chatID)
+						for i, m := range admins.Members {
+							slog.Warn("MAX admin member", "i", i, "userId", m.UserId, "name", m.Name, "isOwner", m.IsOwner, "isAdmin", m.IsAdmin)
+						}
+					}
 				} else {
 					slog.Warn("MAX GetChatAdmins failed, skipping admin check", "chat", chatID, "err", err)
 				}
