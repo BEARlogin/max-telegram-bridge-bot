@@ -361,21 +361,19 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 	}
 
-	// Конвертируем TG entities в markdown для MAX
+	// Конвертируем TG entities в MAX markups
 	entities := msg.Entities
 	if entities == nil {
 		entities = msg.CaptionEntities
 	}
-	mdCaption := tgEntitiesToMarkdown(caption, entities)
-	hasFormatting := mdCaption != caption
+	markups := tgEntitiesToMaxMarkups(entities)
+	if len(markups) > 0 {
+		slog.Debug("TG→MAX markups", "count", len(markups), "markups", markups)
+	}
 
 	if mediaAttType != "" {
 		slog.Info("TG→MAX sending direct", "type", mediaAttType)
-		var format string
-		if hasFormatting {
-			format = "markdown"
-		}
-		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
+		mid, err := b.sendMaxDirectWithMarkups(ctx, maxChatID, caption, mediaAttType, mediaToken, replyTo, markups)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {
@@ -383,24 +381,13 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
 		}
 	} else {
-		// Текст — через SDK (SetFormat работает)
-		m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
-		if hasFormatting {
-			m.SetFormat("markdown")
-		}
-		if replyTo != "" {
-			m.SetReply(mdCaption, replyTo)
-			if hasFormatting {
-				m.SetFormat("markdown")
-			}
-		}
-		slog.Info("TG→MAX sending", "format", hasFormatting)
-		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
+		slog.Info("TG→MAX sending", "markups", len(markups))
+		mid, err := b.sendMaxDirectWithMarkups(ctx, maxChatID, caption, "", "", replyTo, markups)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {
-			slog.Info("TG→MAX sent", "mid", result.Body.Mid)
-			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
+			slog.Info("TG→MAX sent", "mid", mid)
+			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
 		}
 	}
 }

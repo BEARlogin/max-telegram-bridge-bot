@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"html"
 	"sort"
 	"strings"
@@ -11,77 +10,46 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// --- TG Entities → Markdown (для MAX) ---
+// --- TG Entities → MAX Markups ---
 
-// tgEntitiesToMarkdown конвертирует TG text + entities в markdown-текст для MAX.
-// TG entities используют UTF-16 offsets.
-func tgEntitiesToMarkdown(text string, entities []tgbotapi.MessageEntity) string {
+// tgEntitiesToMaxMarkups конвертирует TG entities в MAX markups.
+// TG entities используют UTF-16 offsets — MAX тоже.
+func tgEntitiesToMaxMarkups(entities []tgbotapi.MessageEntity) []maxschemes.MarkUp {
 	if len(entities) == 0 {
-		return text
+		return nil
 	}
-
-	runes := []rune(text)
-	utf16units := utf16.Encode(runes)
-
-	type tag struct {
-		pos   int
-		open  bool
-		order int // 0=open, 1=close; close before open at same pos
-		tag   string
-	}
-
-	var tags []tag
+	var markups []maxschemes.MarkUp
 	for _, e := range entities {
-		var openTag, closeTag string
+		var mt maxschemes.MarkupType
+		var url string
 		switch e.Type {
 		case "bold":
-			openTag, closeTag = "**", "**"
+			mt = maxschemes.MarkupStrong
 		case "italic":
-			openTag, closeTag = "_", "_"
-		case "code":
-			openTag, closeTag = "`", "`"
-		case "pre":
-			openTag, closeTag = "```\n", "\n```"
+			mt = maxschemes.MarkupEmphasized
+		case "code", "pre":
+			mt = maxschemes.MarkupMonospaced
 		case "strikethrough":
-			openTag, closeTag = "~~", "~~"
-		case "text_link":
-			openTag = "["
-			closeTag = fmt.Sprintf("](%s)", e.URL)
+			mt = maxschemes.MarkupStrikethrough
 		case "underline":
-			// MAX markdown не поддерживает underline, пропускаем
-			continue
+			mt = maxschemes.MarkupUnderline
+		case "text_link":
+			mt = maxschemes.MarkupLink
+			url = e.URL
 		default:
 			continue
 		}
-		tags = append(tags, tag{pos: e.Offset, open: true, order: 0, tag: openTag})
-		tags = append(tags, tag{pos: e.Offset + e.Length, open: false, order: 1, tag: closeTag})
+		m := maxschemes.MarkUp{
+			From:   e.Offset,
+			Length: e.Length,
+			Type:   mt,
+		}
+		if url != "" {
+			m.URL = url
+		}
+		markups = append(markups, m)
 	}
-
-	sort.Slice(tags, func(i, j int) bool {
-		if tags[i].pos != tags[j].pos {
-			return tags[i].pos < tags[j].pos
-		}
-		return tags[i].order > tags[j].order
-	})
-
-	var sb strings.Builder
-	tagIdx := 0
-	for i := 0; i <= len(utf16units); i++ {
-		for tagIdx < len(tags) && tags[tagIdx].pos == i {
-			sb.WriteString(tags[tagIdx].tag)
-			tagIdx++
-		}
-		if i < len(utf16units) {
-			if utf16.IsSurrogate(rune(utf16units[i])) && i+1 < len(utf16units) {
-				r := utf16.DecodeRune(rune(utf16units[i]), rune(utf16units[i+1]))
-				sb.WriteRune(r)
-				i++
-			} else {
-				sb.WriteRune(rune(utf16units[i]))
-			}
-		}
-	}
-	return sb.String()
+	return markups
 }
 
 // --- MAX Markups → TG HTML ---

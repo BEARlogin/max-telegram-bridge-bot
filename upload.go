@@ -113,25 +113,25 @@ func (b *Bridge) uploadTgMediaToMax(ctx context.Context, fileID string, uploadTy
 
 // sendMaxDirect — отправка сообщения в MAX напрямую (обход SDK)
 func (b *Bridge) sendMaxDirect(ctx context.Context, chatID int64, text string, attType string, token string, replyTo string) (string, error) {
-	return b.sendMaxDirectFormatted(ctx, chatID, text, attType, token, replyTo, "")
+	return b.sendMaxDirectWithMarkups(ctx, chatID, text, attType, token, replyTo, nil)
 }
 
-func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text string, attType string, token string, replyTo string, format string) (string, error) {
+func (b *Bridge) sendMaxDirectWithMarkups(ctx context.Context, chatID int64, text string, attType string, token string, replyTo string, markups []maxschemes.MarkUp) (string, error) {
 	type attachment struct {
 		Type    string            `json:"type"`
 		Payload map[string]string `json:"payload"`
 	}
 	type msgBody struct {
-		Text        string       `json:"text,omitempty"`
-		Attachments []attachment `json:"attachments,omitempty"`
-		Format      string       `json:"format,omitempty"`
+		Text        string              `json:"text,omitempty"`
+		Attachments []attachment        `json:"attachments,omitempty"`
+		Markup      []maxschemes.MarkUp `json:"markup,omitempty"`
 		Link        *struct {
 			Type string `json:"type"`
 			Mid  string `json:"mid"`
 		} `json:"link,omitempty"`
 	}
 
-	body := msgBody{Text: text, Format: format}
+	body := msgBody{Text: text, Markup: markups}
 	if attType != "" && token != "" {
 		body.Attachments = []attachment{{
 			Type:    attType,
@@ -148,6 +148,10 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 	data, err := json.Marshal(body)
 	if err != nil {
 		return "", err
+	}
+
+	if len(markups) > 0 {
+		slog.Info("MAX API request body", "json", string(data))
 	}
 
 	url := fmt.Sprintf("https://platform-api.max.ru/messages?chat_id=%d&v=1.2.5", chatID)
@@ -178,6 +182,10 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+
+		if len(markups) > 0 {
+			slog.Info("MAX API response", "status", resp.StatusCode, "body", string(respBody))
+		}
 
 		if resp.StatusCode == 200 {
 			var result struct {
