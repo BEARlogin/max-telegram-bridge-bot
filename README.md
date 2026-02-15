@@ -11,6 +11,26 @@
 - Настраиваемый префикс `[TG]` / `[MAX]`
 - SQLite или PostgreSQL для хранения связок и маппинга сообщений
 
+## Установка
+
+### Из бинаря
+
+Скачайте бинарь со [страницы релизов](https://github.com/BEARlogin/max-telegram-bridge-bot/releases) и запустите:
+
+```bash
+chmod +x bearlogin-bridge
+./bearlogin-bridge
+```
+
+### Из исходников
+
+```bash
+git clone https://github.com/BEARlogin/max-telegram-bridge-bot.git
+cd max-telegram-bridge-bot
+go build -o bearlogin-bridge .
+./bearlogin-bridge
+```
+
 ## Быстрый старт
 
 ### 1. Создайте ботов
@@ -28,8 +48,7 @@ cp .env.example .env
 ### 3. Запустите
 
 ```bash
-go build -o bridge .
-./bridge
+./bearlogin-bridge
 ```
 
 ### 4. Свяжите чаты
