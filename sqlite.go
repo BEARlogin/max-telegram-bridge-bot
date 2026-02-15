@@ -147,42 +147,10 @@ func (r *sqliteRepo) Unpair(platform string, chatID int64) bool {
 	return n > 0
 }
 
-func (r *sqliteRepo) RegisterCrosspost(key, platform string, chatID int64) (bool, string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if key == "" {
-		var existing string
-		err := r.db.QueryRow("SELECT key FROM pending WHERE platform = ? AND chat_id = ? AND command = 'crosspost'", platform, chatID).Scan(&existing)
-		if err == nil {
-			return false, existing, nil
-		}
-		generated := genKey()
-		_, err = r.db.Exec("INSERT INTO pending (key, platform, chat_id, created_at, command) VALUES (?, ?, ?, ?, 'crosspost')", generated, platform, chatID, time.Now().Unix())
-		return false, generated, err
-	}
-
-	var peerPlatform string
-	var peerChatID int64
-	err := r.db.QueryRow("SELECT platform, chat_id FROM pending WHERE key = ? AND command = 'crosspost'", key).Scan(&peerPlatform, &peerChatID)
-	if err != nil {
-		return false, "", nil
-	}
-	if peerPlatform == platform {
-		return false, "", nil
-	}
-
-	r.db.Exec("DELETE FROM pending WHERE key = ?", key)
-
-	var tgID, maxID int64
-	if platform == "tg" {
-		tgID, maxID = chatID, peerChatID
-	} else {
-		tgID, maxID = peerChatID, chatID
-	}
-
-	_, err = r.db.Exec("INSERT OR REPLACE INTO crossposts (tg_chat_id, max_chat_id, created_at) VALUES (?, ?, ?)", tgID, maxID, time.Now().Unix())
-	return true, "", err
+func (r *sqliteRepo) PairCrosspost(tgChatID, maxChatID int64) error {
+	_, err := r.db.Exec("INSERT OR REPLACE INTO crossposts (tg_chat_id, max_chat_id, created_at) VALUES (?, ?, ?)",
+		tgChatID, maxChatID, time.Now().Unix())
+	return err
 }
 
 func (r *sqliteRepo) GetCrosspostMaxChat(tgChatID int64) (int64, string, bool) {

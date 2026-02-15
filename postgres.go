@@ -156,44 +156,11 @@ func (r *pgRepo) Unpair(platform string, chatID int64) bool {
 	return n > 0
 }
 
-func (r *pgRepo) RegisterCrosspost(key, platform string, chatID int64) (bool, string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if key == "" {
-		var existing string
-		err := r.db.QueryRow("SELECT key FROM pending WHERE platform = $1 AND chat_id = $2 AND command = 'crosspost'", platform, chatID).Scan(&existing)
-		if err == nil {
-			return false, existing, nil
-		}
-		generated := genKey()
-		_, err = r.db.Exec("INSERT INTO pending (key, platform, chat_id, created_at, command) VALUES ($1, $2, $3, $4, 'crosspost')", generated, platform, chatID, time.Now().Unix())
-		return false, generated, err
-	}
-
-	var peerPlatform string
-	var peerChatID int64
-	err := r.db.QueryRow("SELECT platform, chat_id FROM pending WHERE key = $1 AND command = 'crosspost'", key).Scan(&peerPlatform, &peerChatID)
-	if err != nil {
-		return false, "", nil
-	}
-	if peerPlatform == platform {
-		return false, "", nil
-	}
-
-	r.db.Exec("DELETE FROM pending WHERE key = $1", key)
-
-	var tgID, maxID int64
-	if platform == "tg" {
-		tgID, maxID = chatID, peerChatID
-	} else {
-		tgID, maxID = peerChatID, chatID
-	}
-
-	_, err = r.db.Exec(
+func (r *pgRepo) PairCrosspost(tgChatID, maxChatID int64) error {
+	_, err := r.db.Exec(
 		"INSERT INTO crossposts (tg_chat_id, max_chat_id, created_at) VALUES ($1, $2, $3) ON CONFLICT (tg_chat_id, max_chat_id) DO NOTHING",
-		tgID, maxID, time.Now().Unix())
-	return true, "", err
+		tgChatID, maxChatID, time.Now().Unix())
+	return err
 }
 
 func (r *pgRepo) GetCrosspostMaxChat(tgChatID int64) (int64, string, bool) {

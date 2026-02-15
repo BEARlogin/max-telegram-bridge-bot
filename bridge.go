@@ -31,6 +31,9 @@ type Bridge struct {
 	maxApi     *maxbot.Api
 	httpClient *http.Client
 	whSecret   string // random path segment for webhook URLs
+
+	cpWaitMu sync.Mutex
+	cpWait   map[int64]int64 // MAX userId → TG channel ID (ожидание пересылки)
 }
 
 // NewBridge создаёт экземпляр Bridge.
@@ -48,6 +51,7 @@ func NewBridge(cfg Config, repo Repository, tgBot *tgbotapi.BotAPI, maxApi *maxb
 			Timeout: 60 * time.Second,
 		},
 		whSecret: secret,
+		cpWait:   make(map[int64]int64),
 	}
 }
 
@@ -71,11 +75,9 @@ func (b *Bridge) registerCommands() {
 		slog.Error("TG setMyCommands (default) failed", "err", err)
 	}
 
-	// Команды для каналов
+	// Команды для админов (группы + каналы)
 	channelCmds := tgbotapi.NewSetMyCommandsWithScope(
 		tgbotapi.NewBotCommandScopeAllChatAdministrators(),
-		tgbotapi.BotCommand{Command: "crosspost", Description: "Связать канал для кросспостинга"},
-		tgbotapi.BotCommand{Command: "uncrosspost", Description: "Удалить кросспостинг"},
 		tgbotapi.BotCommand{Command: "bridge", Description: "Связать чат с MAX-чатом"},
 		tgbotapi.BotCommand{Command: "unbridge", Description: "Удалить связку чатов"},
 		tgbotapi.BotCommand{Command: "help", Description: "Инструкция"},

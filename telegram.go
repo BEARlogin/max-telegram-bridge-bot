@@ -48,7 +48,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				return
 			}
 
-			// Обработка channel posts (crosspost)
+			// Обработка channel posts (crosspost forwarding only)
 			if update.EditedChannelPost != nil {
 				b.handleTgEditedChannelPost(ctx, update.EditedChannelPost)
 				continue
@@ -102,19 +102,36 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						"/bridge <ключ> — связать этот чат с MAX-чатом по ключу\n"+
 						"/bridge prefix on/off — включить/выключить префикс [TG]/[MAX]\n"+
 						"/unbridge — удалить связку\n\n"+
-						"Команды (каналы):\n"+
-						"/crosspost — связать каналы для кросспостинга\n"+
-						"/crosspost <ключ> — связать по ключу\n"+
-						"/crosspost direction tg>max|max>tg|both — направление\n"+
-						"/uncrosspost — удалить кросспостинг\n\n"+
-						"Как связать чаты:\n"+
+						"Кросспостинг каналов:\n"+
+						"1. Перешлите любой пост из TG-канала сюда в личку\n"+
+						"2. Бот покажет ID канала\n"+
+						"3. В личке MAX-бота: /crosspost <TG_ID>\n"+
+						"4. Перешлите пост из MAX-канала → готово!\n\n"+
+						"Как связать группы:\n"+
 						"1. Добавьте бота в оба чата\n"+
 						"   TG: "+b.cfg.TgBotURL+"\n"+
 						"   MAX: "+b.cfg.MaxBotURL+"\n"+
 						"2. В MAX сделайте бота админом группы\n"+
-						"3. В одном из чатов отправьте /bridge (или /crosspost для каналов)\n"+
-						"4. Бот выдаст ключ — отправьте его в другом чате\n"+
-						"5. Готово! Сообщения пересылаются."))
+						"3. В одном из чатов отправьте /bridge\n"+
+						"4. Бот выдаст ключ — отправьте /bridge <ключ> в другом чате\n"+
+						"5. Готово!"))
+				continue
+			}
+
+			// Пересланное сообщение из канала → показать ID (только в личке)
+			if msg.Chat.Type == "private" && msg.ForwardFromChat != nil && msg.ForwardFromChat.Type == "channel" {
+				channelID := msg.ForwardFromChat.ID
+				channelTitle := msg.ForwardFromChat.Title
+
+				// Проверяем, уже связан ли канал
+				if _, _, ok := b.repo.GetCrosspostMaxChat(channelID); ok {
+					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+						fmt.Sprintf("Канал «%s» уже связан.\n\nДля управления в MAX-боте:\n/crosspost direction tg>max|max>tg|both\n/uncrosspost", channelTitle)))
+					continue
+				}
+
+				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+					fmt.Sprintf("TG-канал «%s»\nID: %d\n\nВ личке MAX-бота напишите:\n/crosspost %d\n\nЗатем перешлите пост из MAX-канала.", channelTitle, channelID, channelID)))
 				continue
 			}
 
@@ -343,70 +360,11 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	}
 }
 
-// handleTgChannelPost обрабатывает посты из TG-каналов (crosspost).
+// handleTgChannelPost обрабатывает посты из TG-каналов (только пересылка crosspost).
 func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message) {
+	// Команды в канале игнорируем — настройка через личку с ботом
 	text := strings.TrimSpace(msg.Text)
-
-	if text == "/start" || text == "/help" {
-		b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-			"Кросспостинг каналов TG ↔ MAX.\n\n"+
-				"Команды:\n"+
-				"/crosspost — создать ключ для связки\n"+
-				"/crosspost <ключ> — связать по ключу\n"+
-				"/crosspost direction tg>max|max>tg|both — направление\n"+
-				"/uncrosspost — удалить кросспостинг\n\n"+
-				"Как связать:\n"+
-				"1. Добавьте бота в TG-канал и MAX-чат как админа\n"+
-				"2. В TG-канале отправьте /crosspost\n"+
-				"3. Бот выдаст ключ — отправьте /crosspost <ключ> в MAX-чате\n"+
-				"4. Готово!"))
-		return
-	}
-
-	// /crosspost direction <dir>
-	if strings.HasPrefix(text, "/crosspost direction ") {
-		dir := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost direction "))
-		if dir != "both" && dir != "tg>max" && dir != "max>tg" {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Направление: both, tg>max или max>tg"))
-			return
-		}
-		if b.repo.SetCrosspostDirection("tg", msg.Chat.ID, dir) {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("Направление кросспостинга: %s", dir)))
-		} else {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Канал не связан. Сначала выполните /crosspost."))
-		}
-		return
-	}
-
-	// /uncrosspost
-	if text == "/uncrosspost" {
-		if b.repo.UnpairCrosspost("tg", msg.Chat.ID) {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Кросспостинг удалён."))
-		} else {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Этот канал не связан."))
-		}
-		return
-	}
-
-	// /crosspost или /crosspost <key>
-	if text == "/crosspost" || strings.HasPrefix(text, "/crosspost ") {
-		key := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost"))
-		paired, generatedKey, err := b.repo.RegisterCrosspost(key, "tg", msg.Chat.ID)
-		if err != nil {
-			slog.Error("crosspost register failed", "err", err)
-			return
-		}
-
-		if paired {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Кросспостинг настроен! Посты пересылаются."))
-			slog.Info("crosspost paired", "platform", "tg", "chat", msg.Chat.ID, "key", key)
-		} else if generatedKey != "" {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-				fmt.Sprintf("Ключ для кросспостинга: %s\n\nОтправьте в MAX-чате:\n/crosspost %s", generatedKey, generatedKey)))
-			slog.Info("crosspost pending", "platform", "tg", "chat", msg.Chat.ID, "key", generatedKey)
-		} else {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Ключ не найден или чат той же платформы."))
-		}
+	if strings.HasPrefix(text, "/") {
 		return
 	}
 
