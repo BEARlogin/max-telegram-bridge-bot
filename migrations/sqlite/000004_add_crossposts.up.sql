@@ -2,7 +2,6 @@ CREATE TABLE IF NOT EXISTS crossposts (
     tg_chat_id  INTEGER NOT NULL,
     max_chat_id INTEGER NOT NULL,
     direction   TEXT NOT NULL DEFAULT 'both',
-    prefix      INTEGER NOT NULL DEFAULT 1,
     created_at  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (tg_chat_id, max_chat_id)
 );

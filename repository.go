@@ -26,8 +26,6 @@ type Repository interface {
 	GetCrosspostTgChat(maxChatID int64) (tgChatID int64, direction string, ok bool)
 	SetCrosspostDirection(platform string, chatID int64, direction string) bool
 	UnpairCrosspost(platform string, chatID int64) bool
-	HasCrosspostPrefix(platform string, chatID int64) bool
-	SetCrosspostPrefix(platform string, chatID int64, on bool) bool
 
 	Close() error
 }

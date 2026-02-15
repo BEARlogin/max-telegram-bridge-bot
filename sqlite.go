@@ -229,38 +229,6 @@ func (r *sqliteRepo) UnpairCrosspost(platform string, chatID int64) bool {
 	return n > 0
 }
 
-func (r *sqliteRepo) HasCrosspostPrefix(platform string, chatID int64) bool {
-	var v int
-	var err error
-	if platform == "tg" {
-		err = r.db.QueryRow("SELECT prefix FROM crossposts WHERE tg_chat_id = ?", chatID).Scan(&v)
-	} else {
-		err = r.db.QueryRow("SELECT prefix FROM crossposts WHERE max_chat_id = ?", chatID).Scan(&v)
-	}
-	if err != nil {
-		return true
-	}
-	return v == 1
-}
-
-func (r *sqliteRepo) SetCrosspostPrefix(platform string, chatID int64, on bool) bool {
-	v := 0
-	if on {
-		v = 1
-	}
-	var res sql.Result
-	if platform == "tg" {
-		res, _ = r.db.Exec("UPDATE crossposts SET prefix = ? WHERE tg_chat_id = ?", v, chatID)
-	} else {
-		res, _ = r.db.Exec("UPDATE crossposts SET prefix = ? WHERE max_chat_id = ?", v, chatID)
-	}
-	if res == nil {
-		return false
-	}
-	n, _ := res.RowsAffected()
-	return n > 0
-}
-
 func (r *sqliteRepo) Close() error {
 	return r.db.Close()
 }

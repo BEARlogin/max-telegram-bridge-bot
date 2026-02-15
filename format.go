@@ -63,23 +63,16 @@ func formatMaxCaption(upd *maxschemes.MessageCreatedUpdate, prefix bool) string 
 	return fmt.Sprintf("%s: %s", name, text)
 }
 
-// formatTgCrosspostCaption — для кросспостинга каналов (без Name: attribution)
-func formatTgCrosspostCaption(msg *tgbotapi.Message, prefix bool) string {
+// formatTgCrosspostCaption — для кросспостинга каналов (без attribution и префиксов)
+func formatTgCrosspostCaption(msg *tgbotapi.Message) string {
 	text := msg.Text
 	if text == "" {
 		text = msg.Caption
 	}
-	if prefix {
-		return "[TG] " + text
-	}
 	return text
 }
 
-// formatMaxCrosspostCaption — для кросспостинга каналов (без Name: attribution)
-func formatMaxCrosspostCaption(upd *maxschemes.MessageCreatedUpdate, prefix bool) string {
-	text := upd.Message.Body.Text
-	if prefix {
-		return "[MAX] " + text
-	}
-	return text
+// formatMaxCrosspostCaption — для кросспостинга каналов (без attribution и префиксов)
+func formatMaxCrosspostCaption(upd *maxschemes.MessageCreatedUpdate) string {
+	return upd.Message.Body.Text
 }

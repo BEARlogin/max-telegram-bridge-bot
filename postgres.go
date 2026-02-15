@@ -240,38 +240,6 @@ func (r *pgRepo) UnpairCrosspost(platform string, chatID int64) bool {
 	return n > 0
 }
 
-func (r *pgRepo) HasCrosspostPrefix(platform string, chatID int64) bool {
-	var v int
-	var err error
-	if platform == "tg" {
-		err = r.db.QueryRow("SELECT prefix FROM crossposts WHERE tg_chat_id = $1", chatID).Scan(&v)
-	} else {
-		err = r.db.QueryRow("SELECT prefix FROM crossposts WHERE max_chat_id = $1", chatID).Scan(&v)
-	}
-	if err != nil {
-		return true
-	}
-	return v == 1
-}
-
-func (r *pgRepo) SetCrosspostPrefix(platform string, chatID int64, on bool) bool {
-	v := 0
-	if on {
-		v = 1
-	}
-	var res sql.Result
-	if platform == "tg" {
-		res, _ = r.db.Exec("UPDATE crossposts SET prefix = $1 WHERE tg_chat_id = $2", v, chatID)
-	} else {
-		res, _ = r.db.Exec("UPDATE crossposts SET prefix = $1 WHERE max_chat_id = $2", v, chatID)
-	}
-	if res == nil {
-		return false
-	}
-	n, _ := res.RowsAffected()
-	return n > 0
-}
-
 func (r *pgRepo) Close() error {
 	return r.db.Close()
 }

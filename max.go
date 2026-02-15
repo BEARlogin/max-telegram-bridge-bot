@@ -115,7 +115,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						"/crosspost — связать каналы для кросспостинга\n" +
 						"/crosspost <ключ> — связать по ключу\n" +
 						"/crosspost direction tg>max|max>tg|both — направление\n" +
-						"/crosspost prefix on/off — префикс [TG]/[MAX]\n" +
 						"/uncrosspost — удалить кросспостинг\n\n" +
 						"Как связать чаты:\n" +
 						"1. Добавьте бота в оба чата\n" +
@@ -201,28 +200,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					b.maxApi.Messages.Send(ctx, m)
 				} else {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Этот чат не связан.")
-					b.maxApi.Messages.Send(ctx, m)
-				}
-				continue
-			}
-
-			// /crosspost prefix on/off
-			if text == "/crosspost prefix on" || text == "/crosspost prefix off" {
-				if isGroup && !isAdmin {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
-					b.maxApi.Messages.Send(ctx, m)
-					continue
-				}
-				on := text == "/crosspost prefix on"
-				if b.repo.SetCrosspostPrefix("max", chatID, on) {
-					reply := "Префикс [TG]/[MAX] включён."
-					if !on {
-						reply = "Префикс [TG]/[MAX] выключен."
-					}
-					m := maxbot.NewMessage().SetChat(chatID).SetText(reply)
-					b.maxApi.Messages.Send(ctx, m)
-				} else {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Чат не связан. Сначала выполните /crosspost.")
 					b.maxApi.Messages.Send(ctx, m)
 				}
 				continue
@@ -327,8 +304,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
-			prefix := b.repo.HasCrosspostPrefix("max", chatID)
-			caption := formatMaxCrosspostCaption(msgUpd, prefix)
+			caption := formatMaxCrosspostCaption(msgUpd)
 			b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
 		}
 	}

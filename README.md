@@ -113,7 +113,6 @@ export MAX_TOKEN=your_token
 | `/crosspost` | Создать ключ для кросспостинга |
 | `/crosspost <ключ>` | Связать канал по ключу |
 | `/crosspost direction tg>max\|max>tg\|both` | Направление кросспостинга |
-| `/crosspost prefix on/off` | Включить/выключить префикс `[TG]`/`[MAX]` |
 | `/uncrosspost` | Удалить кросспостинг |
 
 ## Переменные окружения

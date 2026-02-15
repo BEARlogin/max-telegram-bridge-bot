@@ -106,7 +106,6 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						"/crosspost — связать каналы для кросспостинга\n"+
 						"/crosspost <ключ> — связать по ключу\n"+
 						"/crosspost direction tg>max|max>tg|both — направление\n"+
-						"/crosspost prefix on/off — префикс [TG]/[MAX]\n"+
 						"/uncrosspost — удалить кросспостинг\n\n"+
 						"Как связать чаты:\n"+
 						"1. Добавьте бота в оба чата\n"+
@@ -348,21 +347,6 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message) {
 	text := strings.TrimSpace(msg.Text)
 
-	// /crosspost prefix on/off
-	if text == "/crosspost prefix on" || text == "/crosspost prefix off" {
-		on := text == "/crosspost prefix on"
-		if b.repo.SetCrosspostPrefix("tg", msg.Chat.ID, on) {
-			if on {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Префикс [TG]/[MAX] включён."))
-			} else {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Префикс [TG]/[MAX] выключен."))
-			}
-		} else {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Канал не связан. Сначала выполните /crosspost."))
-		}
-		return
-	}
-
 	// /crosspost direction <dir>
 	if strings.HasPrefix(text, "/crosspost direction ") {
 		dir := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost direction "))
@@ -428,8 +412,7 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message)
 		return
 	}
 
-	prefix := b.repo.HasCrosspostPrefix("tg", msg.Chat.ID)
-	caption := formatTgCrosspostCaption(msg, prefix)
+	caption := formatTgCrosspostCaption(msg)
 
 	b.forwardTgToMax(ctx, msg, maxChatID, caption)
 }
@@ -449,7 +432,6 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *tgbotapi
 		return
 	}
 
-	prefix := b.repo.HasCrosspostPrefix("tg", edited.Chat.ID)
 	text := edited.Text
 	if text == "" {
 		text = edited.Caption
@@ -457,14 +439,8 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *tgbotapi
 	if text == "" {
 		return
 	}
-	var fwd string
-	if prefix {
-		fwd = "[TG] " + text
-	} else {
-		fwd = text
-	}
 
-	m := maxbot.NewMessage().SetChat(maxChatID).SetText(fwd)
+	m := maxbot.NewMessage().SetChat(maxChatID).SetText(text)
 	if err := b.maxApi.Messages.EditMessage(ctx, maxMsgID, m); err != nil {
 		slog.Error("TG→MAX crosspost edit failed", "err", err)
 	} else {
