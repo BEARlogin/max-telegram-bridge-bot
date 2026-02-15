@@ -89,3 +89,5 @@ export MAX_TOKEN=your_token
 | `MAX_TOKEN` | Токен MAX бота | — (обязательно) |
 | `DB_PATH` | Путь к SQLite базе | `bridge.db` |
 | `DATABASE_URL` | DSN для PostgreSQL (если задана — SQLite игнорируется) | — |
+| `TG_BOT_URL` | Ссылка на TG-бота (показывается в `/help`) | `https://t.me/MaxTelegramBridgeBot` |
+| `MAX_BOT_URL` | Ссылка на MAX-бота (показывается в `/help`) | `https://max.ru/id710708943262_bot` |
