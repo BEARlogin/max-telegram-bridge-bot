@@ -17,15 +17,16 @@ func (b *Bridge) listenMax(ctx context.Context) {
 	var updates <-chan maxschemes.UpdateInterface
 
 	if b.cfg.WebhookURL != "" {
-		whURL := strings.TrimRight(b.cfg.WebhookURL, "/") + "/max-webhook"
+		whPath := b.maxWebhookPath()
+		whURL := strings.TrimRight(b.cfg.WebhookURL, "/") + whPath
 		ch := make(chan maxschemes.UpdateInterface, 100)
-		http.HandleFunc("/max-webhook", b.maxApi.GetHandler(ch))
+		http.HandleFunc(whPath, b.maxApi.GetHandler(ch))
 		if _, err := b.maxApi.Subscriptions.Subscribe(ctx, whURL, nil, ""); err != nil {
 			slog.Error("MAX webhook subscribe failed", "err", err)
 			return
 		}
 		updates = ch
-		slog.Info("MAX webhook mode", "url", whURL)
+		slog.Info("MAX webhook mode")
 	} else {
 		updates = b.maxApi.GetUpdates(ctx)
 		slog.Info("MAX polling mode")
@@ -122,17 +123,12 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 
 			// Проверка прав админа в группах
-			isGroup := msgUpd.Message.Recipient.ChatType == maxschemes.CHAT || msgUpd.Message.Recipient.ChatType == maxschemes.CHANNEL
+			isGroup := isMaxGroup(msgUpd.Message.Recipient.ChatType)
 			isAdmin := false
 			if isGroup {
 				admins, err := b.maxApi.Chats.GetChatAdmins(ctx, chatID)
 				if err == nil {
-					for _, m := range admins.Members {
-						if m.UserId == msgUpd.Message.Sender.UserId {
-							isAdmin = true
-							break
-						}
-					}
+					isAdmin = isMaxUserAdmin(admins.Members, msgUpd.Message.Sender.UserId)
 				}
 			}
 

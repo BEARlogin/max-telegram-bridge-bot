@@ -35,8 +35,8 @@ func TestEnvOr(t *testing.T) {
 
 func TestGenKey(t *testing.T) {
 	key := genKey()
-	if len(key) != 8 {
-		t.Errorf("genKey() length = %d, want 8", len(key))
+	if len(key) != 16 {
+		t.Errorf("genKey() length = %d, want 16", len(key))
 	}
 
 	// Keys should be unique

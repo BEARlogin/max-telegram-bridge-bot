@@ -25,7 +25,7 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	}
 	req.Header.Set("Authorization", b.cfg.MaxToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("get upload url: %w", err)
 	}
@@ -39,7 +39,7 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	if err := json.NewDecoder(resp.Body).Decode(&endpoint); err != nil {
 		return nil, fmt.Errorf("decode upload endpoint: %w", err)
 	}
-	slog.Debug("MAX upload endpoint", "url", endpoint.Url, "token", endpoint.Token)
+	slog.Debug("MAX upload endpoint", "url", endpoint.Url)
 
 	// 2. Загружаем файл на CDN (multipart)
 	var buf bytes.Buffer
@@ -53,14 +53,20 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	}
 	writer.Close()
 
-	cdnResp, err := http.Post(endpoint.Url, writer.FormDataContentType(), &buf)
+	cdnReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.Url, &buf)
+	if err != nil {
+		return nil, fmt.Errorf("create CDN request: %w", err)
+	}
+	cdnReq.Header.Set("Content-Type", writer.FormDataContentType())
+
+	cdnResp, err := b.httpClient.Do(cdnReq)
 	if err != nil {
 		return nil, fmt.Errorf("upload to CDN: %w", err)
 	}
 	defer cdnResp.Body.Close()
 
 	cdnBody, _ := io.ReadAll(cdnResp.Body)
-	slog.Debug("MAX CDN response", "status", cdnResp.StatusCode, "body", string(cdnBody))
+	slog.Debug("MAX CDN response", "status", cdnResp.StatusCode)
 
 	// 3. Парсим CDN ответ (fileId в camelCase)
 	var cdnResult struct {
@@ -68,11 +74,11 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 		Token  string `json:"token"`
 	}
 	if err := json.Unmarshal(cdnBody, &cdnResult); err == nil && cdnResult.Token != "" {
-		slog.Debug("MAX token from CDN", "token", cdnResult.Token, "fileId", cdnResult.FileID)
+		slog.Debug("MAX upload ok", "fileId", cdnResult.FileID)
 		return &maxschemes.UploadedInfo{Token: cdnResult.Token, FileID: cdnResult.FileID}, nil
 	}
 	if endpoint.Token != "" {
-		slog.Debug("MAX token from endpoint", "token", endpoint.Token)
+		slog.Debug("MAX upload ok (endpoint token)")
 		return &maxschemes.UploadedInfo{Token: endpoint.Token}, nil
 	}
 	return nil, fmt.Errorf("no token: endpoint and CDN both empty")
@@ -84,9 +90,13 @@ func (b *Bridge) uploadTgMediaToMax(ctx context.Context, fileID string, uploadTy
 	if err != nil {
 		return nil, fmt.Errorf("tg getFileURL: %w", err)
 	}
-	slog.Debug("TG file URL", "url", fileURL)
 
-	resp, err := http.Get(fileURL)
+	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create download request: %w", err)
+	}
+
+	resp, err := b.httpClient.Do(dlReq)
 	if err != nil {
 		return nil, fmt.Errorf("download: %w", err)
 	}
@@ -96,7 +106,7 @@ func (b *Bridge) uploadTgMediaToMax(ctx context.Context, fileID string, uploadTy
 		return nil, fmt.Errorf("tg download status: %d", resp.StatusCode)
 	}
 
-	slog.Debug("TG file downloaded", "status", resp.StatusCode, "size", resp.ContentLength, "contentType", resp.Header.Get("Content-Type"))
+	slog.Debug("TG file downloaded", "size", resp.ContentLength)
 
 	return b.customUploadToMax(ctx, uploadType, resp.Body, fileName)
 }
@@ -141,7 +151,11 @@ func (b *Bridge) sendMaxDirect(ctx context.Context, chatID int64, text string, a
 	for attempt := 0; attempt < 10; attempt++ {
 		if attempt > 0 {
 			delay := time.Duration(1+attempt) * time.Second
-			time.Sleep(delay)
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(delay):
+			}
 			slog.Warn("MAX retry", "attempt", attempt+1, "maxAttempts", 10)
 		}
 
@@ -152,7 +166,7 @@ func (b *Bridge) sendMaxDirect(ctx context.Context, chatID int64, text string, a
 		req.Header.Set("Authorization", b.cfg.MaxToken)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := b.httpClient.Do(req)
 		if err != nil {
 			return "", err
 		}

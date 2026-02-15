@@ -16,7 +16,8 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 	var updates tgbotapi.UpdatesChannel
 
 	if b.cfg.WebhookURL != "" {
-		whURL := strings.TrimRight(b.cfg.WebhookURL, "/") + "/tg-webhook"
+		whPath := b.tgWebhookPath()
+		whURL := strings.TrimRight(b.cfg.WebhookURL, "/") + whPath
 		wh, err := tgbotapi.NewWebhook(whURL)
 		if err != nil {
 			slog.Error("TG webhook config error", "err", err)
@@ -26,8 +27,8 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			slog.Error("TG set webhook failed", "err", err)
 			return
 		}
-		updates = b.tgBot.ListenForWebhook("/tg-webhook")
-		slog.Info("TG webhook mode", "url", whURL)
+		updates = b.tgBot.ListenForWebhook(whPath)
+		slog.Info("TG webhook mode")
 	} else {
 		// Удаляем webhook если был, переключаемся на polling
 		b.tgBot.Request(tgbotapi.DeleteWebhookConfig{})
@@ -103,7 +104,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 
 			// Проверка прав админа в группах
-			isGroup := msg.Chat.Type == "group" || msg.Chat.Type == "supergroup"
+			isGroup := isTgGroup(msg.Chat.Type)
 			isAdmin := false
 			if isGroup && msg.From != nil {
 				member, err := b.tgBot.GetChatMember(tgbotapi.GetChatMemberConfig{
@@ -113,7 +114,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					},
 				})
 				if err == nil {
-					isAdmin = member.Status == "creator" || member.Status == "administrator"
+					isAdmin = isTgAdmin(member.Status)
 				}
 			}
 

@@ -32,7 +32,7 @@ func envOr(key, fallback string) string {
 }
 
 func genKey() string {
-	b := make([]byte, 4)
+	b := make([]byte, 8)
 	rand.Read(b)
 	return hex.EncodeToString(b)
 }

@@ -37,7 +37,7 @@ func (r *sqliteRepo) Register(key, platform string, chatID int64) (bool, string,
 			return false, existing, nil
 		}
 		generated := genKey()
-		_, err = r.db.Exec("INSERT INTO pending (key, platform, chat_id) VALUES (?, ?, ?)", generated, platform, chatID)
+		_, err = r.db.Exec("INSERT INTO pending (key, platform, chat_id, created_at) VALUES (?, ?, ?, ?)", generated, platform, chatID, time.Now().Unix())
 		return false, generated, err
 	}
 
@@ -96,6 +96,7 @@ func (r *sqliteRepo) LookupTgMsgID(maxMsgID string) (int64, int, bool) {
 
 func (r *sqliteRepo) CleanOldMessages() {
 	r.db.Exec("DELETE FROM messages WHERE created_at < ?", time.Now().Unix()-48*3600)
+	r.db.Exec("DELETE FROM pending WHERE created_at > 0 AND created_at < ?", time.Now().Unix()-3600)
 }
 
 func (r *sqliteRepo) HasPrefix(platform string, chatID int64) bool {
