@@ -347,6 +347,22 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message) {
 	text := strings.TrimSpace(msg.Text)
 
+	if text == "/start" || text == "/help" {
+		b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+			"Кросспостинг каналов TG ↔ MAX.\n\n"+
+				"Команды:\n"+
+				"/crosspost — создать ключ для связки\n"+
+				"/crosspost <ключ> — связать по ключу\n"+
+				"/crosspost direction tg>max|max>tg|both — направление\n"+
+				"/uncrosspost — удалить кросспостинг\n\n"+
+				"Как связать:\n"+
+				"1. Добавьте бота в TG-канал и MAX-чат как админа\n"+
+				"2. В TG-канале отправьте /crosspost\n"+
+				"3. Бот выдаст ключ — отправьте /crosspost <ключ> в MAX-чате\n"+
+				"4. Готово!"))
+		return
+	}
+
 	// /crosspost direction <dir>
 	if strings.HasPrefix(text, "/crosspost direction ") {
 		dir := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost direction "))

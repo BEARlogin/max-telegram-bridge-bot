@@ -59,8 +59,35 @@ func (b *Bridge) maxWebhookPath() string {
 	return "/max-webhook-" + b.whSecret
 }
 
+// registerCommands регистрирует команды бота в Telegram.
+func (b *Bridge) registerCommands() {
+	// Команды для групп и личных чатов
+	groupCmds := tgbotapi.NewSetMyCommands(
+		tgbotapi.BotCommand{Command: "bridge", Description: "Связать чат с MAX-чатом"},
+		tgbotapi.BotCommand{Command: "unbridge", Description: "Удалить связку чатов"},
+		tgbotapi.BotCommand{Command: "help", Description: "Инструкция"},
+	)
+	if _, err := b.tgBot.Request(groupCmds); err != nil {
+		slog.Error("TG setMyCommands (default) failed", "err", err)
+	}
+
+	// Команды для каналов
+	channelCmds := tgbotapi.NewSetMyCommandsWithScope(
+		tgbotapi.NewBotCommandScopeAllChatAdministrators(),
+		tgbotapi.BotCommand{Command: "crosspost", Description: "Связать канал для кросспостинга"},
+		tgbotapi.BotCommand{Command: "uncrosspost", Description: "Удалить кросспостинг"},
+		tgbotapi.BotCommand{Command: "bridge", Description: "Связать чат с MAX-чатом"},
+		tgbotapi.BotCommand{Command: "unbridge", Description: "Удалить связку чатов"},
+		tgbotapi.BotCommand{Command: "help", Description: "Инструкция"},
+	)
+	if _, err := b.tgBot.Request(channelCmds); err != nil {
+		slog.Error("TG setMyCommands (admins) failed", "err", err)
+	}
+}
+
 // Run запускает TG и MAX listener'ы + периодическую очистку.
 func (b *Bridge) Run(ctx context.Context) {
+	b.registerCommands()
 	go func() {
 		t := time.NewTicker(10 * time.Minute)
 		defer t.Stop()
