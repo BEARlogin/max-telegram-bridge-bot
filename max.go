@@ -101,7 +101,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			chatID := msgUpd.Message.Recipient.ChatId
 			text := strings.TrimSpace(body.Text)
 
-			slog.Debug("MAX msg received", "from", msgUpd.Message.Sender.Name, "chat", chatID, "text", text)
+			slog.Debug("MAX msg received", "from", msgUpd.Message.Sender.Name, "chat", chatID)
 
 			if text == "/start" || text == "/help" {
 				m := maxbot.NewMessage().SetChat(chatID).SetText(

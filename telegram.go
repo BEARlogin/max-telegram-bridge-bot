@@ -82,7 +82,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 			msg := update.Message
 			text := strings.TrimSpace(msg.Text)
-			slog.Debug("TG msg received", "from", msg.From.FirstName, "chat", msg.Chat.ID, "text", text)
+			slog.Debug("TG msg received", "from", msg.From.FirstName, "chat", msg.Chat.ID)
 
 			if text == "/start" || text == "/help" {
 				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
@@ -217,7 +217,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						m.SetReply(caption, maxReplyID)
 					}
 				}
-				slog.Info("TG→MAX sending photo", "caption", caption)
+				slog.Info("TG→MAX sending photo")
 				result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 				if err != nil {
 					slog.Error("TG→MAX send failed", "err", err)
@@ -296,7 +296,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 			if mediaAttType != "" {
 				// Медиа — отправляем напрямую (обход SDK)
-				slog.Info("TG→MAX sending direct", "caption", caption, "type", mediaAttType)
+				slog.Info("TG→MAX sending direct", "type", mediaAttType)
 				mid, err := b.sendMaxDirect(ctx, maxChatID, caption, mediaAttType, mediaToken, replyTo)
 				if err != nil {
 					slog.Error("TG→MAX send failed", "err", err)
@@ -310,7 +310,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				if replyTo != "" {
 					m.SetReply(caption, replyTo)
 				}
-				slog.Info("TG→MAX sending", "caption", caption)
+				slog.Info("TG→MAX sending")
 				result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 				if err != nil {
 					slog.Error("TG→MAX send failed", "err", err)
