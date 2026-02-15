@@ -361,19 +361,21 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 	}
 
-	// Конвертируем TG entities в MAX markups
+	// Конвертируем TG entities в markdown для MAX
 	entities := msg.Entities
 	if entities == nil {
 		entities = msg.CaptionEntities
 	}
-	markups := tgEntitiesToMaxMarkups(entities)
-	if len(markups) > 0 {
-		slog.Debug("TG→MAX markups", "count", len(markups), "markups", markups)
-	}
+	mdCaption := tgEntitiesToMarkdown(caption, entities)
+	hasFormatting := mdCaption != caption
 
 	if mediaAttType != "" {
 		slog.Info("TG→MAX sending direct", "type", mediaAttType)
-		mid, err := b.sendMaxDirectWithMarkups(ctx, maxChatID, caption, mediaAttType, mediaToken, replyTo, markups)
+		var format string
+		if hasFormatting {
+			format = "markdown"
+		}
+		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {
@@ -381,13 +383,21 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
 		}
 	} else {
-		slog.Info("TG→MAX sending", "markups", len(markups))
-		mid, err := b.sendMaxDirectWithMarkups(ctx, maxChatID, caption, "", "", replyTo, markups)
+		// Текст — через SDK (SetFormat работает)
+		m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
+		if hasFormatting {
+			m.SetFormat("markdown")
+		}
+		if replyTo != "" {
+			m.SetReply(mdCaption, replyTo)
+		}
+		slog.Info("TG→MAX sending", "format", hasFormatting, "text", mdCaption)
+		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {
-			slog.Info("TG→MAX sent", "mid", mid)
-			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
+			slog.Info("TG→MAX sent", "mid", result.Body.Mid)
+			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
 		}
 	}
 }

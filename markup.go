@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"html"
 	"sort"
 	"strings"
@@ -10,46 +11,98 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// --- TG Entities → MAX Markups ---
+// --- TG Entities → Markdown (для MAX) ---
 
-// tgEntitiesToMaxMarkups конвертирует TG entities в MAX markups.
-// TG entities используют UTF-16 offsets — MAX тоже.
-func tgEntitiesToMaxMarkups(entities []tgbotapi.MessageEntity) []maxschemes.MarkUp {
+// tgEntitiesToMarkdown конвертирует TG text + entities в markdown-текст для MAX.
+// Обрабатывает edge cases: пробелы перед/после маркеров выносятся за пределы тегов.
+func tgEntitiesToMarkdown(text string, entities []tgbotapi.MessageEntity) string {
 	if len(entities) == 0 {
-		return nil
+		return text
 	}
-	var markups []maxschemes.MarkUp
-	for _, e := range entities {
-		var mt maxschemes.MarkupType
-		var url string
+
+	// Конвертируем в UTF-16 для корректных offsets (TG использует UTF-16)
+	runes := []rune(text)
+	utf16units := utf16.Encode(runes)
+
+	// Собираем фрагменты: чередуя plain text и форматированные куски
+	// Работаем в UTF-16 координатах
+	type fragment struct {
+		start, end int // UTF-16 offsets
+		entity     *tgbotapi.MessageEntity
+	}
+
+	// Сортируем entities по offset
+	sorted := make([]tgbotapi.MessageEntity, len(entities))
+	copy(sorted, entities)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Offset < sorted[j].Offset
+	})
+
+	var sb strings.Builder
+	pos := 0
+
+	for i := range sorted {
+		e := &sorted[i]
+		var open, close string
 		switch e.Type {
 		case "bold":
-			mt = maxschemes.MarkupStrong
+			open, close = "**", "**"
 		case "italic":
-			mt = maxschemes.MarkupEmphasized
-		case "code", "pre":
-			mt = maxschemes.MarkupMonospaced
+			open, close = "_", "_"
+		case "code":
+			open, close = "`", "`"
+		case "pre":
+			open, close = "```\n", "\n```"
 		case "strikethrough":
-			mt = maxschemes.MarkupStrikethrough
-		case "underline":
-			mt = maxschemes.MarkupUnderline
+			open, close = "~~", "~~"
 		case "text_link":
-			mt = maxschemes.MarkupLink
-			url = e.URL
+			open = "["
+			close = fmt.Sprintf("](%s)", e.URL)
 		default:
 			continue
 		}
-		m := maxschemes.MarkUp{
-			From:   e.Offset,
-			Length: e.Length,
-			Type:   mt,
+
+		// Текст до entity
+		if e.Offset > pos {
+			sb.WriteString(utf16ToString(utf16units[pos:e.Offset]))
 		}
-		if url != "" {
-			m.URL = url
+
+		// Текст entity
+		end := e.Offset + e.Length
+		if end > len(utf16units) {
+			end = len(utf16units)
 		}
-		markups = append(markups, m)
+		inner := utf16ToString(utf16units[e.Offset:end])
+
+		// Trim пробелов: выносим leading/trailing пробелы за маркеры
+		trimmed := strings.TrimRight(inner, " \t\n")
+		trailingSpaces := inner[len(trimmed):]
+		trimmed2 := strings.TrimLeft(trimmed, " \t\n")
+		leadingSpaces := trimmed[:len(trimmed)-len(trimmed2)]
+
+		sb.WriteString(leadingSpaces)
+		if trimmed2 != "" {
+			sb.WriteString(open)
+			sb.WriteString(trimmed2)
+			sb.WriteString(close)
+		}
+		sb.WriteString(trailingSpaces)
+
+		pos = end
 	}
-	return markups
+
+	// Остаток текста
+	if pos < len(utf16units) {
+		sb.WriteString(utf16ToString(utf16units[pos:]))
+	}
+
+	return sb.String()
+}
+
+// utf16ToString конвертирует UTF-16 slice обратно в Go string.
+func utf16ToString(units []uint16) string {
+	runes := utf16.Decode(units)
+	return string(runes)
 }
 
 // --- MAX Markups → TG HTML ---
