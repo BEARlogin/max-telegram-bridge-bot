@@ -16,15 +16,16 @@ import (
 func (b *Bridge) listenMax(ctx context.Context) {
 	var updates <-chan maxschemes.UpdateInterface
 
-	if b.cfg.MaxWebhookURL != "" {
+	if b.cfg.WebhookURL != "" {
+		whURL := strings.TrimRight(b.cfg.WebhookURL, "/") + "/max-webhook"
 		ch := make(chan maxschemes.UpdateInterface, 100)
 		http.HandleFunc("/max-webhook", b.maxApi.GetHandler(ch))
-		if _, err := b.maxApi.Subscriptions.Subscribe(ctx, b.cfg.MaxWebhookURL, nil, ""); err != nil {
+		if _, err := b.maxApi.Subscriptions.Subscribe(ctx, whURL, nil, ""); err != nil {
 			slog.Error("MAX webhook subscribe failed", "err", err)
 			return
 		}
 		updates = ch
-		slog.Info("MAX webhook mode", "url", b.cfg.MaxWebhookURL)
+		slog.Info("MAX webhook mode", "url", whURL)
 	} else {
 		updates = b.maxApi.GetUpdates(ctx)
 		slog.Info("MAX polling mode")

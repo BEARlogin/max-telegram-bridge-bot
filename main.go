@@ -44,9 +44,8 @@ func main() {
 		MaxToken:    mustEnv("MAX_TOKEN"),
 		TgBotURL:    envOr("TG_BOT_URL", "https://t.me/MaxTelegramBridgeBot"),
 		MaxBotURL:   envOr("MAX_BOT_URL", "https://max.ru/id710708943262_bot"),
-		WebhookURL:    os.Getenv("TG_WEBHOOK_URL"),
-		MaxWebhookURL: os.Getenv("MAX_WEBHOOK_URL"),
-		WebhookPort:   envOr("WEBHOOK_PORT", "8443"),
+		WebhookURL:  os.Getenv("WEBHOOK_URL"),
+		WebhookPort: envOr("WEBHOOK_PORT", "8443"),
 	}
 
 	tgToken := mustEnv("TG_TOKEN")

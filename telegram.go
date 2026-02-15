@@ -16,7 +16,8 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 	var updates tgbotapi.UpdatesChannel
 
 	if b.cfg.WebhookURL != "" {
-		wh, err := tgbotapi.NewWebhook(b.cfg.WebhookURL)
+		whURL := strings.TrimRight(b.cfg.WebhookURL, "/") + "/tg-webhook"
+		wh, err := tgbotapi.NewWebhook(whURL)
 		if err != nil {
 			slog.Error("TG webhook config error", "err", err)
 			return
@@ -26,7 +27,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			return
 		}
 		updates = b.tgBot.ListenForWebhook("/tg-webhook")
-		slog.Info("TG webhook mode", "url", b.cfg.WebhookURL)
+		slog.Info("TG webhook mode", "url", whURL)
 	} else {
 		// Удаляем webhook если был, переключаемся на polling
 		b.tgBot.Request(tgbotapi.DeleteWebhookConfig{})
