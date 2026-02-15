@@ -130,16 +130,20 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			// Проверка прав админа в группах
 			isGroup := isMaxGroup(msgUpd.Message.Recipient.ChatType)
 			isAdmin := false
+			adminCheckOk := false
 			if isGroup {
 				admins, err := b.maxApi.Chats.GetChatAdmins(ctx, chatID)
 				if err == nil {
+					adminCheckOk = true
 					isAdmin = isMaxUserAdmin(admins.Members, msgUpd.Message.Sender.UserId)
+				} else {
+					slog.Warn("MAX GetChatAdmins failed, skipping admin check", "chat", chatID, "err", err)
 				}
 			}
 
 			// /bridge prefix on/off
 			if text == "/bridge prefix on" || text == "/bridge prefix off" {
-				if isGroup && !isAdmin {
+				if isGroup && adminCheckOk && !isAdmin {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
 					b.maxApi.Messages.Send(ctx, m)
 					continue
@@ -161,7 +165,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			// /bridge или /bridge <key>
 			if text == "/bridge" || strings.HasPrefix(text, "/bridge ") {
-				if isGroup && !isAdmin {
+				if isGroup && adminCheckOk && !isAdmin {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
 					b.maxApi.Messages.Send(ctx, m)
 					continue
@@ -190,7 +194,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 
 			if text == "/unbridge" {
-				if isGroup && !isAdmin {
+				if isGroup && adminCheckOk && !isAdmin {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
 					b.maxApi.Messages.Send(ctx, m)
 					continue
@@ -207,7 +211,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			// /crosspost direction <dir>
 			if strings.HasPrefix(text, "/crosspost direction ") {
-				if isGroup && !isAdmin {
+				if isGroup && adminCheckOk && !isAdmin {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
 					b.maxApi.Messages.Send(ctx, m)
 					continue
@@ -230,7 +234,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			// /uncrosspost
 			if text == "/uncrosspost" {
-				if isGroup && !isAdmin {
+				if isGroup && adminCheckOk && !isAdmin {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
 					b.maxApi.Messages.Send(ctx, m)
 					continue
@@ -247,7 +251,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			// /crosspost или /crosspost <key>
 			if text == "/crosspost" || strings.HasPrefix(text, "/crosspost ") {
-				if isGroup && !isAdmin {
+				if isGroup && adminCheckOk && !isAdmin {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
 					b.maxApi.Messages.Send(ctx, m)
 					continue
