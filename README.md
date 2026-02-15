@@ -38,20 +38,23 @@ go build -o max-telegram-bridge-bot .
 - **Telegram**: через [@BotFather](https://t.me/BotFather), отключите Privacy Mode (Bot Settings → Group Privacy → Turn off)
 - **MAX**: через настройки платформы
 
-### 2. Настройте окружение
+### 2. Настройте и запустите
+
+Передайте токены через переменные окружения:
 
 ```bash
-cp .env.example .env
-# Заполните TG_TOKEN и MAX_TOKEN
+TG_TOKEN=your_token MAX_TOKEN=your_token ./max-telegram-bridge-bot
 ```
 
-### 3. Запустите
+Или через `export`:
 
 ```bash
+export TG_TOKEN=your_token
+export MAX_TOKEN=your_token
 ./max-telegram-bridge-bot
 ```
 
-### 4. Свяжите чаты
+### 3. Свяжите чаты
 
 1. Добавьте бота в Telegram-группу и MAX-группу
 2. В MAX сделайте бота **админом** группы
