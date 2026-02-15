@@ -45,11 +45,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Lowercase repo name
+        id: repo
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ steps.repo.outputs.name }}:${{ github.event.release.tag_name }}
+            ghcr.io/${{ steps.repo.outputs.name }}:latest
