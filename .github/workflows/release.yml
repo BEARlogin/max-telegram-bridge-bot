@@ -4,18 +4,12 @@ on:
   release:
     types: [created]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            suffix: linux-amd64
-          - goos: linux
-            goarch: arm64
-            suffix: linux-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -23,19 +17,16 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Install cross-compiler
-        if: matrix.goarch == 'arm64'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc gcc-aarch64-linux-gnu
 
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
-          CC: ${{ matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-        run: go build -o max-telegram-bridge-bot-${{ matrix.suffix }} .
+      - name: Build linux/amd64
+        run: CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=gcc go build -o max-telegram-bridge-bot-linux-amd64 .
 
-      - name: Upload to release
+      - name: Build linux/arm64
+        run: CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc go build -o max-telegram-bridge-bot-linux-arm64 .
+
+      - name: Upload binaries
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload ${{ github.event.release.tag_name }} max-telegram-bridge-bot-${{ matrix.suffix }}
+        run: gh release upload ${{ github.event.release.tag_name }} max-telegram-bridge-bot-linux-amd64 max-telegram-bridge-bot-linux-arm64
