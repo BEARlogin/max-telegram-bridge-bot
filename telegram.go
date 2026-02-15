@@ -361,16 +361,21 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 	}
 
-	// Entities для форматирования
+	// Конвертируем TG entities в markdown для MAX
 	entities := msg.Entities
 	if entities == nil {
 		entities = msg.CaptionEntities
 	}
-	markups := tgEntitiesToMaxMarkups(entities)
+	mdCaption := tgEntitiesToMarkdown(caption, entities)
+	hasFormatting := mdCaption != caption
 
 	if mediaAttType != "" {
 		slog.Info("TG→MAX sending direct", "type", mediaAttType)
-		mid, err := b.sendMaxDirectWithMarkups(ctx, maxChatID, caption, mediaAttType, mediaToken, replyTo, markups)
+		var format string
+		if hasFormatting {
+			format = "markdown"
+		}
+		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {
@@ -379,7 +384,11 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 	} else {
 		slog.Info("TG→MAX sending")
-		mid, err := b.sendMaxDirectWithMarkups(ctx, maxChatID, caption, "", "", replyTo, markups)
+		var format string
+		if hasFormatting {
+			format = "markdown"
+		}
+		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, "", "", replyTo, format)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {

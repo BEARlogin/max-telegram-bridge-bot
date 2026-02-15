@@ -113,25 +113,25 @@ func (b *Bridge) uploadTgMediaToMax(ctx context.Context, fileID string, uploadTy
 
 // sendMaxDirect — отправка сообщения в MAX напрямую (обход SDK)
 func (b *Bridge) sendMaxDirect(ctx context.Context, chatID int64, text string, attType string, token string, replyTo string) (string, error) {
-	return b.sendMaxDirectWithMarkups(ctx, chatID, text, attType, token, replyTo, nil)
+	return b.sendMaxDirectFormatted(ctx, chatID, text, attType, token, replyTo, "")
 }
 
-func (b *Bridge) sendMaxDirectWithMarkups(ctx context.Context, chatID int64, text string, attType string, token string, replyTo string, markups []maxschemes.MarkUp) (string, error) {
+func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text string, attType string, token string, replyTo string, format string) (string, error) {
 	type attachment struct {
 		Type    string            `json:"type"`
 		Payload map[string]string `json:"payload"`
 	}
 	type msgBody struct {
-		Text        string           `json:"text,omitempty"`
-		Attachments []attachment     `json:"attachments,omitempty"`
-		Markup      []maxschemes.MarkUp `json:"markup,omitempty"`
+		Text        string       `json:"text,omitempty"`
+		Attachments []attachment `json:"attachments,omitempty"`
+		Format      string       `json:"format,omitempty"`
 		Link        *struct {
 			Type string `json:"type"`
 			Mid  string `json:"mid"`
 		} `json:"link,omitempty"`
 	}
 
-	body := msgBody{Text: text, Markup: markups}
+	body := msgBody{Text: text, Format: format}
 	if attType != "" && token != "" {
 		body.Attachments = []attachment{{
 			Type:    attType,
