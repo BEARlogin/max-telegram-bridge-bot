@@ -102,8 +102,27 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				continue
 			}
 
+			// Проверка прав админа в группах
+			isGroup := msg.Chat.Type == "group" || msg.Chat.Type == "supergroup"
+			isAdmin := false
+			if isGroup && msg.From != nil {
+				member, err := b.tgBot.GetChatMember(tgbotapi.GetChatMemberConfig{
+					ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
+						ChatID: msg.Chat.ID,
+						UserID: msg.From.ID,
+					},
+				})
+				if err == nil {
+					isAdmin = member.Status == "creator" || member.Status == "administrator"
+				}
+			}
+
 			// /bridge prefix on/off
 			if text == "/bridge prefix on" || text == "/bridge prefix off" {
+				if isGroup && !isAdmin {
+					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					continue
+				}
 				on := text == "/bridge prefix on"
 				if b.repo.SetPrefix("tg", msg.Chat.ID, on) {
 					if on {
@@ -119,6 +138,10 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 			// /bridge или /bridge <key>
 			if text == "/bridge" || strings.HasPrefix(text, "/bridge ") {
+				if isGroup && !isAdmin {
+					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					continue
+				}
 				key := strings.TrimSpace(strings.TrimPrefix(text, "/bridge"))
 				paired, generatedKey, err := b.repo.Register(key, "tg", msg.Chat.ID)
 				if err != nil {
@@ -140,6 +163,10 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 
 			if text == "/unbridge" {
+				if isGroup && !isAdmin {
+					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					continue
+				}
 				if b.repo.Unpair("tg", msg.Chat.ID) {
 					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Связка удалена."))
 				} else {

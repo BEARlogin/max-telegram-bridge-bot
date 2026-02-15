@@ -121,8 +121,28 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
+			// Проверка прав админа в группах
+			isGroup := msgUpd.Message.Recipient.ChatType == maxschemes.CHAT || msgUpd.Message.Recipient.ChatType == maxschemes.CHANNEL
+			isAdmin := false
+			if isGroup {
+				admins, err := b.maxApi.Chats.GetChatAdmins(ctx, chatID)
+				if err == nil {
+					for _, m := range admins.Members {
+						if m.UserId == msgUpd.Message.Sender.UserId {
+							isAdmin = true
+							break
+						}
+					}
+				}
+			}
+
 			// /bridge prefix on/off
 			if text == "/bridge prefix on" || text == "/bridge prefix off" {
+				if isGroup && !isAdmin {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+					b.maxApi.Messages.Send(ctx, m)
+					continue
+				}
 				on := text == "/bridge prefix on"
 				if b.repo.SetPrefix("max", chatID, on) {
 					reply := "Префикс [TG]/[MAX] включён."
@@ -140,6 +160,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			// /bridge или /bridge <key>
 			if text == "/bridge" || strings.HasPrefix(text, "/bridge ") {
+				if isGroup && !isAdmin {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+					b.maxApi.Messages.Send(ctx, m)
+					continue
+				}
 				key := strings.TrimSpace(strings.TrimPrefix(text, "/bridge"))
 				paired, generatedKey, err := b.repo.Register(key, "max", chatID)
 				if err != nil {
@@ -164,6 +189,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 
 			if text == "/unbridge" {
+				if isGroup && !isAdmin {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+					b.maxApi.Messages.Send(ctx, m)
+					continue
+				}
 				if b.repo.Unpair("max", chatID) {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Связка удалена.")
 					b.maxApi.Messages.Send(ctx, m)
