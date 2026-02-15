@@ -177,6 +177,22 @@ func (r *pgRepo) GetCrosspostTgChat(maxChatID int64) (int64, string, bool) {
 	return id, dir, err == nil
 }
 
+func (r *pgRepo) ListCrossposts() []CrosspostLink {
+	rows, err := r.db.Query("SELECT tg_chat_id, max_chat_id, direction FROM crossposts")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var links []CrosspostLink
+	for rows.Next() {
+		var l CrosspostLink
+		if rows.Scan(&l.TgChatID, &l.MaxChatID, &l.Direction) == nil {
+			links = append(links, l)
+		}
+	}
+	return links
+}
+
 func (r *pgRepo) SetCrosspostDirection(maxChatID int64, direction string) bool {
 	res, _ := r.db.Exec("UPDATE crossposts SET direction = $1 WHERE max_chat_id = $2", direction, maxChatID)
 	if res == nil {

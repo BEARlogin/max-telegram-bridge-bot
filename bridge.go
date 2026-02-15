@@ -69,6 +69,7 @@ func (b *Bridge) registerCommands() {
 	groupCmds := tgbotapi.NewSetMyCommands(
 		tgbotapi.BotCommand{Command: "bridge", Description: "Связать чат с MAX-чатом"},
 		tgbotapi.BotCommand{Command: "unbridge", Description: "Удалить связку чатов"},
+		tgbotapi.BotCommand{Command: "crosspost", Description: "Список связок кросспостинга"},
 		tgbotapi.BotCommand{Command: "help", Description: "Инструкция"},
 	)
 	if _, err := b.tgBot.Request(groupCmds); err != nil {
@@ -80,6 +81,7 @@ func (b *Bridge) registerCommands() {
 		tgbotapi.NewBotCommandScopeAllChatAdministrators(),
 		tgbotapi.BotCommand{Command: "bridge", Description: "Связать чат с MAX-чатом"},
 		tgbotapi.BotCommand{Command: "unbridge", Description: "Удалить связку чатов"},
+		tgbotapi.BotCommand{Command: "crosspost", Description: "Список связок кросспостинга"},
 		tgbotapi.BotCommand{Command: "help", Description: "Инструкция"},
 	)
 	if _, err := b.tgBot.Request(channelCmds); err != nil {

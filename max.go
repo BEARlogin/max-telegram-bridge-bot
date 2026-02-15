@@ -226,14 +226,26 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			if isDialog && strings.HasPrefix(text, "/crosspost") {
 				arg := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost"))
 				if arg == "" {
-					m := maxbot.NewMessage().SetChat(chatID).SetText(
-						"Кросспостинг каналов:\n\n" +
-							"1. Перешлите пост из TG-канала в личку TG-бота\n" +
-							"   " + b.cfg.TgBotURL + "\n" +
-							"2. Бот покажет ID канала\n" +
-							"3. Здесь напишите: /crosspost <TG_ID>\n" +
-							"4. Перешлите пост из MAX-канала сюда")
-					b.maxApi.Messages.Send(ctx, m)
+					links := b.repo.ListCrossposts()
+					if len(links) == 0 {
+						m := maxbot.NewMessage().SetChat(chatID).SetText(
+							"Нет активных связок.\n\n" +
+								"Настройка:\n" +
+								"1. Перешлите пост из TG-канала в личку TG-бота\n" +
+								"   " + b.cfg.TgBotURL + "\n" +
+								"2. Бот покажет ID канала\n" +
+								"3. Здесь напишите: /crosspost <TG_ID>\n" +
+								"4. Перешлите пост из MAX-канала сюда")
+						b.maxApi.Messages.Send(ctx, m)
+					} else {
+						for _, l := range links {
+							kb := maxCrosspostKeyboard(b.maxApi, l.Direction, l.MaxChatID)
+							m := maxbot.NewMessage().SetChat(chatID).
+								SetText(maxCrosspostStatusText(l.TgChatID, l.Direction)).
+								AddKeyboard(kb)
+							b.maxApi.Messages.Send(ctx, m)
+						}
+					}
 					continue
 				}
 				tgChannelID, err := strconv.ParseInt(arg, 10, 64)

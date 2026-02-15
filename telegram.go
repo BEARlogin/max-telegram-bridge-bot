@@ -126,6 +126,23 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				continue
 			}
 
+			// /crosspost в личке TG — показать список связок
+			if msg.Chat.Type == "private" && text == "/crosspost" {
+				links := b.repo.ListCrossposts()
+				if len(links) == 0 {
+					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+						"Нет активных связок.\n\nНастройка: перешлите пост из TG-канала сюда, затем в MAX-боте /crosspost <ID>"))
+				} else {
+					for _, l := range links {
+						kb := tgCrosspostKeyboard(l.Direction, l.MaxChatID)
+						m := tgbotapi.NewMessage(msg.Chat.ID, tgCrosspostStatusText("", l.Direction)+fmt.Sprintf("\nTG: %d ↔ MAX: %d", l.TgChatID, l.MaxChatID))
+						m.ReplyMarkup = kb
+						b.tgBot.Send(m)
+					}
+				}
+				continue
+			}
+
 			// Пересланное сообщение из канала → показать ID или управление (только в личке)
 			if msg.Chat.Type == "private" && msg.ForwardFromChat != nil && msg.ForwardFromChat.Type == "channel" {
 				channelID := msg.ForwardFromChat.ID

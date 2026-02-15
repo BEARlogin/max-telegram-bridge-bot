@@ -1,5 +1,12 @@
 package main
 
+// CrosspostLink — одна связка кросспостинга.
+type CrosspostLink struct {
+	TgChatID  int64
+	MaxChatID int64
+	Direction string
+}
+
 // Repository — абстракция хранилища для bridge.
 type Repository interface {
 	// Register обрабатывает /bridge команду.
@@ -24,6 +31,7 @@ type Repository interface {
 	PairCrosspost(tgChatID, maxChatID int64) error
 	GetCrosspostMaxChat(tgChatID int64) (maxChatID int64, direction string, ok bool)
 	GetCrosspostTgChat(maxChatID int64) (tgChatID int64, direction string, ok bool)
+	ListCrossposts() []CrosspostLink
 	SetCrosspostDirection(maxChatID int64, direction string) bool
 	UnpairCrosspost(maxChatID int64) bool
 

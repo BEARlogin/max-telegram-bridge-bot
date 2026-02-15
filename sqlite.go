@@ -167,6 +167,22 @@ func (r *sqliteRepo) GetCrosspostTgChat(maxChatID int64) (int64, string, bool) {
 	return id, dir, err == nil
 }
 
+func (r *sqliteRepo) ListCrossposts() []CrosspostLink {
+	rows, err := r.db.Query("SELECT tg_chat_id, max_chat_id, direction FROM crossposts")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var links []CrosspostLink
+	for rows.Next() {
+		var l CrosspostLink
+		if rows.Scan(&l.TgChatID, &l.MaxChatID, &l.Direction) == nil {
+			links = append(links, l)
+		}
+	}
+	return links
+}
+
 func (r *sqliteRepo) SetCrosspostDirection(maxChatID int64, direction string) bool {
 	res, _ := r.db.Exec("UPDATE crossposts SET direction = ? WHERE max_chat_id = ?", direction, maxChatID)
 	if res == nil {
