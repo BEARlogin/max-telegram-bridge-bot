@@ -1,0 +1,13 @@
+# Binaries
+bridge
+bridge_linux
+bearlogin-bridge
+*.exe
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Environment
+.env
