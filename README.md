@@ -61,7 +61,7 @@ go build -o max-telegram-bridge-bot .
 ### 1. Создайте ботов
 
 - **Telegram**: через [@BotFather](https://t.me/BotFather), отключите Privacy Mode (Bot Settings → Group Privacy → Turn off)
-- **MAX**: через настройки платформы
+- **MAX**: через [business.max.ru](https://dev.max.ru/docs/chatbots/bots-create)
 
 ### 2. Настройте и запустите
 
