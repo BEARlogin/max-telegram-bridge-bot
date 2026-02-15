@@ -361,10 +361,16 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 	}
 
+	// Entities для форматирования
+	entities := msg.Entities
+	if entities == nil {
+		entities = msg.CaptionEntities
+	}
+	markups := tgEntitiesToMaxMarkups(entities)
+
 	if mediaAttType != "" {
-		// Медиа — отправляем напрямую (обход SDK)
 		slog.Info("TG→MAX sending direct", "type", mediaAttType)
-		mid, err := b.sendMaxDirect(ctx, maxChatID, caption, mediaAttType, mediaToken, replyTo)
+		mid, err := b.sendMaxDirectWithMarkups(ctx, maxChatID, caption, mediaAttType, mediaToken, replyTo, markups)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {
@@ -372,18 +378,13 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
 		}
 	} else {
-		// Текст — через SDK
-		m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
-		if replyTo != "" {
-			m.SetReply(caption, replyTo)
-		}
 		slog.Info("TG→MAX sending")
-		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
+		mid, err := b.sendMaxDirectWithMarkups(ctx, maxChatID, caption, "", "", replyTo, markups)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
 		} else {
-			slog.Info("TG→MAX sent", "mid", result.Body.Mid)
-			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
+			slog.Info("TG→MAX sent", "mid", mid)
+			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
 		}
 	}
 }

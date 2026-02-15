@@ -517,12 +517,22 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	var sendErr error
 	mediaSent := false
 
+	// Определяем HTML caption если есть markups (для кросспостинга)
+	htmlCaption := caption
+	useHTML := len(body.Markups) > 0 && caption == text
+	if useHTML {
+		htmlCaption = maxMarkupsToHTML(text, body.Markups)
+	}
+
 	for _, att := range body.Attachments {
 		switch a := att.(type) {
 		case *maxschemes.PhotoAttachment:
 			if a.Payload.Url != "" {
 				photo := tgbotapi.NewPhoto(tgChatID, tgbotapi.FileURL(a.Payload.Url))
-				photo.Caption = caption
+				photo.Caption = htmlCaption
+				if useHTML {
+					photo.ParseMode = "HTML"
+				}
 				photo.ReplyToMessageID = replyToID
 				sent, sendErr = b.tgBot.Send(photo)
 				mediaSent = true
@@ -530,7 +540,10 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		case *maxschemes.VideoAttachment:
 			if a.Payload.Url != "" {
 				video := tgbotapi.NewVideo(tgChatID, tgbotapi.FileURL(a.Payload.Url))
-				video.Caption = caption
+				video.Caption = htmlCaption
+				if useHTML {
+					video.ParseMode = "HTML"
+				}
 				video.ReplyToMessageID = replyToID
 				sent, sendErr = b.tgBot.Send(video)
 				mediaSent = true
@@ -538,7 +551,10 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		case *maxschemes.AudioAttachment:
 			if a.Payload.Url != "" {
 				audio := tgbotapi.NewAudio(tgChatID, tgbotapi.FileURL(a.Payload.Url))
-				audio.Caption = caption
+				audio.Caption = htmlCaption
+				if useHTML {
+					audio.ParseMode = "HTML"
+				}
 				audio.ReplyToMessageID = replyToID
 				sent, sendErr = b.tgBot.Send(audio)
 				mediaSent = true
@@ -546,7 +562,10 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		case *maxschemes.FileAttachment:
 			if a.Payload.Url != "" {
 				doc := tgbotapi.NewDocument(tgChatID, tgbotapi.FileURL(a.Payload.Url))
-				doc.Caption = caption
+				doc.Caption = htmlCaption
+				if useHTML {
+					doc.ParseMode = "HTML"
+				}
 				doc.ReplyToMessageID = replyToID
 				sent, sendErr = b.tgBot.Send(doc)
 				mediaSent = true
@@ -562,9 +581,18 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		if text == "" {
 			return
 		}
-		tgMsg := tgbotapi.NewMessage(tgChatID, caption)
-		tgMsg.ReplyToMessageID = replyToID
-		sent, sendErr = b.tgBot.Send(tgMsg)
+		// Если есть markups и caption = оригинальный текст (кросспостинг), конвертируем в HTML
+		if len(body.Markups) > 0 && caption == text {
+			htmlText := maxMarkupsToHTML(text, body.Markups)
+			tgMsg := tgbotapi.NewMessage(tgChatID, htmlText)
+			tgMsg.ParseMode = "HTML"
+			tgMsg.ReplyToMessageID = replyToID
+			sent, sendErr = b.tgBot.Send(tgMsg)
+		} else {
+			tgMsg := tgbotapi.NewMessage(tgChatID, caption)
+			tgMsg.ReplyToMessageID = replyToID
+			sent, sendErr = b.tgBot.Send(tgMsg)
+		}
 	}
 
 	if sendErr != nil {
