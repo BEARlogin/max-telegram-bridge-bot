@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS crossposts;
+ALTER TABLE pending DROP COLUMN IF EXISTS command;

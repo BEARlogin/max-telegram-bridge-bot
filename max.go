@@ -106,18 +106,24 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			if text == "/start" || text == "/help" {
 				m := maxbot.NewMessage().SetChat(chatID).SetText(
 					"Бот-мост между MAX и Telegram.\n\n" +
-						"Команды:\n" +
+						"Команды (группы):\n" +
 						"/bridge — создать ключ для связки чатов\n" +
 						"/bridge <ключ> — связать этот чат с Telegram-чатом по ключу\n" +
 						"/bridge prefix on/off — включить/выключить префикс [TG]/[MAX]\n" +
 						"/unbridge — удалить связку\n\n" +
+						"Команды (каналы):\n" +
+						"/crosspost — связать каналы для кросспостинга\n" +
+						"/crosspost <ключ> — связать по ключу\n" +
+						"/crosspost direction tg>max|max>tg|both — направление\n" +
+						"/crosspost prefix on/off — префикс [TG]/[MAX]\n" +
+						"/uncrosspost — удалить кросспостинг\n\n" +
 						"Как связать чаты:\n" +
 						"1. Добавьте бота в оба чата\n" +
 						"   TG: " + b.cfg.TgBotURL + "\n" +
 						"   MAX: " + b.cfg.MaxBotURL + "\n" +
-						"2. В одном из чатов отправьте /bridge\n" +
-						"3. Бот выдаст ключ — отправьте /bridge <ключ> в другом чате\n" +
-						"4. Готово! Сообщения пересылаются в обе стороны.")
+						"2. В одном из чатов отправьте /bridge (или /crosspost для каналов)\n" +
+						"3. Бот выдаст ключ — отправьте его в другом чате\n" +
+						"4. Готово! Сообщения пересылаются.")
 				b.maxApi.Messages.Send(ctx, m)
 				continue
 			}
@@ -200,10 +206,120 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
-			// Пересылка
-			tgChatID, linked := b.repo.GetTgChat(chatID)
-			if !linked || msgUpd.Message.Sender.IsBot {
+			// /crosspost prefix on/off
+			if text == "/crosspost prefix on" || text == "/crosspost prefix off" {
+				if isGroup && !isAdmin {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+					b.maxApi.Messages.Send(ctx, m)
+					continue
+				}
+				on := text == "/crosspost prefix on"
+				if b.repo.SetCrosspostPrefix("max", chatID, on) {
+					reply := "Префикс [TG]/[MAX] включён."
+					if !on {
+						reply = "Префикс [TG]/[MAX] выключен."
+					}
+					m := maxbot.NewMessage().SetChat(chatID).SetText(reply)
+					b.maxApi.Messages.Send(ctx, m)
+				} else {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Чат не связан. Сначала выполните /crosspost.")
+					b.maxApi.Messages.Send(ctx, m)
+				}
 				continue
+			}
+
+			// /crosspost direction <dir>
+			if strings.HasPrefix(text, "/crosspost direction ") {
+				if isGroup && !isAdmin {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+					b.maxApi.Messages.Send(ctx, m)
+					continue
+				}
+				dir := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost direction "))
+				if dir != "both" && dir != "tg>max" && dir != "max>tg" {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Направление: both, tg>max или max>tg")
+					b.maxApi.Messages.Send(ctx, m)
+					continue
+				}
+				if b.repo.SetCrosspostDirection("max", chatID, dir) {
+					m := maxbot.NewMessage().SetChat(chatID).SetText(fmt.Sprintf("Направление кросспостинга: %s", dir))
+					b.maxApi.Messages.Send(ctx, m)
+				} else {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Чат не связан. Сначала выполните /crosspost.")
+					b.maxApi.Messages.Send(ctx, m)
+				}
+				continue
+			}
+
+			// /uncrosspost
+			if text == "/uncrosspost" {
+				if isGroup && !isAdmin {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+					b.maxApi.Messages.Send(ctx, m)
+					continue
+				}
+				if b.repo.UnpairCrosspost("max", chatID) {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Кросспостинг удалён.")
+					b.maxApi.Messages.Send(ctx, m)
+				} else {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Этот чат не связан.")
+					b.maxApi.Messages.Send(ctx, m)
+				}
+				continue
+			}
+
+			// /crosspost или /crosspost <key>
+			if text == "/crosspost" || strings.HasPrefix(text, "/crosspost ") {
+				if isGroup && !isAdmin {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+					b.maxApi.Messages.Send(ctx, m)
+					continue
+				}
+				key := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost"))
+				paired, generatedKey, err := b.repo.RegisterCrosspost(key, "max", chatID)
+				if err != nil {
+					slog.Error("crosspost register failed", "err", err)
+					continue
+				}
+
+				if paired {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Кросспостинг настроен! Посты пересылаются.")
+					b.maxApi.Messages.Send(ctx, m)
+					slog.Info("crosspost paired", "platform", "max", "chat", chatID, "key", key)
+				} else if generatedKey != "" {
+					m := maxbot.NewMessage().SetChat(chatID).
+						SetText(fmt.Sprintf("Ключ для кросспостинга: %s\n\nОтправьте в Telegram-канале:\n/crosspost %s", generatedKey, generatedKey))
+					b.maxApi.Messages.Send(ctx, m)
+					slog.Info("crosspost pending", "platform", "max", "chat", chatID, "key", generatedKey)
+				} else {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Ключ не найден или чат той же платформы.")
+					b.maxApi.Messages.Send(ctx, m)
+				}
+				continue
+			}
+
+			// Пересылка (bridge)
+			tgChatID, linked := b.repo.GetTgChat(chatID)
+			if linked && !msgUpd.Message.Sender.IsBot {
+				// Anti-loop
+				if !strings.HasPrefix(text, "[TG]") && !strings.HasPrefix(text, "[MAX]") {
+					prefix := b.repo.HasPrefix("max", chatID)
+					caption := formatMaxCaption(msgUpd, prefix)
+					b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
+				}
+				continue
+			}
+
+			// Пересылка (crosspost fallback)
+			if msgUpd.Message.Sender.IsBot {
+				continue
+			}
+			tgChatID, direction, cpLinked := b.repo.GetCrosspostTgChat(chatID)
+			if !cpLinked {
+				continue
+			}
+			if direction == "tg>max" {
+				continue // только TG→MAX, пропускаем
 			}
 
 			// Anti-loop
@@ -211,85 +327,93 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
-			prefix := b.repo.HasPrefix("max", chatID)
-			caption := formatMaxCaption(msgUpd, prefix)
+			prefix := b.repo.HasCrosspostPrefix("max", chatID)
+			caption := formatMaxCrosspostCaption(msgUpd, prefix)
+			b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
+		}
+	}
+}
 
-			// Reply ID
-			var replyToID int
-			if body.ReplyTo != "" {
-				if _, rid, ok := b.repo.LookupTgMsgID(body.ReplyTo); ok {
-					replyToID = rid
-				}
-			} else if msgUpd.Message.Link != nil {
-				mid := msgUpd.Message.Link.Message.Mid
-				if mid != "" {
-					if _, rid, ok := b.repo.LookupTgMsgID(mid); ok {
-						replyToID = rid
-					}
-				}
-			}
+// forwardMaxToTg пересылает MAX-сообщение (текст/медиа) в TG-чат.
+func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageCreatedUpdate, tgChatID int64, caption string) {
+	body := msgUpd.Message.Body
+	chatID := msgUpd.Message.Recipient.ChatId
+	text := strings.TrimSpace(body.Text)
 
-			// Проверяем вложения
-			var sent tgbotapi.Message
-			var sendErr error
-			mediaSent := false
-
-			for _, att := range body.Attachments {
-				switch a := att.(type) {
-				case *maxschemes.PhotoAttachment:
-					if a.Payload.Url != "" {
-						photo := tgbotapi.NewPhoto(tgChatID, tgbotapi.FileURL(a.Payload.Url))
-						photo.Caption = caption
-						photo.ReplyToMessageID = replyToID
-						sent, sendErr = b.tgBot.Send(photo)
-						mediaSent = true
-					}
-				case *maxschemes.VideoAttachment:
-					if a.Payload.Url != "" {
-						video := tgbotapi.NewVideo(tgChatID, tgbotapi.FileURL(a.Payload.Url))
-						video.Caption = caption
-						video.ReplyToMessageID = replyToID
-						sent, sendErr = b.tgBot.Send(video)
-						mediaSent = true
-					}
-				case *maxschemes.AudioAttachment:
-					if a.Payload.Url != "" {
-						audio := tgbotapi.NewAudio(tgChatID, tgbotapi.FileURL(a.Payload.Url))
-						audio.Caption = caption
-						audio.ReplyToMessageID = replyToID
-						sent, sendErr = b.tgBot.Send(audio)
-						mediaSent = true
-					}
-				case *maxschemes.FileAttachment:
-					if a.Payload.Url != "" {
-						doc := tgbotapi.NewDocument(tgChatID, tgbotapi.FileURL(a.Payload.Url))
-						doc.Caption = caption
-						doc.ReplyToMessageID = replyToID
-						sent, sendErr = b.tgBot.Send(doc)
-						mediaSent = true
-					}
-				}
-				if mediaSent {
-					break
-				}
-			}
-
-			// Текст без медиа
-			if !mediaSent {
-				if text == "" {
-					continue
-				}
-				tgMsg := tgbotapi.NewMessage(tgChatID, caption)
-				tgMsg.ReplyToMessageID = replyToID
-				sent, sendErr = b.tgBot.Send(tgMsg)
-			}
-
-			if sendErr != nil {
-				slog.Error("MAX→TG send failed", "err", sendErr)
-			} else {
-				slog.Info("MAX→TG sent", "msgID", sent.MessageID, "media", mediaSent)
-				b.repo.SaveMsg(tgChatID, sent.MessageID, chatID, body.Mid)
+	// Reply ID
+	var replyToID int
+	if body.ReplyTo != "" {
+		if _, rid, ok := b.repo.LookupTgMsgID(body.ReplyTo); ok {
+			replyToID = rid
+		}
+	} else if msgUpd.Message.Link != nil {
+		mid := msgUpd.Message.Link.Message.Mid
+		if mid != "" {
+			if _, rid, ok := b.repo.LookupTgMsgID(mid); ok {
+				replyToID = rid
 			}
 		}
+	}
+
+	// Проверяем вложения
+	var sent tgbotapi.Message
+	var sendErr error
+	mediaSent := false
+
+	for _, att := range body.Attachments {
+		switch a := att.(type) {
+		case *maxschemes.PhotoAttachment:
+			if a.Payload.Url != "" {
+				photo := tgbotapi.NewPhoto(tgChatID, tgbotapi.FileURL(a.Payload.Url))
+				photo.Caption = caption
+				photo.ReplyToMessageID = replyToID
+				sent, sendErr = b.tgBot.Send(photo)
+				mediaSent = true
+			}
+		case *maxschemes.VideoAttachment:
+			if a.Payload.Url != "" {
+				video := tgbotapi.NewVideo(tgChatID, tgbotapi.FileURL(a.Payload.Url))
+				video.Caption = caption
+				video.ReplyToMessageID = replyToID
+				sent, sendErr = b.tgBot.Send(video)
+				mediaSent = true
+			}
+		case *maxschemes.AudioAttachment:
+			if a.Payload.Url != "" {
+				audio := tgbotapi.NewAudio(tgChatID, tgbotapi.FileURL(a.Payload.Url))
+				audio.Caption = caption
+				audio.ReplyToMessageID = replyToID
+				sent, sendErr = b.tgBot.Send(audio)
+				mediaSent = true
+			}
+		case *maxschemes.FileAttachment:
+			if a.Payload.Url != "" {
+				doc := tgbotapi.NewDocument(tgChatID, tgbotapi.FileURL(a.Payload.Url))
+				doc.Caption = caption
+				doc.ReplyToMessageID = replyToID
+				sent, sendErr = b.tgBot.Send(doc)
+				mediaSent = true
+			}
+		}
+		if mediaSent {
+			break
+		}
+	}
+
+	// Текст без медиа
+	if !mediaSent {
+		if text == "" {
+			return
+		}
+		tgMsg := tgbotapi.NewMessage(tgChatID, caption)
+		tgMsg.ReplyToMessageID = replyToID
+		sent, sendErr = b.tgBot.Send(tgMsg)
+	}
+
+	if sendErr != nil {
+		slog.Error("MAX→TG send failed", "err", sendErr)
+	} else {
+		slog.Info("MAX→TG sent", "msgID", sent.MessageID, "media", mediaSent)
+		b.repo.SaveMsg(tgChatID, sent.MessageID, chatID, body.Mid)
 	}
 }

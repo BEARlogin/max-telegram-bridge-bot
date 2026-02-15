@@ -196,3 +196,74 @@ func TestFormatMaxCaption(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatTgCrosspostCaption(t *testing.T) {
+	tests := []struct {
+		name     string
+		msg      *tgbotapi.Message
+		prefix   bool
+		expected string
+	}{
+		{
+			name:     "text with prefix",
+			msg:      &tgbotapi.Message{Text: "Новый пост"},
+			prefix:   true,
+			expected: "[TG] Новый пост",
+		},
+		{
+			name:     "text without prefix",
+			msg:      &tgbotapi.Message{Text: "Новый пост"},
+			prefix:   false,
+			expected: "Новый пост",
+		},
+		{
+			name:     "caption fallback with prefix",
+			msg:      &tgbotapi.Message{Text: "", Caption: "фото"},
+			prefix:   true,
+			expected: "[TG] фото",
+		},
+		{
+			name:     "empty text no prefix",
+			msg:      &tgbotapi.Message{Text: ""},
+			prefix:   false,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatTgCrosspostCaption(tt.msg, tt.prefix)
+			if got != tt.expected {
+				t.Errorf("formatTgCrosspostCaption() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatMaxCrosspostCaption(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		prefix   bool
+		expected string
+	}{
+		{"with prefix", "Новость дня", true, "[MAX] Новость дня"},
+		{"without prefix", "Новость дня", false, "Новость дня"},
+		{"empty text with prefix", "", true, "[MAX] "},
+		{"empty text no prefix", "", false, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upd := &maxschemes.MessageCreatedUpdate{
+				Message: maxschemes.Message{
+					Body: maxschemes.MessageBody{Text: tt.text},
+				},
+			}
+			got := formatMaxCrosspostCaption(upd, tt.prefix)
+			if got != tt.expected {
+				t.Errorf("formatMaxCrosspostCaption() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

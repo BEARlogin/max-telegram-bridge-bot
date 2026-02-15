@@ -7,6 +7,11 @@ func isTgGroup(chatType string) bool {
 	return chatType == "group" || chatType == "supergroup"
 }
 
+// isTgChannel returns true if the TG chat type is a channel.
+func isTgChannel(chatType string) bool {
+	return chatType == "channel"
+}
+
 // isTgAdmin returns true if the TG ChatMember status indicates admin rights.
 func isTgAdmin(memberStatus string) bool {
 	return memberStatus == "creator" || memberStatus == "administrator"

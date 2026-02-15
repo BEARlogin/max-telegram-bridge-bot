@@ -32,18 +32,18 @@ func (r *sqliteRepo) Register(key, platform string, chatID int64) (bool, string,
 
 	if key == "" {
 		var existing string
-		err := r.db.QueryRow("SELECT key FROM pending WHERE platform = ? AND chat_id = ?", platform, chatID).Scan(&existing)
+		err := r.db.QueryRow("SELECT key FROM pending WHERE platform = ? AND chat_id = ? AND command = 'bridge'", platform, chatID).Scan(&existing)
 		if err == nil {
 			return false, existing, nil
 		}
 		generated := genKey()
-		_, err = r.db.Exec("INSERT INTO pending (key, platform, chat_id, created_at) VALUES (?, ?, ?, ?)", generated, platform, chatID, time.Now().Unix())
+		_, err = r.db.Exec("INSERT INTO pending (key, platform, chat_id, created_at, command) VALUES (?, ?, ?, ?, 'bridge')", generated, platform, chatID, time.Now().Unix())
 		return false, generated, err
 	}
 
 	var peerPlatform string
 	var peerChatID int64
-	err := r.db.QueryRow("SELECT platform, chat_id FROM pending WHERE key = ?", key).Scan(&peerPlatform, &peerChatID)
+	err := r.db.QueryRow("SELECT platform, chat_id FROM pending WHERE key = ? AND command = 'bridge'", key).Scan(&peerPlatform, &peerChatID)
 	if err != nil {
 		return false, "", nil
 	}
@@ -139,6 +139,120 @@ func (r *sqliteRepo) Unpair(platform string, chatID int64) bool {
 		res, _ = r.db.Exec("DELETE FROM pairs WHERE tg_chat_id = ?", chatID)
 	} else {
 		res, _ = r.db.Exec("DELETE FROM pairs WHERE max_chat_id = ?", chatID)
+	}
+	if res == nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
+func (r *sqliteRepo) RegisterCrosspost(key, platform string, chatID int64) (bool, string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if key == "" {
+		var existing string
+		err := r.db.QueryRow("SELECT key FROM pending WHERE platform = ? AND chat_id = ? AND command = 'crosspost'", platform, chatID).Scan(&existing)
+		if err == nil {
+			return false, existing, nil
+		}
+		generated := genKey()
+		_, err = r.db.Exec("INSERT INTO pending (key, platform, chat_id, created_at, command) VALUES (?, ?, ?, ?, 'crosspost')", generated, platform, chatID, time.Now().Unix())
+		return false, generated, err
+	}
+
+	var peerPlatform string
+	var peerChatID int64
+	err := r.db.QueryRow("SELECT platform, chat_id FROM pending WHERE key = ? AND command = 'crosspost'", key).Scan(&peerPlatform, &peerChatID)
+	if err != nil {
+		return false, "", nil
+	}
+	if peerPlatform == platform {
+		return false, "", nil
+	}
+
+	r.db.Exec("DELETE FROM pending WHERE key = ?", key)
+
+	var tgID, maxID int64
+	if platform == "tg" {
+		tgID, maxID = chatID, peerChatID
+	} else {
+		tgID, maxID = peerChatID, chatID
+	}
+
+	_, err = r.db.Exec("INSERT OR REPLACE INTO crossposts (tg_chat_id, max_chat_id, created_at) VALUES (?, ?, ?)", tgID, maxID, time.Now().Unix())
+	return true, "", err
+}
+
+func (r *sqliteRepo) GetCrosspostMaxChat(tgChatID int64) (int64, string, bool) {
+	var id int64
+	var dir string
+	err := r.db.QueryRow("SELECT max_chat_id, direction FROM crossposts WHERE tg_chat_id = ?", tgChatID).Scan(&id, &dir)
+	return id, dir, err == nil
+}
+
+func (r *sqliteRepo) GetCrosspostTgChat(maxChatID int64) (int64, string, bool) {
+	var id int64
+	var dir string
+	err := r.db.QueryRow("SELECT tg_chat_id, direction FROM crossposts WHERE max_chat_id = ?", maxChatID).Scan(&id, &dir)
+	return id, dir, err == nil
+}
+
+func (r *sqliteRepo) SetCrosspostDirection(platform string, chatID int64, direction string) bool {
+	var res sql.Result
+	if platform == "tg" {
+		res, _ = r.db.Exec("UPDATE crossposts SET direction = ? WHERE tg_chat_id = ?", direction, chatID)
+	} else {
+		res, _ = r.db.Exec("UPDATE crossposts SET direction = ? WHERE max_chat_id = ?", direction, chatID)
+	}
+	if res == nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
+func (r *sqliteRepo) UnpairCrosspost(platform string, chatID int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var res sql.Result
+	if platform == "tg" {
+		res, _ = r.db.Exec("DELETE FROM crossposts WHERE tg_chat_id = ?", chatID)
+	} else {
+		res, _ = r.db.Exec("DELETE FROM crossposts WHERE max_chat_id = ?", chatID)
+	}
+	if res == nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
+func (r *sqliteRepo) HasCrosspostPrefix(platform string, chatID int64) bool {
+	var v int
+	var err error
+	if platform == "tg" {
+		err = r.db.QueryRow("SELECT prefix FROM crossposts WHERE tg_chat_id = ?", chatID).Scan(&v)
+	} else {
+		err = r.db.QueryRow("SELECT prefix FROM crossposts WHERE max_chat_id = ?", chatID).Scan(&v)
+	}
+	if err != nil {
+		return true
+	}
+	return v == 1
+}
+
+func (r *sqliteRepo) SetCrosspostPrefix(platform string, chatID int64, on bool) bool {
+	v := 0
+	if on {
+		v = 1
+	}
+	var res sql.Result
+	if platform == "tg" {
+		res, _ = r.db.Exec("UPDATE crossposts SET prefix = ? WHERE tg_chat_id = ?", v, chatID)
+	} else {
+		res, _ = r.db.Exec("UPDATE crossposts SET prefix = ? WHERE max_chat_id = ?", v, chatID)
 	}
 	if res == nil {
 		return false

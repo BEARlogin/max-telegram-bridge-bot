@@ -107,3 +107,24 @@ func TestIsMaxUserAdmin_EmptyList(t *testing.T) {
 		t.Error("isMaxUserAdmin([], 100) = true, want false")
 	}
 }
+
+func TestIsTgChannel(t *testing.T) {
+	tests := []struct {
+		chatType string
+		want     bool
+	}{
+		{"channel", true},
+		{"group", false},
+		{"supergroup", false},
+		{"private", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.chatType, func(t *testing.T) {
+			if got := isTgChannel(tt.chatType); got != tt.want {
+				t.Errorf("isTgChannel(%q) = %v, want %v", tt.chatType, got, tt.want)
+			}
+		})
+	}
+}
