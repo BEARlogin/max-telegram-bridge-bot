@@ -388,7 +388,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		if hasFormatting {
 			format = "markdown"
 		}
-		slog.Info("TG→MAX sending", "format", hasFormatting, "text", mdCaption)
+		slog.Info("TG→MAX sending")
 		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, "", "", replyTo, format)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)

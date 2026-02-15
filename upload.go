@@ -150,10 +150,6 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 		return "", err
 	}
 
-	if format != "" {
-		slog.Info("MAX API request body", "json", string(data))
-	}
-
 	url := fmt.Sprintf("https://platform-api.max.ru/messages?chat_id=%d&v=1.2.5", chatID)
 
 	// Retry при attachment.not.ready (файл ещё обрабатывается)
@@ -182,10 +178,6 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-
-		if format != "" {
-			slog.Info("MAX API response", "status", resp.StatusCode, "body", string(respBody))
-		}
 
 		if resp.StatusCode == 200 {
 			var result struct {

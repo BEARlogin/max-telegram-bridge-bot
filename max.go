@@ -353,7 +353,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
-			slog.Info("MAX→TG raw", "text", msgUpd.Message.Body.Text, "markups", msgUpd.Message.Body.Markups, "rawAtt", msgUpd.Message.Body.RawAttachments)
 			caption := formatMaxCrosspostCaption(msgUpd)
 			b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
 		}
