@@ -23,4 +23,4 @@ jobs:
         run: go test ./...
 
       - name: Build
-        run: CGO_ENABLED=1 go build -o bearlogin-bridge .
+        run: CGO_ENABLED=1 go build -o max-telegram-bridge-bot .

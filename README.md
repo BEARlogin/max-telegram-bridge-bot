@@ -18,8 +18,8 @@
 Скачайте бинарь со [страницы релизов](https://github.com/BEARlogin/max-telegram-bridge-bot/releases) и запустите:
 
 ```bash
-chmod +x bearlogin-bridge
-./bearlogin-bridge
+chmod +x max-telegram-bridge-bot
+./max-telegram-bridge-bot
 ```
 
 ### Из исходников
@@ -27,8 +27,8 @@ chmod +x bearlogin-bridge
 ```bash
 git clone https://github.com/BEARlogin/max-telegram-bridge-bot.git
 cd max-telegram-bridge-bot
-go build -o bearlogin-bridge .
-./bearlogin-bridge
+go build -o max-telegram-bridge-bot .
+./max-telegram-bridge-bot
 ```
 
 ## Быстрый старт
@@ -48,7 +48,7 @@ cp .env.example .env
 ### 3. Запустите
 
 ```bash
-./bearlogin-bridge
+./max-telegram-bridge-bot
 ```
 
 ### 4. Свяжите чаты

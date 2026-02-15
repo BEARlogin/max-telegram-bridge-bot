@@ -1,7 +1,7 @@
 # Binaries
 bridge
 bridge_linux
-bearlogin-bridge
+max-telegram-bridge-bot
 *.exe
 
 # Database
