@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgres://bridge:bridge@postgres:5432/bridge?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:-bridge}:${POSTGRES_PASSWORD:-bridge}@postgres:5432/${POSTGRES_DB:-bridge}?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -13,13 +13,13 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: bridge
-      POSTGRES_PASSWORD: bridge
-      POSTGRES_DB: bridge
+      POSTGRES_USER: ${POSTGRES_USER:-bridge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bridge}
+      POSTGRES_DB: ${POSTGRES_DB:-bridge}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bridge"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bridge}"]
       interval: 5s
       timeout: 3s
       retries: 5
