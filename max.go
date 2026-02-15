@@ -43,6 +43,21 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			slog.Debug("MAX update", "type", fmt.Sprintf("%T", upd))
 
 			// Обработка edit
+			// Обработка удаления
+			if delUpd, isDel := upd.(*maxschemes.MessageRemovedUpdate); isDel {
+				tgChatID, tgMsgID, ok := b.repo.LookupTgMsgID(delUpd.MessageId)
+				if !ok {
+					continue
+				}
+				del := tgbotapi.NewDeleteMessage(tgChatID, tgMsgID)
+				if _, err := b.tgBot.Request(del); err != nil {
+					slog.Error("MAX→TG delete failed", "err", err)
+				} else {
+					slog.Info("MAX→TG deleted", "tgMsg", tgMsgID)
+				}
+				continue
+			}
+
 			if editUpd, isEdit := upd.(*maxschemes.MessageEditedUpdate); isEdit {
 				if editUpd.Message.Sender.IsBot {
 					continue
