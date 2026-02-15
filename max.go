@@ -93,6 +93,12 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
+			// Обработка inline-кнопок (crosspost management)
+			if cbUpd, isCb := upd.(*maxschemes.MessageCallbackUpdate); isCb {
+				b.handleMaxCallback(ctx, cbUpd)
+				continue
+			}
+
 			msgUpd, isMsg := upd.(*maxschemes.MessageCreatedUpdate)
 			if !isMsg {
 				continue
@@ -115,15 +121,14 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						"/unbridge — удалить связку\n\n" +
 						"Кросспостинг каналов (в личке бота):\n" +
 						"/crosspost <TG_ID> — связать MAX-канал с TG-каналом\n" +
-						"   (TG ID получить: перешлите пост из TG-канала TG-боту)\n" +
-						"/crosspost direction tg>max|max>tg|both — направление\n" +
-						"/uncrosspost — удалить кросспостинг\n\n" +
+						"   (TG ID получить: перешлите пост из TG-канала TG-боту)\n\n" +
 						"Как связать каналы:\n" +
 						"1. Перешлите пост из TG-канала в личку TG-бота\n" +
 						"   TG: " + b.cfg.TgBotURL + "\n" +
-						"2. Бот покажет ID канала\n" +
+						"2. Бот покажет ID канала — скопируйте\n" +
 						"3. Здесь в личке напишите: /crosspost <TG_ID>\n" +
 						"4. Перешлите пост из MAX-канала сюда → готово!\n\n" +
+						"Управление: перешлите пост из связанного канала → кнопки\n\n" +
 						"Как связать группы:\n" +
 						"1. Добавьте бота в оба чата\n" +
 						"   MAX: " + b.cfg.MaxBotURL + "\n" +
@@ -217,39 +222,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			// === Crosspost команды (только в личке бота) ===
 
-			// /crosspost direction <dir> (в личке)
-			if isDialog && strings.HasPrefix(text, "/crosspost direction ") {
-				dir := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost direction "))
-				if dir != "both" && dir != "tg>max" && dir != "max>tg" {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Направление: both, tg>max или max>tg")
-					b.maxApi.Messages.Send(ctx, m)
-					continue
-				}
-				// Ищем crosspost по MAX user → нужен MAX chat ID
-				// В диалоге chatID = userId, ищем crosspost где max_chat_id связан с этим юзером
-				// Пока поддерживаем direction только для последнего настроенного crosspost
-				if b.repo.SetCrosspostDirection("max", chatID, dir) {
-					m := maxbot.NewMessage().SetChat(chatID).SetText(fmt.Sprintf("Направление кросспостинга: %s", dir))
-					b.maxApi.Messages.Send(ctx, m)
-				} else {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Кросспостинг не настроен.")
-					b.maxApi.Messages.Send(ctx, m)
-				}
-				continue
-			}
-
-			// /uncrosspost (в личке)
-			if isDialog && text == "/uncrosspost" {
-				if b.repo.UnpairCrosspost("max", chatID) {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Кросспостинг удалён.")
-					b.maxApi.Messages.Send(ctx, m)
-				} else {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Кросспостинг не настроен.")
-					b.maxApi.Messages.Send(ctx, m)
-				}
-				continue
-			}
-
 			// /crosspost <tg_channel_id> — начало настройки (только в личке)
 			if isDialog && strings.HasPrefix(text, "/crosspost") {
 				arg := strings.TrimSpace(strings.TrimPrefix(text, "/crosspost"))
@@ -283,7 +255,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
-			// Пересланное сообщение в личке → завершение настройки crosspost
+			// Пересланное сообщение в личке → завершение настройки crosspost или показ управления
 			if isDialog && msgUpd.Message.Link != nil && msgUpd.Message.Link.Type == maxschemes.FORWARD {
 				maxChannelID := msgUpd.Message.Link.ChatId
 
@@ -295,28 +267,48 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 				b.cpWaitMu.Unlock()
 
-				if !waiting || maxChannelID == 0 {
-					continue
-				}
+				if waiting && maxChannelID != 0 {
+					// Проверяем, не связан ли уже
+					if _, _, ok := b.repo.GetCrosspostTgChat(maxChannelID); ok {
+						m := maxbot.NewMessage().SetChat(chatID).SetText("Этот MAX-канал уже связан.")
+						b.maxApi.Messages.Send(ctx, m)
+						continue
+					}
 
-				// Проверяем, не связан ли уже
-				if _, _, ok := b.repo.GetCrosspostTgChat(maxChannelID); ok {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Этот MAX-канал уже связан.")
+					if err := b.repo.PairCrosspost(tgChannelID, maxChannelID); err != nil {
+						slog.Error("crosspost pair failed", "err", err)
+						m := maxbot.NewMessage().SetChat(chatID).SetText("Ошибка при создании связки.")
+						b.maxApi.Messages.Send(ctx, m)
+						continue
+					}
+
+					// Показать статус + клавиатуру после паринга
+					kb := maxCrosspostKeyboard(b.maxApi, "both", maxChannelID)
+					m := maxbot.NewMessage().SetChat(chatID).
+						SetText(fmt.Sprintf("Кросспостинг настроен!\nTG: %d ↔ MAX: %d\nНаправление: ⟷ оба", tgChannelID, maxChannelID)).
+						AddKeyboard(kb)
 					b.maxApi.Messages.Send(ctx, m)
+					slog.Info("crosspost paired", "tg", tgChannelID, "max", maxChannelID)
 					continue
 				}
 
-				if err := b.repo.PairCrosspost(tgChannelID, maxChannelID); err != nil {
-					slog.Error("crosspost pair failed", "err", err)
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Ошибка при создании связки.")
+				// Нет cpWait — проверяем, связан ли канал → показать управление
+				if maxChannelID != 0 {
+					if tgID, direction, ok := b.repo.GetCrosspostTgChat(maxChannelID); ok {
+						kb := maxCrosspostKeyboard(b.maxApi, direction, maxChannelID)
+						m := maxbot.NewMessage().SetChat(chatID).
+							SetText(maxCrosspostStatusText(tgID, direction)).
+							AddKeyboard(kb)
+						b.maxApi.Messages.Send(ctx, m)
+						continue
+					}
+				}
+
+				// Канал не связан, cpWait нет — сообщить
+				if maxChannelID != 0 {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Этот канал не связан с кросспостингом.\n\nДля настройки:\n/crosspost <TG_ID>")
 					b.maxApi.Messages.Send(ctx, m)
-					continue
 				}
-
-				m := maxbot.NewMessage().SetChat(chatID).SetText(
-					fmt.Sprintf("Кросспостинг настроен!\nTG: %d ↔ MAX: %d\n\nУправление:\n/crosspost direction tg>max|max>tg|both\n/uncrosspost", tgChannelID, maxChannelID))
-				b.maxApi.Messages.Send(ctx, m)
-				slog.Info("crosspost paired", "tg", tgChannelID, "max", maxChannelID)
 				continue
 			}
 
@@ -353,6 +345,138 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
 		}
 	}
+}
+
+// handleMaxCallback обрабатывает нажатия inline-кнопок (crosspost management).
+func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.MessageCallbackUpdate) {
+	data := cbUpd.Callback.Payload
+	callbackID := cbUpd.Callback.CallbackID
+
+	// cpd:dir:maxChatID — change direction
+	if strings.HasPrefix(data, "cpd:") {
+		parts := strings.SplitN(data, ":", 3)
+		if len(parts) != 3 {
+			return
+		}
+		dir := parts[1]
+		maxChatID, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			return
+		}
+		if dir != "tg>max" && dir != "max>tg" && dir != "both" {
+			return
+		}
+		b.repo.SetCrosspostDirection(maxChatID, dir)
+
+		tgID, _, _ := b.repo.GetCrosspostTgChat(maxChatID)
+		body := maxCrosspostMessageBody(b.maxApi, maxCrosspostStatusText(tgID, dir), dir, maxChatID)
+		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
+			Message:      body,
+			Notification: "Готово",
+		})
+		return
+	}
+
+	// cpu:maxChatID — unlink (show confirmation)
+	if strings.HasPrefix(data, "cpu:") {
+		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cpu:"), 10, 64)
+		if err != nil {
+			return
+		}
+		kb := b.maxApi.Messages.NewKeyboardBuilder()
+		kb.AddRow().
+			AddCallback("Да, удалить", maxschemes.NEGATIVE, fmt.Sprintf("cpuc:%d", maxChatID)).
+			AddCallback("Отмена", maxschemes.DEFAULT, fmt.Sprintf("cpux:%d", maxChatID))
+		body := &maxschemes.NewMessageBody{
+			Text:        "Удалить кросспостинг?",
+			Attachments: []interface{}{maxschemes.NewInlineKeyboardAttachmentRequest(kb.Build())},
+		}
+		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
+			Message: body,
+		})
+		return
+	}
+
+	// cpuc:maxChatID — unlink confirmed
+	if strings.HasPrefix(data, "cpuc:") {
+		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cpuc:"), 10, 64)
+		if err != nil {
+			return
+		}
+		b.repo.UnpairCrosspost(maxChatID)
+		body := &maxschemes.NewMessageBody{Text: "Кросспостинг удалён."}
+		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
+			Message:      body,
+			Notification: "Удалено",
+		})
+		return
+	}
+
+	// cpux:maxChatID — cancel (return to management keyboard)
+	if strings.HasPrefix(data, "cpux:") {
+		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cpux:"), 10, 64)
+		if err != nil {
+			return
+		}
+		tgID, direction, ok := b.repo.GetCrosspostTgChat(maxChatID)
+		if !ok {
+			body := &maxschemes.NewMessageBody{Text: "Кросспостинг не найден."}
+			b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
+				Message: body,
+			})
+			return
+		}
+		body := maxCrosspostMessageBody(b.maxApi, maxCrosspostStatusText(tgID, direction), direction, maxChatID)
+		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
+			Message: body,
+		})
+		return
+	}
+}
+
+// maxCrosspostMessageBody строит NewMessageBody с текстом и inline-клавиатурой.
+func maxCrosspostMessageBody(api *maxbot.Api, text, direction string, maxChatID int64) *maxschemes.NewMessageBody {
+	kb := maxCrosspostKeyboard(api, direction, maxChatID)
+	return &maxschemes.NewMessageBody{
+		Text:        text,
+		Attachments: []interface{}{maxschemes.NewInlineKeyboardAttachmentRequest(kb.Build())},
+	}
+}
+
+// maxCrosspostKeyboard строит inline-клавиатуру для управления кросспостингом в MAX.
+func maxCrosspostKeyboard(api *maxbot.Api, direction string, maxChatID int64) *maxbot.Keyboard {
+	lblTgMax := "TG → MAX"
+	lblMaxTg := "MAX → TG"
+	lblBoth := "⟷ Оба"
+	switch direction {
+	case "tg>max":
+		lblTgMax = "✓ TG → MAX"
+	case "max>tg":
+		lblMaxTg = "✓ MAX → TG"
+	default: // "both"
+		lblBoth = "✓ ⟷ Оба"
+	}
+	id := strconv.FormatInt(maxChatID, 10)
+	kb := api.Messages.NewKeyboardBuilder()
+	kb.AddRow().
+		AddCallback(lblTgMax, maxschemes.DEFAULT, "cpd:tg>max:"+id).
+		AddCallback(lblMaxTg, maxschemes.DEFAULT, "cpd:max>tg:"+id).
+		AddCallback(lblBoth, maxschemes.DEFAULT, "cpd:both:"+id)
+	kb.AddRow().
+		AddCallback("❌ Удалить", maxschemes.NEGATIVE, "cpu:"+id)
+	return kb
+}
+
+// maxCrosspostStatusText возвращает текст статуса кросспостинга для MAX.
+func maxCrosspostStatusText(tgChatID int64, direction string) string {
+	dirLabel := "⟷ оба"
+	switch direction {
+	case "tg>max":
+		dirLabel = "TG → MAX"
+	case "max>tg":
+		dirLabel = "MAX → TG"
+	}
+	return fmt.Sprintf("Кросспостинг настроен\nTG: %d ↔ MAX\nНаправление: %s", tgChatID, dirLabel)
 }
 
 // forwardMaxToTg пересылает MAX-сообщение (текст/медиа) в TG-чат.

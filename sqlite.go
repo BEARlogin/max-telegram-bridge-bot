@@ -167,13 +167,8 @@ func (r *sqliteRepo) GetCrosspostTgChat(maxChatID int64) (int64, string, bool) {
 	return id, dir, err == nil
 }
 
-func (r *sqliteRepo) SetCrosspostDirection(platform string, chatID int64, direction string) bool {
-	var res sql.Result
-	if platform == "tg" {
-		res, _ = r.db.Exec("UPDATE crossposts SET direction = ? WHERE tg_chat_id = ?", direction, chatID)
-	} else {
-		res, _ = r.db.Exec("UPDATE crossposts SET direction = ? WHERE max_chat_id = ?", direction, chatID)
-	}
+func (r *sqliteRepo) SetCrosspostDirection(maxChatID int64, direction string) bool {
+	res, _ := r.db.Exec("UPDATE crossposts SET direction = ? WHERE max_chat_id = ?", direction, maxChatID)
 	if res == nil {
 		return false
 	}
@@ -181,15 +176,10 @@ func (r *sqliteRepo) SetCrosspostDirection(platform string, chatID int64, direct
 	return n > 0
 }
 
-func (r *sqliteRepo) UnpairCrosspost(platform string, chatID int64) bool {
+func (r *sqliteRepo) UnpairCrosspost(maxChatID int64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var res sql.Result
-	if platform == "tg" {
-		res, _ = r.db.Exec("DELETE FROM crossposts WHERE tg_chat_id = ?", chatID)
-	} else {
-		res, _ = r.db.Exec("DELETE FROM crossposts WHERE max_chat_id = ?", chatID)
-	}
+	res, _ := r.db.Exec("DELETE FROM crossposts WHERE max_chat_id = ?", maxChatID)
 	if res == nil {
 		return false
 	}
