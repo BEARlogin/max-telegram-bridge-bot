@@ -35,5 +35,28 @@ type Repository interface {
 	SetCrosspostDirection(maxChatID int64, direction string) bool
 	UnpairCrosspost(maxChatID int64) bool
 
+	// Send queue (retry при недоступности MAX/TG API)
+	EnqueueSend(item *QueueItem) error
+	PeekQueue(limit int) ([]QueueItem, error)
+	DeleteFromQueue(id int64) error
+	IncrementAttempt(id int64, nextRetry int64) error
+
 	Close() error
+}
+
+// QueueItem — сообщение в очереди на повторную отправку.
+type QueueItem struct {
+	ID        int64
+	Direction string // "tg2max" or "max2tg"
+	SrcChatID int64
+	DstChatID int64
+	SrcMsgID  string // TG msg ID (as string) or MAX mid
+	Text      string
+	AttType   string // "video", "file", "audio", ""
+	AttToken  string
+	ReplyTo   string
+	Format    string
+	Attempts  int
+	CreatedAt int64
+	NextRetry int64
 }

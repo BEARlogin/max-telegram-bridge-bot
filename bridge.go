@@ -23,6 +23,17 @@ type Config struct {
 	WebhookPort string // порт для webhook сервера
 }
 
+// chatBreaker хранит состояние circuit breaker для одного чата.
+type chatBreaker struct {
+	fails    int
+	blockedAt time.Time
+}
+
+const (
+	cbMaxFails = 3              // после N фейлов — блокируем
+	cbCooldown = 5 * time.Minute // на сколько блокируем
+)
+
 // Bridge — основная структура, объединяющая зависимости.
 type Bridge struct {
 	cfg        Config
@@ -34,6 +45,9 @@ type Bridge struct {
 
 	cpWaitMu sync.Mutex
 	cpWait   map[int64]int64 // MAX userId → TG channel ID (ожидание пересылки)
+
+	cbMu       sync.Mutex
+	breakers   map[int64]*chatBreaker // destination chatID → breaker
 }
 
 // NewBridge создаёт экземпляр Bridge.
@@ -48,11 +62,55 @@ func NewBridge(cfg Config, repo Repository, tgBot *tgbotapi.BotAPI, maxApi *maxb
 		tgBot:  tgBot,
 		maxApi: maxApi,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 15 * time.Second,
 		},
 		whSecret: secret,
 		cpWait:   make(map[int64]int64),
+		breakers: make(map[int64]*chatBreaker),
 	}
+}
+
+// cbBlocked проверяет, заблокирован ли чат.
+func (b *Bridge) cbBlocked(chatID int64) bool {
+	b.cbMu.Lock()
+	defer b.cbMu.Unlock()
+	cb, ok := b.breakers[chatID]
+	if !ok {
+		return false
+	}
+	if cb.fails >= cbMaxFails && time.Since(cb.blockedAt) < cbCooldown {
+		return true
+	}
+	if cb.fails >= cbMaxFails {
+		// Кулдаун прошёл — сбрасываем, пробуем снова
+		delete(b.breakers, chatID)
+	}
+	return false
+}
+
+// cbFail регистрирует ошибку. Возвращает true если чат только что заблокировался.
+func (b *Bridge) cbFail(chatID int64) bool {
+	b.cbMu.Lock()
+	defer b.cbMu.Unlock()
+	cb, ok := b.breakers[chatID]
+	if !ok {
+		cb = &chatBreaker{}
+		b.breakers[chatID] = cb
+	}
+	cb.fails++
+	if cb.fails == cbMaxFails {
+		cb.blockedAt = time.Now()
+		slog.Warn("circuit breaker: chat blocked", "chatID", chatID, "cooldown", cbCooldown)
+		return true
+	}
+	return false
+}
+
+// cbSuccess сбрасывает счётчик ошибок для чата.
+func (b *Bridge) cbSuccess(chatID int64) {
+	b.cbMu.Lock()
+	defer b.cbMu.Unlock()
+	delete(b.breakers, chatID)
 }
 
 func (b *Bridge) tgWebhookPath() string {
@@ -101,6 +159,20 @@ func (b *Bridge) Run(ctx context.Context) {
 				return
 			case <-t.C:
 				b.repo.CleanOldMessages()
+			}
+		}
+	}()
+
+	// Воркер очереди — проверяет каждые 10 секунд
+	go func() {
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				b.processQueue(ctx)
 			}
 		}
 	}()

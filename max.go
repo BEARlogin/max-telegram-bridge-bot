@@ -111,6 +111,16 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			slog.Debug("MAX msg received", "from", msgUpd.Message.Sender.Name, "chat", chatID, "type", msgUpd.Message.Recipient.ChatType)
 
+			if text == "/whoami" {
+				m := maxbot.NewMessage().SetChat(chatID).SetText(
+					"MaxTelegramBridgeBot — мост между Telegram и MAX.\n" +
+						"Автор: Andrey Lugovskoy (@BEARlogin)\n" +
+						"Исходники: https://github.com/BEARlogin/max-telegram-bridge-bot\n" +
+						"Лицензия: CC BY-NC 4.0")
+				b.maxApi.Messages.Send(ctx, m)
+				continue
+			}
+
 			if text == "/start" || text == "/help" {
 				m := maxbot.NewMessage().SetChat(chatID).SetText(
 					"Бот-мост между MAX и Telegram.\n\n" +
@@ -495,6 +505,10 @@ func maxCrosspostStatusText(tgChatID int64, direction string) string {
 
 // forwardMaxToTg пересылает MAX-сообщение (текст/медиа) в TG-чат.
 func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageCreatedUpdate, tgChatID int64, caption string) {
+	if b.cbBlocked(tgChatID) {
+		return
+	}
+
 	body := msgUpd.Message.Body
 	chatID := msgUpd.Message.Recipient.ChatId
 	text := strings.TrimSpace(body.Text)
@@ -599,7 +613,13 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 
 	if sendErr != nil {
 		slog.Error("MAX→TG send failed", "err", sendErr)
+		if b.cbFail(tgChatID) {
+			m := maxbot.NewMessage().SetChat(chatID).SetText(
+				fmt.Sprintf("Не удалось переслать в Telegram. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в TG-чат.", int(cbCooldown.Minutes())))
+			b.maxApi.Messages.Send(ctx, m)
+		}
 	} else {
+		b.cbSuccess(tgChatID)
 		slog.Info("MAX→TG sent", "msgID", sent.MessageID, "media", mediaSent)
 		b.repo.SaveMsg(tgChatID, sent.MessageID, chatID, body.Mid)
 	}

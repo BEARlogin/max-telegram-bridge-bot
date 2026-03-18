@@ -101,6 +101,15 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			text := strings.TrimSpace(msg.Text)
 			slog.Debug("TG msg received", "from", msg.From.FirstName, "chat", msg.Chat.ID)
 
+			if text == "/whoami" {
+				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+					"MaxTelegramBridgeBot — мост между Telegram и MAX.\n"+
+						"Автор: Andrey Lugovskoy (@BEARlogin)\n"+
+						"Исходники: https://github.com/BEARlogin/max-telegram-bridge-bot\n"+
+						"Лицензия: CC BY-NC 4.0"))
+				continue
+			}
+
 			if text == "/start" || text == "/help" {
 				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
 					"Бот-мост между Telegram и MAX.\n\n"+
@@ -266,6 +275,10 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 // forwardTgToMax пересылает TG-сообщение (текст/медиа) в MAX-чат.
 func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxChatID int64, caption string) {
+	if b.cbBlocked(maxChatID) {
+		return
+	}
+
 	// Определяем медиа
 	var mediaToken string
 	var mediaAttType string // "video", "file", "audio"
@@ -290,7 +303,12 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err)
+			if b.cbFail(maxChatID) {
+				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+					fmt.Sprintf("Не удалось переслать в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes()))))
+			}
 		} else {
+			b.cbSuccess(maxChatID)
 			slog.Info("TG→MAX sent", "mid", result.Body.Mid)
 			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
 		}
@@ -392,33 +410,41 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	mdCaption := tgEntitiesToMarkdown(caption, entities)
 	hasFormatting := mdCaption != caption
 
+	var mid string
+	var sendErr error
+
 	if mediaAttType != "" {
 		slog.Info("TG→MAX sending direct", "type", mediaAttType)
 		var format string
 		if hasFormatting {
 			format = "markdown"
 		}
-		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
-		if err != nil {
-			slog.Error("TG→MAX send failed", "err", err)
-		} else {
-			slog.Info("TG→MAX sent", "mid", mid)
-			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
-		}
+		mid, sendErr = b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
 	} else {
-		// Текст — через raw API (SDK не передаёт format корректно)
 		var format string
 		if hasFormatting {
 			format = "markdown"
 		}
 		slog.Info("TG→MAX sending")
-		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, "", "", replyTo, format)
-		if err != nil {
-			slog.Error("TG→MAX send failed", "err", err)
-		} else {
-			slog.Info("TG→MAX sent", "mid", mid)
-			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
+		mid, sendErr = b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, "", "", replyTo, format)
+	}
+
+	if sendErr != nil {
+		slog.Error("TG→MAX send failed", "err", sendErr)
+		// Ставим в очередь на повторную отправку
+		var format string
+		if hasFormatting {
+			format = "markdown"
 		}
+		b.enqueueTg2Max(msg.Chat.ID, msg.MessageID, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
+		if b.cbFail(maxChatID) {
+			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+				"MAX API недоступен. Сообщения в очереди, будут доставлены автоматически."))
+		}
+	} else {
+		b.cbSuccess(maxChatID)
+		slog.Info("TG→MAX sent", "mid", mid)
+		b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
 	}
 }
 

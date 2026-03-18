@@ -213,6 +213,50 @@ func (r *pgRepo) UnpairCrosspost(maxChatID int64) bool {
 	return n > 0
 }
 
+func (r *pgRepo) EnqueueSend(item *QueueItem) error {
+	_, err := r.db.Exec(
+		`INSERT INTO send_queue (direction, src_chat_id, dst_chat_id, src_msg_id, text, att_type, att_token, reply_to, format, attempts, created_at, next_retry)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11)`,
+		item.Direction, item.SrcChatID, item.DstChatID, item.SrcMsgID,
+		item.Text, item.AttType, item.AttToken, item.ReplyTo, item.Format,
+		item.CreatedAt, item.NextRetry,
+	)
+	return err
+}
+
+func (r *pgRepo) PeekQueue(limit int) ([]QueueItem, error) {
+	rows, err := r.db.Query(
+		`SELECT id, direction, src_chat_id, dst_chat_id, src_msg_id, text, att_type, att_token, reply_to, format, attempts, created_at, next_retry
+		 FROM send_queue WHERE next_retry <= $1 ORDER BY id ASC LIMIT $2`,
+		time.Now().Unix(), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QueueItem
+	for rows.Next() {
+		var q QueueItem
+		if err := rows.Scan(&q.ID, &q.Direction, &q.SrcChatID, &q.DstChatID, &q.SrcMsgID,
+			&q.Text, &q.AttType, &q.AttToken, &q.ReplyTo, &q.Format,
+			&q.Attempts, &q.CreatedAt, &q.NextRetry); err != nil {
+			return nil, err
+		}
+		items = append(items, q)
+	}
+	return items, nil
+}
+
+func (r *pgRepo) DeleteFromQueue(id int64) error {
+	_, err := r.db.Exec("DELETE FROM send_queue WHERE id = $1", id)
+	return err
+}
+
+func (r *pgRepo) IncrementAttempt(id int64, nextRetry int64) error {
+	_, err := r.db.Exec("UPDATE send_queue SET attempts = attempts + 1, next_retry = $1 WHERE id = $2", nextRetry, id)
+	return err
+}
+
 func (r *pgRepo) Close() error {
 	return r.db.Close()
 }
