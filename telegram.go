@@ -360,13 +360,9 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		photo := msg.Photo[len(msg.Photo)-1]
 		m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
 		if b.cfg.TgAPIURL != "" {
-			// Custom TG API — MAX не может скачать по URL, загружаем сами
-			if uploaded, err := b.uploadTgMediaToMax(ctx, photo.FileID, maxschemes.PHOTO, "photo.jpg"); err == nil {
-				m.AddPhoto(&maxschemes.PhotoTokens{
-					Photos: map[string]maxschemes.PhotoToken{
-						uploaded.Token: {Token: uploaded.Token},
-					},
-				})
+			// Custom TG API — MAX не может скачать по URL, скачиваем и загружаем через reader
+			if uploaded, err := b.uploadTgPhotoToMax(ctx, photo.FileID); err == nil {
+				m.AddPhoto(uploaded)
 			} else {
 				slog.Error("TG→MAX photo upload failed", "err", err)
 			}
