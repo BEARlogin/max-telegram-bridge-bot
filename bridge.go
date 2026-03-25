@@ -16,13 +16,15 @@ import (
 
 // Config — настройки bridge, читаемые из env.
 type Config struct {
-	MaxToken     string  // токен MAX API (нужен для direct-send/upload)
-	TgBotURL     string  // ссылка на TG-бота для /help
-	MaxBotURL    string  // ссылка на MAX-бота для /help
-	WebhookURL   string  // базовый URL для webhook (если пусто — long polling)
-	WebhookPort  string  // порт для webhook сервера
-	TgAPIURL     string  // custom TG Bot API URL (если пусто — api.telegram.org)
-	AllowedUsers []int64 // whitelist TG user IDs (empty = allow all)
+	MaxToken         string  // токен MAX API (нужен для direct-send/upload)
+	TgBotURL         string  // ссылка на TG-бота для /help
+	MaxBotURL        string  // ссылка на MAX-бота для /help
+	WebhookURL       string  // базовый URL для webhook (если пусто — long polling)
+	WebhookPort      string  // порт для webhook сервера
+	TgAPIURL         string  // custom TG Bot API URL (если пусто — api.telegram.org)
+	AllowedUsers     []int64 // whitelist TG user IDs (empty = allow all)
+	TgMaxFileSizeMB  int     // max file size TG->MAX in MB (0 = unlimited)
+	MaxMaxFileSizeMB int     // max file size MAX->TG in MB (0 = unlimited)
 }
 
 // chatBreaker хранит состояние circuit breaker для одного чата.
