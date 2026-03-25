@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -113,12 +114,12 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 
 				if mediaURL != "" {
-					// Скачиваем медиа и отправляем editMessageMedia
-					data, dlErr := b.downloadURL(mediaURL)
+					// Download media and send as editMessageMedia
+					data, name, dlErr := b.downloadURLWithLimit(mediaURL, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
 					if dlErr != nil {
 						slog.Error("MAX→TG edit media download failed", "err", dlErr)
 					} else {
-						fb := tgbotapi.FileBytes{Name: "file", Bytes: data}
+						fb := tgbotapi.FileBytes{Name: name, Bytes: data}
 						var media interface{}
 						switch mediaType {
 						case "photo":
@@ -144,7 +145,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						if _, err := b.tgBot.Send(editMedia); err != nil {
 							slog.Error("MAX→TG edit media failed", "err", err, "uid", editUpd.Message.Sender.UserId)
 							// Fallback — отправляем как новое сообщение
-							go b.sendTgMediaFromURL(tgChatID, mediaURL, mediaType, fwd, "", 0)
+							go b.sendTgMediaFromURL(tgChatID, mediaURL, mediaType, fwd, "", 0, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
 						} else {
 							slog.Info("MAX→TG edited media", "tgMsg", tgMsgID, "type", mediaType, "uid", editUpd.Message.Sender.UserId)
 						}
@@ -729,8 +730,16 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		}
 
 		if len(albumMedia) == 1 {
-			// Одно вложение — отправляем обычным сообщением (альбом из 1 элемента не имеет reply)
-			sent, sendErr = b.sendTgMediaFromURL(tgChatID, qAttURL, qAttType, htmlCaption, pm, replyToID)
+			// Single attachment — send as regular message
+			sent, sendErr = b.sendTgMediaFromURL(tgChatID, qAttURL, qAttType, htmlCaption, pm, replyToID, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+			var e *ErrFileTooLarge
+			if errors.As(sendErr, &e) {
+				slog.Warn("MAX→TG media too big", "name", e.Name, "size", e.Size)
+				m := maxbot.NewMessage().SetChat(chatID).SetText(
+					fmt.Sprintf("⚠️ File \"%s\" is too large to forward (%s). Max file size: %d MB.",
+						e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
+				b.maxApi.Messages.Send(ctx, m)
+			}
 		} else {
 			// Несколько — отправляем как media group (альбом)
 			cfg := tgbotapi.NewMediaGroup(tgChatID, albumMedia)
@@ -747,11 +756,20 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		}
 	}
 
-	// Отправляем остальные вложения (аудио, файлы, стикеры) по одному
+	// Send remaining attachments (audio, files, stickers) one by one
 	for _, sm := range soloMedia {
-		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, "", "", 0)
+		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, "", "", 0, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
 		if err != nil {
-			slog.Error("MAX→TG solo media send failed", "type", sm.attType, "err", err)
+			var e *ErrFileTooLarge
+			if errors.As(err, &e) {
+				slog.Warn("MAX→TG solo media too big", "name", e.Name, "size", e.Size)
+				m := maxbot.NewMessage().SetChat(chatID).SetText(
+					fmt.Sprintf("⚠️ File \"%s\" is too large to forward (%s). Max file size: %d MB.",
+						e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
+				b.maxApi.Messages.Send(ctx, m)
+			} else {
+				slog.Error("MAX→TG solo media send failed", "type", sm.attType, "err", err)
+			}
 			if sendErr == nil {
 				sendErr = err
 			}
