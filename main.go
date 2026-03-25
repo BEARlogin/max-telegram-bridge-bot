@@ -81,6 +81,24 @@ func main() {
 		slog.Info("User whitelist enabled", "count", len(cfg.AllowedUsers))
 	}
 
+	// Parse file size limits
+	if v := os.Getenv("TG_MAX_FILE_SIZE_MB"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+			cfg.TgMaxFileSizeMB = n
+		} else {
+			slog.Error("Invalid TG_MAX_FILE_SIZE_MB value", "value", v)
+			os.Exit(1)
+		}
+	}
+	if v := os.Getenv("MAX_MAX_FILE_SIZE_MB"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+			cfg.MaxMaxFileSizeMB = n
+		} else {
+			slog.Error("Invalid MAX_MAX_FILE_SIZE_MB value", "value", v)
+			os.Exit(1)
+		}
+	}
+
 	tgToken := mustEnv("TG_TOKEN")
 	dbPath := envOr("DB_PATH", "bridge.db")
 
