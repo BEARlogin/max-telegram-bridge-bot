@@ -16,17 +16,11 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// downloadURL скачивает файл по URL и возвращает bytes.
+// downloadURL downloads a file from URL and returns bytes.
+// Kept for backward compatibility; use downloadURLWithLimit for size-limited downloads.
 func (b *Bridge) downloadURL(url string) ([]byte, error) {
-	resp, err := b.httpClient.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("download status %d", resp.StatusCode)
-	}
-	return io.ReadAll(resp.Body)
+	data, _, err := b.downloadURLWithLimit(url, 0)
+	return data, err
 }
 
 // sendTgMediaFromURL downloads a file from URL and sends it to TG.
