@@ -359,10 +359,10 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		if limit <= 0 || fileSize <= 0 || fileSize <= limit*1024*1024 {
 			return false
 		}
-		warn := fmt.Sprintf("⚠️ File is too large to forward (%s). Max file size: %d MB.",
+		warn := fmt.Sprintf("⚠️ Файл слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 			formatFileSize(fileSize), limit)
 		if fileName != "" {
-			warn = fmt.Sprintf("⚠️ File \"%s\" is too large to forward (%s). Max file size: %d MB.",
+			warn = fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 				fileName, formatFileSize(fileSize), limit)
 		}
 		b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, warn))
@@ -374,19 +374,13 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	var mediaAttType string // "video", "file", "audio"
 
 	if msg.Photo != nil {
+		// Фото — через SDK (работает)
 		photo := msg.Photo[len(msg.Photo)-1]
 		if checkSize(photo.FileSize, "") {
 			return
 		}
 		m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
-		if b.cfg.TgAPIURL != "" {
-			// Custom TG API — MAX не может скачать по URL, скачиваем и загружаем через reader
-			if uploaded, err := b.uploadTgPhotoToMax(ctx, photo.FileID); err == nil {
-				m.AddPhoto(uploaded)
-			} else {
-				slog.Error("TG→MAX photo upload failed", "err", err)
-			}
-		} else if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
+		if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
 			if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
 				m.AddPhoto(uploaded)
 			} else {
@@ -641,25 +635,6 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message)
 	}
 
 	caption := formatTgCrosspostCaption(msg)
-
-	// Media group (альбом) — буферизуем и отправляем вместе
-	if msg.MediaGroupID != "" {
-		videoID := ""
-		if msg.Video != nil {
-			videoID = msg.Video.FileID
-		}
-		go b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
-			photoSizes:  msg.Photo,
-			videoFileID: videoID,
-			caption:     caption,
-			replyToMsg:  msg.ReplyToMessage,
-			entities:    msg.CaptionEntities,
-			msg:         msg,
-			maxChatID:   maxChatID,
-			crosspost:   true,
-		})
-		return
-	}
 
 	go b.forwardTgToMax(ctx, msg, maxChatID, caption)
 }
