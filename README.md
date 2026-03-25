@@ -156,6 +156,8 @@ export MAX_TOKEN=your_token
 | `WEBHOOK_PORT` | Порт для webhook сервера | `8443` |
 | `LOG_LEVEL` | Уровень логирования: `debug`, `info`, `warn`, `error` | `info` |
 | `TG_API_URL` | URL локального [Telegram Bot API сервера](https://github.com/tdlib/telegram-bot-api), например `http://localhost:8081`. Снимает лимиты на размер файлов | — |
+| `TG_MAX_FILE_SIZE_MB` | Максимальный размер файла из Телеги в Макс. Если не задан — без ограничений | — |
+| `MAX_MAX_FILE_SIZE_MB` | Максимальный размер файла из Макса в Телегу. Если не задан — без ограничений | — |
 | `ALLOWED_USERS` | Белый список Telegram user ID через запятую. Если не задан — доступ открыт для всех | — |
 
 ## Лицензия
