@@ -126,6 +126,14 @@ func (b *Bridge) cbSuccess(chatID int64) {
 	delete(b.breakers, chatID)
 }
 
+// maxMaxFileBytes returns the MAX-to-TG file size limit in bytes (0 = unlimited).
+func (c *Config) maxMaxFileBytes() int64 {
+	if c.MaxMaxFileSizeMB <= 0 {
+		return 0
+	}
+	return int64(c.MaxMaxFileSizeMB) * 1024 * 1024
+}
+
 // isUserAllowed проверяет, есть ли tgUserID в белом списке.
 // Если AllowedUsers пуст — доступ разрешён всем.
 func (b *Bridge) isUserAllowed(tgUserID int64) bool {
