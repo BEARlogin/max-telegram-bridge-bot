@@ -143,27 +143,6 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	return nil, fmt.Errorf("no token: endpoint and CDN both empty")
 }
 
-// uploadTgPhotoToMax скачивает фото из TG и загружает в MAX через SDK (возвращает PhotoTokens).
-func (b *Bridge) uploadTgPhotoToMax(ctx context.Context, fileID string) (*maxschemes.PhotoTokens, error) {
-	fileURL, err := b.tgFileURL(fileID)
-	if err != nil {
-		return nil, fmt.Errorf("tg getFileURL: %w", err)
-	}
-	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create download request: %w", err)
-	}
-	resp, err := b.httpClient.Do(dlReq)
-	if err != nil {
-		return nil, fmt.Errorf("download: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("tg download status: %d", resp.StatusCode)
-	}
-	return b.maxApi.Uploads.UploadPhotoFromReader(ctx, resp.Body)
-}
-
 // uploadTgMediaToMax скачивает файл из TG и загружает в MAX
 func (b *Bridge) uploadTgMediaToMax(ctx context.Context, fileID string, uploadType maxschemes.UploadType, fileName string) (*maxschemes.UploadedInfo, error) {
 	fileURL, err := b.tgFileURL(fileID)
@@ -288,11 +267,11 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 func formatFileSize(size int) string {
 	switch {
 	case size >= 1024*1024:
-		return fmt.Sprintf("%.1f MB", float64(size)/1024/1024)
+		return fmt.Sprintf("%.1f МБ", float64(size)/1024/1024)
 	case size >= 1024:
-		return fmt.Sprintf("%.1f KB", float64(size)/1024)
+		return fmt.Sprintf("%.1f КБ", float64(size)/1024)
 	default:
-		return fmt.Sprintf("%d B", size)
+		return fmt.Sprintf("%d Б", size)
 	}
 }
 
