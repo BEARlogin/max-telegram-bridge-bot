@@ -736,7 +736,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			if errors.As(sendErr, &e) {
 				slog.Warn("MAX-to-TG media too big", "name", e.Name, "size", e.Size)
 				m := maxbot.NewMessage().SetChat(chatID).SetText(
-					fmt.Sprintf("⚠️ File \"%s\" is too large to forward (%s). Max file size: %d MB.",
+					fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 						e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
 				b.maxApi.Messages.Send(ctx, m)
 			}
@@ -764,7 +764,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			if errors.As(err, &e) {
 				slog.Warn("MAX-to-TG solo media too big", "name", e.Name, "size", e.Size)
 				m := maxbot.NewMessage().SetChat(chatID).SetText(
-					fmt.Sprintf("⚠️ File \"%s\" is too large to forward (%s). Max file size: %d MB.",
+					fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 						e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
 				b.maxApi.Messages.Send(ctx, m)
 			} else {
