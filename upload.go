@@ -143,6 +143,27 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	return nil, fmt.Errorf("no token: endpoint and CDN both empty")
 }
 
+// uploadTgPhotoToMax скачивает фото из TG и загружает в MAX через SDK (возвращает PhotoTokens).
+func (b *Bridge) uploadTgPhotoToMax(ctx context.Context, fileID string) (*maxschemes.PhotoTokens, error) {
+	fileURL, err := b.tgFileURL(fileID)
+	if err != nil {
+		return nil, fmt.Errorf("tg getFileURL: %w", err)
+	}
+	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create download request: %w", err)
+	}
+	resp, err := b.httpClient.Do(dlReq)
+	if err != nil {
+		return nil, fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("tg download status: %d", resp.StatusCode)
+	}
+	return b.maxApi.Uploads.UploadPhotoFromReader(ctx, resp.Body)
+}
+
 // uploadTgMediaToMax скачивает файл из TG и загружает в MAX
 func (b *Bridge) uploadTgMediaToMax(ctx context.Context, fileID string, uploadType maxschemes.UploadType, fileName string) (*maxschemes.UploadedInfo, error) {
 	fileURL, err := b.tgFileURL(fileID)

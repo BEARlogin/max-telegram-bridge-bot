@@ -374,13 +374,19 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	var mediaAttType string // "video", "file", "audio"
 
 	if msg.Photo != nil {
-		// Фото — через SDK (работает)
 		photo := msg.Photo[len(msg.Photo)-1]
 		if checkSize(photo.FileSize, "") {
 			return
 		}
 		m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
-		if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
+		if b.cfg.TgAPIURL != "" {
+			// Custom TG API — MAX не может скачать по URL, скачиваем и загружаем через reader
+			if uploaded, err := b.uploadTgPhotoToMax(ctx, photo.FileID); err == nil {
+				m.AddPhoto(uploaded)
+			} else {
+				slog.Error("TG→MAX photo upload failed", "err", err)
+			}
+		} else if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
 			if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
 				m.AddPhoto(uploaded)
 			} else {
