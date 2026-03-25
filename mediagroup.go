@@ -159,13 +159,13 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 		return
 	}
 
-	slog.Info("TG→MAX sending media group", "photos", photosSent, "videos", videosSent, "uid", uid, "tgChat", items[0].msg.Chat.ID, "maxChat", maxChatID)
+	slog.Info("TG-to-MAX sending media group", "photos", photosSent, "videos", videosSent, "uid", uid, "tgChat", items[0].msg.Chat.ID, "maxChat", maxChatID)
 
 	// Если есть фото — отправляем через SDK (поддерживает AddPhoto)
 	if photosSent > 0 {
 		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 		if err != nil {
-			slog.Error("TG→MAX media group send failed", "err", err)
+			slog.Error("TG-to-MAX media group send failed", "err", err)
 			if b.cbFail(maxChatID) {
 				b.tgBot.Send(tgbotapi.NewMessage(items[0].msg.Chat.ID, "Не удалось переслать альбом в MAX."))
 			}
@@ -176,7 +176,7 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 			return
 		}
 		b.cbSuccess(maxChatID)
-		slog.Info("TG→MAX media group sent", "mid", result.Body.Mid, "photos", photosSent)
+		slog.Info("TG-to-MAX media group sent", "mid", result.Body.Mid, "photos", photosSent)
 		b.repo.SaveMsg(items[0].msg.Chat.ID, items[0].msg.MessageID, maxChatID, result.Body.Mid)
 	}
 
@@ -188,7 +188,7 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 		}
 		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, videoCaption, "video", token, "", "")
 		if err != nil {
-			slog.Error("TG→MAX media group video send failed", "err", err)
+			slog.Error("TG-to-MAX media group video send failed", "err", err)
 			continue
 		}
 		if i == 0 && photosSent == 0 {
