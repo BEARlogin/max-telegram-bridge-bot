@@ -352,6 +352,22 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 
 	uid := tgUserID(msg)
 
+	// checkSize returns true and sends warning if file exceeds TG_MAX_FILE_SIZE_MB limit.
+	checkSize := func(fileSize int, fileName string) bool {
+		limit := b.cfg.TgMaxFileSizeMB
+		if limit <= 0 || fileSize <= limit*1024*1024 {
+			return false
+		}
+		warn := fmt.Sprintf("⚠️ File is too large to forward (%s). Max file size: %d MB.",
+			formatFileSize(fileSize), limit)
+		if fileName != "" {
+			warn = fmt.Sprintf("⚠️ File \"%s\" is too large to forward (%s). Max file size: %d MB.",
+				fileName, formatFileSize(fileSize), limit)
+		}
+		b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, warn))
+		return true
+	}
+
 	// Определяем медиа
 	var mediaToken string
 	var mediaAttType string // "video", "file", "audio"
@@ -359,6 +375,9 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	if msg.Photo != nil {
 		// Фото — через SDK (работает)
 		photo := msg.Photo[len(msg.Photo)-1]
+		if checkSize(photo.FileSize, "") {
+			return
+		}
 		m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
 		if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
 			if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
@@ -387,10 +406,12 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 		return
 	} else if msg.Animation != nil {
-		// GIF в Telegram — это mp4 в поле Animation
 		name := "animation.mp4"
 		if msg.Animation.FileName != "" {
 			name = msg.Animation.FileName
+		}
+		if checkSize(msg.Animation.FileSize, name) {
+			return
 		}
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Animation.FileID, maxschemes.VIDEO, name); err == nil {
 			mediaToken = uploaded.Token
@@ -399,8 +420,10 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			slog.Error("TG→MAX gif upload failed", "err", err)
 		}
 	} else if msg.Sticker != nil {
-		// Стикеры: обычные — WebP (фото), анимированные — TGS/WEBM
 		if msg.Sticker.IsAnimated {
+			if checkSize(msg.Sticker.FileSize, "sticker.webm") {
+				return
+			}
 			if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Sticker.FileID, maxschemes.FILE, "sticker.webm"); err == nil {
 				mediaToken = uploaded.Token
 				mediaAttType = "video"
@@ -408,7 +431,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 				slog.Error("TG→MAX sticker upload failed", "err", err)
 			}
 		} else {
-			// Обычный стикер WebP → отправляем как фото
+			// Regular WebP sticker → send as photo
 			if fileURL, err := b.tgFileURL(msg.Sticker.FileID); err == nil {
 				if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
 					m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
@@ -437,6 +460,9 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		if msg.Video.FileName != "" {
 			name = msg.Video.FileName
 		}
+		if checkSize(msg.Video.FileSize, name) {
+			return
+		}
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Video.FileID, maxschemes.VIDEO, name); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
@@ -444,6 +470,9 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			slog.Error("TG→MAX video upload failed", "err", err)
 		}
 	} else if msg.VideoNote != nil {
+		if checkSize(msg.VideoNote.FileSize, "circle.mp4") {
+			return
+		}
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.VideoNote.FileID, maxschemes.VIDEO, "circle.mp4"); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
@@ -454,7 +483,6 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		name := msg.Document.FileName
 		uploadType := maxschemes.FILE
 		attType := "file"
-		// Документ с video MIME → загружаем как видео
 		if strings.HasPrefix(msg.Document.MimeType, "video/") {
 			uploadType = maxschemes.VIDEO
 			attType = "video"
@@ -465,6 +493,9 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		if name == "" {
 			name = mimeToFilename("document", msg.Document.MimeType)
 		}
+		if checkSize(msg.Document.FileSize, name) {
+			return
+		}
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Document.FileID, uploadType, name); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = attType
@@ -472,6 +503,9 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			slog.Error("TG→MAX file upload failed", "err", err)
 		}
 	} else if msg.Voice != nil {
+		if checkSize(msg.Voice.FileSize, "voice.ogg") {
+			return
+		}
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Voice.FileID, maxschemes.AUDIO, "voice.ogg"); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "audio"
@@ -482,6 +516,9 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		name := "audio.mp3"
 		if msg.Audio.FileName != "" {
 			name = msg.Audio.FileName
+		}
+		if checkSize(msg.Audio.FileSize, name) {
+			return
 		}
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Audio.FileID, maxschemes.FILE, name); err == nil {
 			mediaToken = uploaded.Token
