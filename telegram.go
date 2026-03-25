@@ -353,9 +353,10 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	uid := tgUserID(msg)
 
 	// checkSize returns true and sends warning if file exceeds TG_MAX_FILE_SIZE_MB limit.
+	// fileSize=0 means the size is unknown (old TG messages may omit it) — we skip the check.
 	checkSize := func(fileSize int, fileName string) bool {
 		limit := b.cfg.TgMaxFileSizeMB
-		if limit <= 0 || fileSize <= limit*1024*1024 {
+		if limit <= 0 || fileSize <= 0 || fileSize <= limit*1024*1024 {
 			return false
 		}
 		warn := fmt.Sprintf("⚠️ File is too large to forward (%s). Max file size: %d MB.",
