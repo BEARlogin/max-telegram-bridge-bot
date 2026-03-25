@@ -115,7 +115,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 				if mediaURL != "" {
 					// Download media and send as editMessageMedia
-					data, name, dlErr := b.downloadURLWithLimit(mediaURL, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+					data, name, dlErr := b.downloadURLWithLimit(mediaURL, b.cfg.maxMaxFileBytes())
 					if dlErr != nil {
 						slog.Error("MAX-to-TG edit media download failed", "err", dlErr)
 					} else {
@@ -145,7 +145,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						if _, err := b.tgBot.Send(editMedia); err != nil {
 							slog.Error("MAX-to-TG edit media failed", "err", err, "uid", editUpd.Message.Sender.UserId)
 							// Fallback — отправляем как новое сообщение
-							go b.sendTgMediaFromURL(tgChatID, mediaURL, mediaType, fwd, "", 0, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+							go b.sendTgMediaFromURL(tgChatID, mediaURL, mediaType, fwd, "", 0, b.cfg.maxMaxFileBytes())
 						} else {
 							slog.Info("MAX-to-TG edited media", "tgMsg", tgMsgID, "type", mediaType, "uid", editUpd.Message.Sender.UserId)
 						}
@@ -731,7 +731,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 
 		if len(albumMedia) == 1 {
 			// Single attachment — send as regular message
-			sent, sendErr = b.sendTgMediaFromURL(tgChatID, qAttURL, qAttType, htmlCaption, pm, replyToID, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+			sent, sendErr = b.sendTgMediaFromURL(tgChatID, qAttURL, qAttType, htmlCaption, pm, replyToID, b.cfg.maxMaxFileBytes())
 			var e *ErrFileTooLarge
 			if errors.As(sendErr, &e) {
 				slog.Warn("MAX-to-TG media too big", "name", e.Name, "size", e.Size)
@@ -758,7 +758,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 
 	// Send remaining attachments (audio, files, stickers) one by one
 	for _, sm := range soloMedia {
-		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, "", "", 0, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, "", "", 0, b.cfg.maxMaxFileBytes())
 		if err != nil {
 			var e *ErrFileTooLarge
 			if errors.As(err, &e) {
