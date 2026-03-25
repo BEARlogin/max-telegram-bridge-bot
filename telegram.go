@@ -642,6 +642,25 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message)
 
 	caption := formatTgCrosspostCaption(msg)
 
+	// Media group (альбом) — буферизуем и отправляем вместе
+	if msg.MediaGroupID != "" {
+		videoID := ""
+		if msg.Video != nil {
+			videoID = msg.Video.FileID
+		}
+		go b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
+			photoSizes:  msg.Photo,
+			videoFileID: videoID,
+			caption:     caption,
+			replyToMsg:  msg.ReplyToMessage,
+			entities:    msg.CaptionEntities,
+			msg:         msg,
+			maxChatID:   maxChatID,
+			crosspost:   true,
+		})
+		return
+	}
+
 	go b.forwardTgToMax(ctx, msg, maxChatID, caption)
 }
 

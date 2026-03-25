@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -15,12 +16,14 @@ const mediaGroupTimeout = 1 * time.Second
 
 // mediaGroupItem хранит данные одного сообщения из альбома TG.
 type mediaGroupItem struct {
-	photoSizes []tgbotapi.PhotoSize
+	photoSizes  []tgbotapi.PhotoSize
 	videoFileID string // для видео в альбомах
-	caption    string
-	replyToMsg *tgbotapi.Message
-	entities   []tgbotapi.MessageEntity
-	msg        *tgbotapi.Message
+	caption     string
+	replyToMsg  *tgbotapi.Message
+	entities    []tgbotapi.MessageEntity
+	msg         *tgbotapi.Message
+	maxChatID   int64 // если задан — используется напрямую (crosspost)
+	crosspost   bool  // кросспостинг: без prefix, другой caption формат
 }
 
 // mediaGroupBuffer накапливает сообщения альбома перед отправкой.
@@ -76,14 +79,19 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 	}
 
 	// Определяем maxChatID
-	maxChatID, linked := b.repo.GetMaxChat(items[0].msg.Chat.ID)
-	if !linked {
-		slog.Warn("media group: chat not linked", "tgChat", items[0].msg.Chat.ID)
-		return
+	isCrosspost := items[0].crosspost
+	maxChatID := items[0].maxChatID
+	if maxChatID == 0 {
+		var linked bool
+		maxChatID, linked = b.repo.GetMaxChat(items[0].msg.Chat.ID)
+		if !linked {
+			slog.Warn("media group: chat not linked", "tgChat", items[0].msg.Chat.ID)
+			return
+		}
 	}
 
 	uid := tgUserID(items[0].msg)
-	prefix := b.repo.HasPrefix("tg", items[0].msg.Chat.ID)
+	prefix := !isCrosspost && b.repo.HasPrefix("tg", items[0].msg.Chat.ID)
 
 	// Caption и entities берём из первого элемента, у которого caption не пустой
 	var caption string
@@ -177,11 +185,18 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 		if err != nil {
 			slog.Error("TG-to-MAX media group send failed", "err", err)
 			if b.cbFail(maxChatID) {
-				b.tgBot.Send(tgbotapi.NewMessage(items[0].msg.Chat.ID, "Не удалось переслать альбом в MAX."))
+				b.tgBot.Send(tgbotapi.NewMessage(items[0].msg.Chat.ID,
+					fmt.Sprintf("Не удалось переслать альбом в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes()))))
 			}
 			// Fallback — по одному
 			for _, it := range items {
-				go b.forwardTgToMax(ctx, it.msg, maxChatID, formatTgCaption(it.msg, prefix))
+				var cap string
+				if isCrosspost {
+					cap = formatTgCrosspostCaption(it.msg)
+				} else {
+					cap = formatTgCaption(it.msg, prefix)
+				}
+				go b.forwardTgToMax(ctx, it.msg, maxChatID, cap)
 			}
 			return
 		}
