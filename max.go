@@ -310,44 +310,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
-			// Обработка ввода замены (если юзер в режиме ожидания)
-			if isDialog && !strings.HasPrefix(text, "/") && msgUpd.Message.Sender.UserId != 0 {
-				if w, ok := b.getReplWait(msgUpd.Message.Sender.UserId); ok {
-					b.clearReplWait(msgUpd.Message.Sender.UserId)
-					rule, valid := parseReplacementInput(text)
-					if !valid {
-						m := maxbot.NewMessage().SetChat(chatID).SetText("Неверный формат. Используйте:\nfrom | to\nили\n/regex/ | to")
-						b.maxApi.Messages.Send(ctx, m)
-						continue
-					}
-					rule.Target = w.target
-					repl := b.repo.GetCrosspostReplacements(w.maxChatID)
-					if w.direction == "tg>max" {
-						repl.TgToMax = append(repl.TgToMax, rule)
-					} else {
-						repl.MaxToTg = append(repl.MaxToTg, rule)
-					}
-					if err := b.repo.SetCrosspostReplacements(w.maxChatID, repl); err != nil {
-						slog.Error("save replacements failed", "err", err)
-						m := maxbot.NewMessage().SetChat(chatID).SetText("Ошибка сохранения.")
-						b.maxApi.Messages.Send(ctx, m)
-						continue
-					}
-					ruleType := "строка"
-					if rule.Regex {
-						ruleType = "regex"
-					}
-					dirLabel := "TG → MAX"
-					if w.direction == "max>tg" {
-						dirLabel = "MAX → TG"
-					}
-					m := maxbot.NewMessage().SetChat(chatID).SetText(
-						fmt.Sprintf("Замена добавлена (%s, %s):\n%s → %s", dirLabel, ruleType, rule.From, rule.To))
-					b.maxApi.Messages.Send(ctx, m)
-					continue
-				}
-			}
-
 			// === Crosspost команды (только в личке бота) ===
 
 			// /crosspost <tg_channel_id> — начало настройки (только в личке)
@@ -368,13 +330,8 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					} else {
 						for _, l := range links {
 							kb := maxCrosspostKeyboard(b.maxApi, l.Direction, l.MaxChatID)
-							tgTitle := b.tgChatTitle(l.TgChatID)
-							statusText := maxCrosspostStatusText(l.TgChatID, l.Direction)
-							if tgTitle != "" {
-								statusText = fmt.Sprintf("TG: «%s» (%d)\n", tgTitle, l.TgChatID) + statusText
-							}
 							m := maxbot.NewMessage().SetChat(chatID).
-								SetText(statusText).
+								SetText(maxCrosspostStatusText(l.TgChatID, l.Direction)).
 								AddKeyboard(kb)
 							b.maxApi.Messages.Send(ctx, m)
 						}
@@ -492,13 +449,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 
 			caption := formatMaxCrosspostCaption(msgUpd)
-
-			// Применяем замены для MAX→TG
-			repl := b.repo.GetCrosspostReplacements(chatID)
-			if len(repl.MaxToTg) > 0 {
-				caption = applyReplacements(caption, repl.MaxToTg)
-			}
-
 			go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
 		}
 	}
@@ -591,194 +541,6 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		return
 	}
 
-	// cpr:maxChatID — show replacements
-	if strings.HasPrefix(data, "cpr:") {
-		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cpr:"), 10, 64)
-		if err != nil {
-			return
-		}
-		repl := b.repo.GetCrosspostReplacements(maxChatID)
-		id := strconv.FormatInt(maxChatID, 10)
-		// Заголовок с кнопками добавления
-		kb := maxReplacementsKeyboard(b.maxApi, maxChatID)
-		body := &maxschemes.NewMessageBody{
-			Text:        formatReplacementsHeader(repl),
-			Attachments: []interface{}{maxschemes.NewInlineKeyboardAttachmentRequest(kb.Build())},
-		}
-		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Message: body})
-		// Каждая замена — отдельное сообщение с кнопками
-		for i, r := range repl.TgToMax {
-			dkb := maxReplItemKeyboard(b.maxApi, "tg>max", i, id, r.Target)
-			m := maxbot.NewMessage().SetChat(cbUpd.Callback.User.UserId).
-				SetText(formatReplacementItem(r, "tg>max")).
-				AddKeyboard(dkb)
-			b.maxApi.Messages.Send(ctx, m)
-		}
-		for i, r := range repl.MaxToTg {
-			dkb := maxReplItemKeyboard(b.maxApi, "max>tg", i, id, r.Target)
-			m := maxbot.NewMessage().SetChat(cbUpd.Callback.User.UserId).
-				SetText(formatReplacementItem(r, "max>tg")).
-				AddKeyboard(dkb)
-			b.maxApi.Messages.Send(ctx, m)
-		}
-		return
-	}
-
-	// cprt:dir:index:target:maxChatID — toggle replacement target
-	if strings.HasPrefix(data, "cprt:") {
-		parts := strings.SplitN(strings.TrimPrefix(data, "cprt:"), ":", 4)
-		if len(parts) != 4 {
-			return
-		}
-		dir := parts[0]
-		idx, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return
-		}
-		newTarget := parts[2]
-		maxChatID, err := strconv.ParseInt(parts[3], 10, 64)
-		if err != nil {
-			return
-		}
-		repl := b.repo.GetCrosspostReplacements(maxChatID)
-		id := strconv.FormatInt(maxChatID, 10)
-		var r *Replacement
-		if dir == "tg>max" && idx < len(repl.TgToMax) {
-			r = &repl.TgToMax[idx]
-		} else if dir == "max>tg" && idx < len(repl.MaxToTg) {
-			r = &repl.MaxToTg[idx]
-		}
-		if r == nil {
-			return
-		}
-		r.Target = newTarget
-		b.repo.SetCrosspostReplacements(maxChatID, repl)
-		newText := formatReplacementItem(*r, dir)
-		dkb := maxReplItemKeyboard(b.maxApi, dir, idx, id, r.Target)
-		body := &maxschemes.NewMessageBody{
-			Text:        newText,
-			Attachments: []interface{}{maxschemes.NewInlineKeyboardAttachmentRequest(dkb.Build())},
-		}
-		label := "весь текст"
-		if newTarget == "links" {
-			label = "только ссылки"
-		}
-		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
-			Message:      body,
-			Notification: "Тип: " + label,
-		})
-		return
-	}
-
-	// cprd:dir:index:maxChatID — delete single replacement
-	if strings.HasPrefix(data, "cprd:") {
-		parts := strings.SplitN(strings.TrimPrefix(data, "cprd:"), ":", 3)
-		if len(parts) != 3 {
-			return
-		}
-		dir := parts[0]
-		idx, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return
-		}
-		maxChatID, err := strconv.ParseInt(parts[2], 10, 64)
-		if err != nil {
-			return
-		}
-		repl := b.repo.GetCrosspostReplacements(maxChatID)
-		if dir == "tg>max" && idx < len(repl.TgToMax) {
-			repl.TgToMax = append(repl.TgToMax[:idx], repl.TgToMax[idx+1:]...)
-		} else if dir == "max>tg" && idx < len(repl.MaxToTg) {
-			repl.MaxToTg = append(repl.MaxToTg[:idx], repl.MaxToTg[idx+1:]...)
-		}
-		b.repo.SetCrosspostReplacements(maxChatID, repl)
-		body := &maxschemes.NewMessageBody{Text: "Замена удалена."}
-		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
-			Message:      body,
-			Notification: "Удалено",
-		})
-		return
-	}
-
-	// cpra:dir:maxChatID — choose target (all or links)
-	if strings.HasPrefix(data, "cpra:") {
-		parts := strings.SplitN(strings.TrimPrefix(data, "cpra:"), ":", 2)
-		if len(parts) != 2 {
-			return
-		}
-		dir := parts[0]
-		id := parts[1]
-		dirLabel := "TG → MAX"
-		if dir == "max>tg" {
-			dirLabel = "MAX → TG"
-		}
-		kb := b.maxApi.Messages.NewKeyboardBuilder()
-		kb.AddRow().
-			AddCallback("📝 Весь текст", maxschemes.DEFAULT, "cprat:"+dir+":all:"+id).
-			AddCallback("🔗 Только ссылки", maxschemes.DEFAULT, "cprat:"+dir+":links:"+id)
-		body := &maxschemes.NewMessageBody{
-			Text:        fmt.Sprintf("Добавление замены для %s.\nГде применять замену?", dirLabel),
-			Attachments: []interface{}{maxschemes.NewInlineKeyboardAttachmentRequest(kb.Build())},
-		}
-		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Message: body})
-		return
-	}
-
-	// cprat:dir:target:maxChatID — set wait state with target
-	if strings.HasPrefix(data, "cprat:") {
-		parts := strings.SplitN(strings.TrimPrefix(data, "cprat:"), ":", 3)
-		if len(parts) != 3 {
-			return
-		}
-		dir := parts[0]
-		target := parts[1]
-		maxChatID, err := strconv.ParseInt(parts[2], 10, 64)
-		if err != nil {
-			return
-		}
-		b.setReplWait(userID, maxChatID, dir, target)
-		body := &maxschemes.NewMessageBody{
-			Text: "Отправьте правило замены:\nfrom | to\n\nДля регулярного выражения:\n/regex/ | to\n\nНапример:\nutm_source=tg | utm_source=max",
-		}
-		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Message: body})
-		return
-	}
-
-	// cprc:maxChatID — clear all replacements
-	if strings.HasPrefix(data, "cprc:") {
-		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cprc:"), 10, 64)
-		if err != nil {
-			return
-		}
-		b.repo.SetCrosspostReplacements(maxChatID, CrosspostReplacements{})
-		repl := b.repo.GetCrosspostReplacements(maxChatID)
-		kb := maxReplacementsKeyboard(b.maxApi, maxChatID)
-		body := &maxschemes.NewMessageBody{
-			Text:        formatReplacementsHeader(repl),
-			Attachments: []interface{}{maxschemes.NewInlineKeyboardAttachmentRequest(kb.Build())},
-		}
-		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
-			Message:      body,
-			Notification: "Очищено",
-		})
-		return
-	}
-
-	// cprb:maxChatID — back to crosspost management
-	if strings.HasPrefix(data, "cprb:") {
-		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cprb:"), 10, 64)
-		if err != nil {
-			return
-		}
-		tgID, direction, ok := b.repo.GetCrosspostTgChat(maxChatID)
-		if !ok {
-			return
-		}
-		body := maxCrosspostMessageBody(b.maxApi, maxCrosspostStatusText(tgID, direction), direction, maxChatID)
-		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Message: body})
-		return
-	}
-
 	// cpux:maxChatID — cancel (return to management keyboard)
 	if strings.HasPrefix(data, "cpux:") {
 		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cpux:"), 10, 64)
@@ -830,7 +592,6 @@ func maxCrosspostKeyboard(api *maxbot.Api, direction string, maxChatID int64) *m
 		AddCallback(lblMaxTg, maxschemes.DEFAULT, "cpd:max>tg:"+id).
 		AddCallback(lblBoth, maxschemes.DEFAULT, "cpd:both:"+id)
 	kb.AddRow().
-		AddCallback("🔄 Замены", maxschemes.DEFAULT, "cpr:"+id).
 		AddCallback("❌ Удалить", maxschemes.NEGATIVE, "cpu:"+id)
 	return kb
 }
@@ -1001,7 +762,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 
 	// Send remaining attachments (audio, files, stickers) one by one
 	for _, sm := range soloMedia {
-		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, "", "", 0, b.cfg.maxMaxFileBytes())
+		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, "", "", 0, b.cfg.maxMaxFileBytes(), sm.name)
 		if err != nil {
 			var e *ErrFileTooLarge
 			if errors.As(err, &e) {
