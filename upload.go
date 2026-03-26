@@ -24,13 +24,17 @@ func (b *Bridge) downloadURL(url string) ([]byte, error) {
 }
 
 // sendTgMediaFromURL downloads a file from URL and sends it to TG.
-// maxBytes=0 means no size limit.
-func (b *Bridge) sendTgMediaFromURL(tgChatID int64, mediaURL, mediaType, caption, parseMode string, replyToID int, maxBytes int64) (tgbotapi.Message, error) {
-	data, name, err := b.downloadURLWithLimit(mediaURL, maxBytes)
+// maxBytes=0 means no size limit. fileName overrides name extracted from URL.
+func (b *Bridge) sendTgMediaFromURL(tgChatID int64, mediaURL, mediaType, caption, parseMode string, replyToID int, maxBytes int64, fileName ...string) (tgbotapi.Message, error) {
+	data, nameFromURL, err := b.downloadURLWithLimit(mediaURL, maxBytes)
 	if err != nil {
 		return tgbotapi.Message{}, fmt.Errorf("download media: %w", err)
 	}
 
+	name := nameFromURL
+	if len(fileName) > 0 && fileName[0] != "" {
+		name = fileName[0]
+	}
 	fb := tgbotapi.FileBytes{Name: name, Bytes: data}
 
 	switch mediaType {
@@ -294,20 +298,6 @@ func formatFileSize(size int) string {
 	default:
 		return fmt.Sprintf("%d Б", size)
 	}
-}
-
-// fileNameFromURL extracts filename from URL, fallback "file".
-func fileNameFromURL(rawURL string) string {
-	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
-		name := rawURL[idx+1:]
-		if q := strings.Index(name, "?"); q >= 0 {
-			name = name[:q]
-		}
-		if name != "" {
-			return name
-		}
-	}
-	return "file"
 }
 
 // ErrFileTooLarge is returned when file exceeds the configured size limit.
