@@ -30,14 +30,14 @@ func (b *Bridge) downloadURL(url string) ([]byte, error) {
 }
 
 // sendTgMediaFromURL скачивает файл с URL и отправляет в TG как upload.
-// fileName — если не пустой, используется как имя файла; иначе извлекается из URL.
-func (b *Bridge) sendTgMediaFromURL(tgChatID int64, mediaURL, mediaType, caption, parseMode string, replyToID int, fileName ...string) (tgbotapi.Message, error) {
-	data, err := b.downloadURL(mediaURL)
+// maxBytes=0 means no size limit. fileName overrides name extracted from URL.
+func (b *Bridge) sendTgMediaFromURL(tgChatID int64, mediaURL, mediaType, caption, parseMode string, replyToID int, maxBytes int64, fileName ...string) (tgbotapi.Message, error) {
+	data, nameFromURL, err := b.downloadURLWithLimit(mediaURL, maxBytes)
 	if err != nil {
 		return tgbotapi.Message{}, fmt.Errorf("download media: %w", err)
 	}
 
-	name := fileNameFromURL(mediaURL)
+	name := nameFromURL
 	if len(fileName) > 0 && fileName[0] != "" {
 		name = fileName[0]
 	}
@@ -292,4 +292,83 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 		return "", fmt.Errorf("MAX API %d: %s", resp.StatusCode, string(respBody))
 	}
 	return "", fmt.Errorf("MAX attachment not ready after 10 retries")
+}
+
+// formatFileSize formats file size in human-readable form.
+func formatFileSize(size int) string {
+	switch {
+	case size >= 1024*1024:
+		return fmt.Sprintf("%.1f МБ", float64(size)/1024/1024)
+	case size >= 1024:
+		return fmt.Sprintf("%.1f КБ", float64(size)/1024)
+	default:
+		return fmt.Sprintf("%d Б", size)
+	}
+}
+
+// ErrFileTooLarge is returned when file exceeds the configured size limit.
+type ErrFileTooLarge struct {
+	Size int64
+	Name string
+}
+
+func (e *ErrFileTooLarge) Error() string {
+	return fmt.Sprintf("file too large: %s (%s)", e.Name, formatFileSize(int(e.Size)))
+}
+
+// downloadURLWithLimit downloads a file from URL with an optional size limit.
+// maxBytes=0 means no limit. Returns bytes and filename from Content-Disposition or URL.
+func (b *Bridge) downloadURLWithLimit(url string, maxBytes int64) ([]byte, string, error) {
+	resp, err := b.httpClient.Get(url)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, "", fmt.Errorf("download status %d", resp.StatusCode)
+	}
+
+	// Extract filename from Content-Disposition
+	name := ""
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if i := strings.Index(cd, "filename=\""); i >= 0 {
+			rest := cd[i+len("filename=\""):]
+			if j := strings.Index(rest, "\""); j >= 0 {
+				name = rest[:j]
+			}
+		}
+		if name == "" {
+			if i := strings.Index(cd, "filename="); i >= 0 {
+				rest := strings.TrimSpace(cd[i+len("filename="):])
+				if j := strings.IndexAny(rest, "; \t"); j >= 0 {
+					name = rest[:j]
+				} else {
+					name = rest
+				}
+			}
+		}
+	}
+	if name == "" {
+		name = fileNameFromURL(url)
+	}
+
+	// Fast check via Content-Length
+	if maxBytes > 0 && resp.ContentLength > maxBytes {
+		return nil, name, &ErrFileTooLarge{Size: resp.ContentLength, Name: name}
+	}
+
+	// Read with limit
+	limit := maxBytes
+	if limit <= 0 {
+		limit = 1<<63 - 1
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return nil, name, &ErrFileTooLarge{Size: int64(len(data)), Name: name}
+	}
+
+	return data, name, nil
 }

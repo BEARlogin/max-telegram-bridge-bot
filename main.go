@@ -20,7 +20,7 @@ import (
 func mustEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
-		fmt.Fprintf(os.Stderr, "Переменная окружения %s не задана\n", key)
+		fmt.Fprintf(os.Stderr, "Environment variable %s is not set\n", key)
 		os.Exit(1)
 	}
 	return v
@@ -81,6 +81,24 @@ func main() {
 		slog.Info("User whitelist enabled", "count", len(cfg.AllowedUsers))
 	}
 
+	// Parse file size limits
+	if v := os.Getenv("TG_MAX_FILE_SIZE_MB"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+			cfg.TgMaxFileSizeMB = n
+		} else {
+			slog.Error("Invalid TG_MAX_FILE_SIZE_MB value", "value", v)
+			os.Exit(1)
+		}
+	}
+	if v := os.Getenv("MAX_MAX_FILE_SIZE_MB"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+			cfg.MaxMaxFileSizeMB = n
+		} else {
+			slog.Error("Invalid MAX_MAX_FILE_SIZE_MB value", "value", v)
+			os.Exit(1)
+		}
+	}
+
 	tgToken := mustEnv("TG_TOKEN")
 	dbPath := envOr("DB_PATH", "bridge.db")
 
@@ -92,14 +110,14 @@ func main() {
 			slog.Error("PostgreSQL error", "err", err)
 			os.Exit(1)
 		}
-		slog.Info("БД: PostgreSQL")
+		slog.Info("DB: PostgreSQL")
 	} else {
 		repo, err = NewSQLiteRepo(dbPath)
 		if err != nil {
 			slog.Error("SQLite error", "err", err)
 			os.Exit(1)
 		}
-		slog.Info("БД: SQLite", "path", dbPath)
+		slog.Info("DB: SQLite", "path", dbPath)
 	}
 	defer repo.Close()
 
@@ -110,14 +128,14 @@ func main() {
 			slog.Error("TG bot error", "err", err)
 			os.Exit(1)
 		}
-		slog.Info("Telegram бот запущен (custom API)", "username", tgBot.Self.UserName, "api", tgAPI)
+		slog.Info("Telegram bot started (custom API)", "username", tgBot.Self.UserName, "api", tgAPI)
 	} else {
 		tgBot, err = tgbotapi.NewBotAPI(tgToken)
 		if err != nil {
 			slog.Error("TG bot error", "err", err)
 			os.Exit(1)
 		}
-		slog.Info("Telegram бот запущен", "username", tgBot.Self.UserName)
+		slog.Info("Telegram bot started", "username", tgBot.Self.UserName)
 	}
 
 	maxApi, err := maxbot.New(cfg.MaxToken)
@@ -130,7 +148,7 @@ func main() {
 		slog.Error("MAX bot info error", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("MAX бот запущен", "name", maxInfo.Name)
+	slog.Info("MAX bot started", "name", maxInfo.Name)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -139,11 +157,11 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		slog.Info("Завершение...")
+		slog.Info("Shutting down...")
 		cancel()
 	}()
 
 	bridge := NewBridge(cfg, repo, tgBot, maxApi)
 	bridge.Run(ctx)
-	slog.Info("Bridge остановлен")
+	slog.Info("Bridge stopped")
 }

@@ -21,8 +21,10 @@ type Config struct {
 	MaxBotURL    string  // ссылка на MAX-бота для /help
 	WebhookURL   string  // базовый URL для webhook (если пусто — long polling)
 	WebhookPort  string  // порт для webhook сервера
-	TgAPIURL     string  // custom TG Bot API URL (если пусто — api.telegram.org)
-	AllowedUsers []int64 // whitelist TG user IDs (empty = allow all)
+	TgAPIURL         string  // custom TG Bot API URL (если пусто — api.telegram.org)
+	AllowedUsers     []int64 // whitelist TG user IDs (empty = allow all)
+	TgMaxFileSizeMB  int     // max file size TG->MAX in MB (0 = unlimited)
+	MaxMaxFileSizeMB int     // max file size MAX->TG in MB (0 = unlimited)
 }
 
 // chatBreaker хранит состояние circuit breaker для одного чата.
@@ -122,6 +124,14 @@ func (b *Bridge) cbSuccess(chatID int64) {
 	b.cbMu.Lock()
 	defer b.cbMu.Unlock()
 	delete(b.breakers, chatID)
+}
+
+// maxMaxFileBytes returns the MAX-to-TG file size limit in bytes (0 = unlimited).
+func (c *Config) maxMaxFileBytes() int64 {
+	if c.MaxMaxFileSizeMB <= 0 {
+		return 0
+	}
+	return int64(c.MaxMaxFileSizeMB) * 1024 * 1024
 }
 
 // isUserAllowed проверяет, есть ли tgUserID в белом списке.
