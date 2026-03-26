@@ -374,39 +374,20 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	var mediaAttType string // "video", "file", "audio"
 
 	if msg.Photo != nil {
-		// Фото — через SDK (работает)
 		photo := msg.Photo[len(msg.Photo)-1]
 		if checkSize(photo.FileSize, "") {
 			return
 		}
-		m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
-		if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
-			if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
-				m.AddPhoto(uploaded)
-			} else {
-				slog.Error("TG-to-MAX photo upload failed", "err", err)
-			}
-		}
-		if msg.ReplyToMessage != nil {
-			if maxReplyID, ok := b.repo.LookupMaxMsgID(msg.Chat.ID, msg.ReplyToMessage.MessageID); ok {
-				m.SetReply(caption, maxReplyID)
-			}
-		}
-		slog.Info("TG-to-MAX sending photo", "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
-		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
-		if err != nil {
-			slog.Error("TG-to-MAX send failed", "err", err, "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
-			if b.cbFail(maxChatID) {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-					fmt.Sprintf("Не удалось переслать в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes()))))
-			}
+		// Use uploadTgPhotoToMax instead of UploadPhotoFromUrl:
+		// 1. Caption is sent correctly via sendMaxDirectFormatted (same path as other media).
+		// 2. Works with local TG Bot API (TG_API_URL) — MAX can't reach a local URL,
+		//    but uploadTgPhotoToMax downloads the file itself and uploads it to MAX CDN.
+		if uploaded, err := b.uploadTgPhotoToMax(ctx, photo.FileID); err == nil {
+			mediaToken = uploaded.Token
+			mediaAttType = "image"
 		} else {
-			b.cbSuccess(maxChatID)
-			slog.Info("TG-to-MAX sent", "mid", result.Body.Mid)
-			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
+			slog.Error("TG-to-MAX photo upload failed", "err", err)
 		}
-		return
-	} else if msg.Animation != nil {
 		name := "animation.mp4"
 		if msg.Animation.FileName != "" {
 			name = msg.Animation.FileName
@@ -432,28 +413,13 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 				slog.Error("TG-to-MAX sticker upload failed", "err", err)
 			}
 		} else {
-			// Regular WebP sticker → send as photo
-			if fileURL, err := b.tgFileURL(msg.Sticker.FileID); err == nil {
-				if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
-					m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
-					m.AddPhoto(uploaded)
-					if msg.ReplyToMessage != nil {
-						if maxReplyID, ok := b.repo.LookupMaxMsgID(msg.Chat.ID, msg.ReplyToMessage.MessageID); ok {
-							m.SetReply(caption, maxReplyID)
-						}
-					}
-					slog.Info("TG-to-MAX sending sticker as photo", "uid", uid, "tgChat", msg.Chat.ID)
-					result, err := b.maxApi.Messages.SendWithResult(ctx, m)
-					if err != nil {
-						slog.Error("TG-to-MAX sticker send failed", "err", err)
-					} else {
-						slog.Info("TG-to-MAX sent", "mid", result.Body.Mid)
-						b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
-					}
-					return
-				} else {
-					slog.Error("TG-to-MAX sticker photo upload failed", "err", err)
-				}
+			// Regular WebP sticker → upload as photo via uploadTgPhotoToMax
+			// (works with local TG API, caption sent correctly)
+			if uploaded, err := b.uploadTgPhotoToMax(ctx, msg.Sticker.FileID); err == nil {
+				mediaToken = uploaded.Token
+				mediaAttType = "image"
+			} else {
+				slog.Error("TG-to-MAX sticker photo upload failed", "err", err)
 			}
 		}
 	} else if msg.Video != nil {
@@ -533,6 +499,8 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	if mediaAttType == "" && msg.Text == "" {
 		mediaType := ""
 		switch {
+		case msg.Photo != nil:
+			mediaType = "[Фото]"
 		case msg.Video != nil:
 			mediaType = "[Видео]"
 		case msg.VideoNote != nil:
