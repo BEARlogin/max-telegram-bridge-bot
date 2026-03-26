@@ -263,6 +263,13 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 	return "", fmt.Errorf("MAX attachment not ready after 10 retries")
 }
 
+// uploadTgPhotoToMax downloads a photo from TG and uploads it to MAX.
+// Unlike UploadPhotoFromUrl, this works with local TG Bot API (TG_API_URL)
+// because it downloads the file itself instead of passing the URL to MAX.
+func (b *Bridge) uploadTgPhotoToMax(ctx context.Context, fileID string) (*maxschemes.UploadedInfo, error) {
+	return b.uploadTgMediaToMax(ctx, fileID, "image", "photo.jpg")
+}
+
 // formatFileSize formats file size in human-readable form.
 func formatFileSize(size int) string {
 	switch {
