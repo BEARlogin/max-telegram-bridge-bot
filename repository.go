@@ -1,5 +1,20 @@
 package main
 
+// Replacement — одно правило замены текста.
+// Target: "" или "all" — весь текст, "links" — только ссылки.
+type Replacement struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Regex  bool   `json:"regex"`
+	Target string `json:"target,omitempty"`
+}
+
+// CrosspostReplacements — замены по направлениям.
+type CrosspostReplacements struct {
+	TgToMax []Replacement `json:"tg>max,omitempty"`
+	MaxToTg []Replacement `json:"max>tg,omitempty"`
+}
+
 // CrosspostLink — одна связка кросспостинга.
 type CrosspostLink struct {
 	TgChatID  int64
@@ -35,6 +50,8 @@ type Repository interface {
 	ListCrossposts(ownerID int64) []CrosspostLink
 	SetCrosspostDirection(maxChatID int64, direction string) bool
 	UnpairCrosspost(maxChatID, deletedBy int64) bool
+	GetCrosspostReplacements(maxChatID int64) CrosspostReplacements
+	SetCrosspostReplacements(maxChatID int64, repl CrosspostReplacements) error
 
 	// Users
 	TouchUser(userID int64, platform, username, firstName string)

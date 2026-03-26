@@ -171,6 +171,15 @@ func (b *Bridge) tgFileURL(fileID string) (string, error) {
 	return file.Link(b.tgBot.Token), nil
 }
 
+// tgChatTitle возвращает title TG-чата/канала по ID. Пустая строка если не удалось.
+func (b *Bridge) tgChatTitle(chatID int64) string {
+	chat, err := b.tgBot.GetChat(tgbotapi.ChatInfoConfig{ChatConfig: tgbotapi.ChatConfig{ChatID: chatID}})
+	if err != nil {
+		return ""
+	}
+	return chat.Title
+}
+
 func (b *Bridge) tgWebhookPath() string {
 	return "/tg-webhook-" + b.whSecret
 }

@@ -113,3 +113,17 @@ func mimeToFilename(base, mime string) string {
 	}
 	return base + ext
 }
+
+// fileNameFromURL извлекает имя файла из URL, fallback "file".
+func fileNameFromURL(rawURL string) string {
+	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
+		name := rawURL[idx+1:]
+		if q := strings.Index(name, "?"); q >= 0 {
+			name = name[:q]
+		}
+		if name != "" {
+			return name
+		}
+	}
+	return "file"
+}

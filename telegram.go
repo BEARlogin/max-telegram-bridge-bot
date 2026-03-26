@@ -155,6 +155,43 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				continue
 			}
 
+			// Обработка ввода замены (если юзер в режиме ожидания)
+			if msg.Chat.Type == "private" && msg.From != nil && !strings.HasPrefix(text, "/") {
+				if w, ok := b.getReplWait(msg.From.ID); ok {
+					b.clearReplWait(msg.From.ID)
+					rule, valid := parseReplacementInput(text)
+					if !valid {
+						b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат. Используйте:\n<code>from | to</code>\nили\n<code>/regex/ | to</code>"))
+						continue
+					}
+					rule.Target = w.target
+					repl := b.repo.GetCrosspostReplacements(w.maxChatID)
+					if w.direction == "tg>max" {
+						repl.TgToMax = append(repl.TgToMax, rule)
+					} else {
+						repl.MaxToTg = append(repl.MaxToTg, rule)
+					}
+					if err := b.repo.SetCrosspostReplacements(w.maxChatID, repl); err != nil {
+						slog.Error("save replacements failed", "err", err)
+						b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Ошибка сохранения."))
+						continue
+					}
+					ruleType := "строка"
+					if rule.Regex {
+						ruleType = "regex"
+					}
+					dirLabel := "TG → MAX"
+					if w.direction == "max>tg" {
+						dirLabel = "MAX → TG"
+					}
+					m := tgbotapi.NewMessage(msg.Chat.ID,
+						fmt.Sprintf("Замена добавлена (%s, %s):\n<code>%s</code> → <code>%s</code>", dirLabel, ruleType, rule.From, rule.To))
+					m.ParseMode = "HTML"
+					b.tgBot.Send(m)
+					continue
+				}
+			}
+
 			// /crosspost в личке TG — показать список связок
 			if msg.Chat.Type == "private" && text == "/crosspost" {
 				if !b.isUserAllowed(msg.From.ID) {
@@ -168,7 +205,14 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				} else {
 					for _, l := range links {
 						kb := tgCrosspostKeyboard(l.Direction, l.MaxChatID)
-						m := tgbotapi.NewMessage(msg.Chat.ID, tgCrosspostStatusText("", l.Direction)+fmt.Sprintf("\nTG: %d ↔ MAX: %d", l.TgChatID, l.MaxChatID))
+						tgTitle := b.tgChatTitle(l.TgChatID)
+						statusText := tgCrosspostStatusText(tgTitle, l.Direction)
+						if tgTitle == "" {
+							statusText += fmt.Sprintf("\nTG: %d ↔ MAX: %d", l.TgChatID, l.MaxChatID)
+						} else {
+							statusText += fmt.Sprintf("\nTG: «%s» (%d)\nMAX: %d", tgTitle, l.TgChatID, l.MaxChatID)
+						}
+						m := tgbotapi.NewMessage(msg.Chat.ID, statusText)
 						m.ReplyMarkup = kb
 						b.tgBot.Send(m)
 					}
@@ -642,6 +686,12 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message)
 
 	caption := formatTgCrosspostCaption(msg)
 
+	// Применяем замены для TG→MAX
+	repl := b.repo.GetCrosspostReplacements(maxChatID)
+	if len(repl.TgToMax) > 0 {
+		caption = applyReplacements(caption, repl.TgToMax)
+	}
+
 	// Media group (альбом) — буферизуем и отправляем вместе
 	if msg.MediaGroupID != "" {
 		videoID := ""
@@ -727,6 +777,189 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 		return
 	}
 
+	// cpr:maxChatID — show replacements
+	if strings.HasPrefix(data, "cpr:") {
+		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cpr:"), 10, 64)
+		if err != nil {
+			return
+		}
+		repl := b.repo.GetCrosspostReplacements(maxChatID)
+		id := strconv.FormatInt(maxChatID, 10)
+		// Удаляем сообщение со связкой
+		b.tgBot.Request(tgbotapi.NewDeleteMessage(chatID, msgID))
+		// Заголовок с кнопками добавления
+		kb := tgReplacementsKeyboard(maxChatID)
+		m := tgbotapi.NewMessage(chatID, formatReplacementsHeader(repl))
+		m.ReplyMarkup = kb
+		b.tgBot.Send(m)
+		// Каждая замена — отдельное сообщение с кнопкой удаления
+		for i, r := range repl.TgToMax {
+			m := tgbotapi.NewMessage(chatID, formatReplacementItem(r, "tg>max"))
+			m.ParseMode = "HTML"
+			m.ReplyMarkup = tgReplItemKeyboard("tg>max", i, id, r.Target)
+			b.tgBot.Send(m)
+		}
+		for i, r := range repl.MaxToTg {
+			m := tgbotapi.NewMessage(chatID, formatReplacementItem(r, "max>tg"))
+			m.ParseMode = "HTML"
+			m.ReplyMarkup = tgReplItemKeyboard("max>tg", i, id, r.Target)
+			b.tgBot.Send(m)
+		}
+		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		return
+	}
+
+	// cprt:dir:index:target:maxChatID — toggle replacement target
+	if strings.HasPrefix(data, "cprt:") {
+		parts := strings.SplitN(strings.TrimPrefix(data, "cprt:"), ":", 4)
+		if len(parts) != 4 {
+			return
+		}
+		dir := parts[0]
+		idx, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return
+		}
+		newTarget := parts[2]
+		maxChatID, err := strconv.ParseInt(parts[3], 10, 64)
+		if err != nil {
+			return
+		}
+		repl := b.repo.GetCrosspostReplacements(maxChatID)
+		id := strconv.FormatInt(maxChatID, 10)
+		var r *Replacement
+		if dir == "tg>max" && idx < len(repl.TgToMax) {
+			r = &repl.TgToMax[idx]
+		} else if dir == "max>tg" && idx < len(repl.MaxToTg) {
+			r = &repl.MaxToTg[idx]
+		}
+		if r == nil {
+			return
+		}
+		r.Target = newTarget
+		b.repo.SetCrosspostReplacements(maxChatID, repl)
+		// Обновляем сообщение
+		newText := formatReplacementItem(*r, dir)
+		kb := tgReplItemKeyboard(dir, idx, id, r.Target)
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, newText, kb)
+		edit.ParseMode = "HTML"
+		b.tgBot.Send(edit)
+		label := "весь текст"
+		if newTarget == "links" {
+			label = "только ссылки"
+		}
+		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Тип: "+label))
+		return
+	}
+
+	// cprd:dir:index:maxChatID — delete single replacement
+	if strings.HasPrefix(data, "cprd:") {
+		parts := strings.SplitN(strings.TrimPrefix(data, "cprd:"), ":", 3)
+		if len(parts) != 3 {
+			return
+		}
+		dir := parts[0]
+		idx, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return
+		}
+		maxChatID, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			return
+		}
+		repl := b.repo.GetCrosspostReplacements(maxChatID)
+		if dir == "tg>max" && idx < len(repl.TgToMax) {
+			repl.TgToMax = append(repl.TgToMax[:idx], repl.TgToMax[idx+1:]...)
+		} else if dir == "max>tg" && idx < len(repl.MaxToTg) {
+			repl.MaxToTg = append(repl.MaxToTg[:idx], repl.MaxToTg[idx+1:]...)
+		}
+		b.repo.SetCrosspostReplacements(maxChatID, repl)
+		edit := tgbotapi.NewEditMessageText(chatID, msgID, "Замена удалена.")
+		b.tgBot.Send(edit)
+		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Удалено"))
+		return
+	}
+
+	// cpra:dir:maxChatID — choose target (all or links)
+	if strings.HasPrefix(data, "cpra:") {
+		parts := strings.SplitN(strings.TrimPrefix(data, "cpra:"), ":", 2)
+		if len(parts) != 2 {
+			return
+		}
+		dir := parts[0]
+		id := parts[1]
+		dirLabel := "TG → MAX"
+		if dir == "max>tg" {
+			dirLabel = "MAX → TG"
+		}
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("📝 Весь текст", "cprat:"+dir+":all:"+id),
+				tgbotapi.NewInlineKeyboardButtonData("🔗 Только ссылки", "cprat:"+dir+":links:"+id),
+			),
+		)
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID,
+			fmt.Sprintf("Добавление замены для %s.\nГде применять замену?", dirLabel), kb)
+		b.tgBot.Send(edit)
+		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		return
+	}
+
+	// cprat:dir:target:maxChatID — set wait state with target
+	if strings.HasPrefix(data, "cprat:") {
+		parts := strings.SplitN(strings.TrimPrefix(data, "cprat:"), ":", 3)
+		if len(parts) != 3 {
+			return
+		}
+		dir := parts[0]
+		target := parts[1]
+		maxChatID, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			return
+		}
+		b.setReplWait(fromID, maxChatID, dir, target)
+		edit := tgbotapi.NewEditMessageText(chatID, msgID,
+			fmt.Sprintf("Отправьте правило замены:\n<code>from | to</code>\n\nДля регулярного выражения:\n<code>/regex/ | to</code>\n\nНапример:\n<code>utm_source=tg | utm_source=max</code>"))
+		edit.ParseMode = "HTML"
+		b.tgBot.Send(edit)
+		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		return
+	}
+
+	// cprc:maxChatID — clear all replacements
+	if strings.HasPrefix(data, "cprc:") {
+		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cprc:"), 10, 64)
+		if err != nil {
+			return
+		}
+		b.repo.SetCrosspostReplacements(maxChatID, CrosspostReplacements{})
+		repl := b.repo.GetCrosspostReplacements(maxChatID)
+		kb := tgReplacementsKeyboard(maxChatID)
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, formatReplacementsHeader(repl), kb)
+		b.tgBot.Send(edit)
+		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Очищено"))
+		return
+	}
+
+	// cprb:maxChatID — back to crosspost management
+	if strings.HasPrefix(data, "cprb:") {
+		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cprb:"), 10, 64)
+		if err != nil {
+			return
+		}
+		_, direction, ok := b.repo.GetCrosspostTgChat(maxChatID)
+		if !ok {
+			return
+		}
+		title := parseTgCrosspostTitle(query.Message.Text)
+		text := tgCrosspostStatusText(title, direction) + fmt.Sprintf("\nTG: ↔ MAX: %d", maxChatID)
+		kb := tgCrosspostKeyboard(direction, maxChatID)
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, text, kb)
+		b.tgBot.Send(edit)
+		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		return
+	}
+
 	// cpuc:maxChatID — unlink confirmed
 	if strings.HasPrefix(data, "cpuc:") {
 		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cpuc:"), 10, 64)
@@ -790,6 +1023,7 @@ func tgCrosspostKeyboard(direction string, maxChatID int64) tgbotapi.InlineKeybo
 			tgbotapi.NewInlineKeyboardButtonData(lblBoth, "cpd:both:"+id),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Замены", "cpr:"+id),
 			tgbotapi.NewInlineKeyboardButtonData("❌ Удалить", "cpu:"+id),
 		),
 	)

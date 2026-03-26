@@ -1,0 +1,1 @@
+ALTER TABLE crossposts ADD COLUMN replacements TEXT NOT NULL DEFAULT '';
