@@ -1000,8 +1000,17 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	}
 
 	// Отправляем остальные вложения (аудио, файлы, стикеры) по одному
+	// Если фото/видео не отправлялось, caption добавляем к первому вложению
+	firstSolo := true
 	for _, sm := range soloMedia {
-		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, "", "", 0, b.cfg.maxMaxFileBytes(), sm.name)
+		smCaption := ""
+		smReplyTo := 0
+		if firstSolo && !mediaSent {
+			smCaption = htmlCaption
+			smReplyTo = replyToID
+		}
+		firstSolo = false
+		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, smCaption, pm, smReplyTo, b.cfg.maxMaxFileBytes(), sm.name)
 		if err != nil {
 			var e *ErrFileTooLarge
 			if errors.As(err, &e) {
