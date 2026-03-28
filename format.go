@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
@@ -23,21 +22,29 @@ func tgName(msg *tgbotapi.Message) string {
 	return name
 }
 
+// formatAttribution собирает строку "Имя: текст" или "Имя:\nтекст" в зависимости от настройки.
+func formatAttribution(name, text string, newline bool) string {
+	if newline {
+		return name + ":\n" + text
+	}
+	return name + ": " + text
+}
+
 // formatTgCaption — для пересылки (текст или caption)
-func formatTgCaption(msg *tgbotapi.Message, prefix bool) string {
+func formatTgCaption(msg *tgbotapi.Message, prefix, newline bool) string {
 	name := tgName(msg)
 	text := msg.Text
 	if text == "" {
 		text = msg.Caption
 	}
 	if prefix {
-		return fmt.Sprintf("[TG] %s: %s", name, text)
+		return formatAttribution("[TG] "+name, text, newline)
 	}
-	return fmt.Sprintf("%s: %s", name, text)
+	return formatAttribution(name, text, newline)
 }
 
 // formatTgMessage — для edit (полный формат)
-func formatTgMessage(msg *tgbotapi.Message, prefix bool) string {
+func formatTgMessage(msg *tgbotapi.Message, prefix, newline bool) string {
 	name := tgName(msg)
 	text := msg.Text
 	if text == "" {
@@ -47,9 +54,9 @@ func formatTgMessage(msg *tgbotapi.Message, prefix bool) string {
 		return ""
 	}
 	if prefix {
-		return fmt.Sprintf("[TG] %s: %s", name, text)
+		return formatAttribution("[TG] "+name, text, newline)
 	}
-	return fmt.Sprintf("%s: %s", name, text)
+	return formatAttribution(name, text, newline)
 }
 
 func maxName(upd *maxschemes.MessageCreatedUpdate) string {
@@ -61,13 +68,13 @@ func maxName(upd *maxschemes.MessageCreatedUpdate) string {
 }
 
 // formatMaxCaption — для пересылки
-func formatMaxCaption(upd *maxschemes.MessageCreatedUpdate, prefix bool) string {
+func formatMaxCaption(upd *maxschemes.MessageCreatedUpdate, prefix, newline bool) string {
 	name := maxName(upd)
 	text := upd.Message.Body.Text
 	if prefix {
-		return fmt.Sprintf("[MAX] %s: %s", name, text)
+		return formatAttribution("[MAX] "+name, text, newline)
 	}
-	return fmt.Sprintf("%s: %s", name, text)
+	return formatAttribution(name, text, newline)
 }
 
 // formatTgCrosspostCaption — для кросспостинга каналов (без attribution и префиксов)

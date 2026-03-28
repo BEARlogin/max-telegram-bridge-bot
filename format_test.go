@@ -56,7 +56,7 @@ func TestFormatTgCaption(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatTgCaption(msg, tt.prefix)
+			got := formatTgCaption(msg, tt.prefix, false)
 			if got != tt.expected {
 				t.Errorf("formatTgCaption() = %q, want %q", got, tt.expected)
 			}
@@ -71,7 +71,7 @@ func TestFormatTgCaption_UsesCaption(t *testing.T) {
 		From:    &tgbotapi.User{FirstName: "Bob"},
 	}
 
-	got := formatTgCaption(msg, false)
+	got := formatTgCaption(msg, false, false)
 	expected := "Bob: photo caption"
 	if got != expected {
 		t.Errorf("formatTgCaption() = %q, want %q", got, expected)
@@ -126,7 +126,7 @@ func TestFormatTgMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatTgMessage(tt.msg, tt.prefix)
+			got := formatTgMessage(tt.msg, tt.prefix, false)
 			if got != tt.expected {
 				t.Errorf("formatTgMessage() = %q, want %q", got, tt.expected)
 			}
@@ -189,7 +189,7 @@ func TestFormatMaxCaption(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatMaxCaption(upd, tt.prefix)
+			got := formatMaxCaption(upd, tt.prefix, false)
 			if got != tt.expected {
 				t.Errorf("formatMaxCaption() = %q, want %q", got, tt.expected)
 			}

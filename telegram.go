@@ -77,7 +77,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					edited.Animation != nil || edited.Sticker != nil || edited.Voice != nil || edited.Audio != nil
 				if hasMedia {
 					prefix := b.repo.HasPrefix("tg", edited.Chat.ID)
-					caption := formatTgCaption(edited, prefix)
+					caption := formatTgCaption(edited, prefix, b.cfg.MessageNewline)
 					go b.forwardTgToMax(ctx, edited, maxChatID, caption)
 					continue
 				}
@@ -88,7 +88,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 				prefix := b.repo.HasPrefix("tg", edited.Chat.ID)
-				fwd := formatTgMessage(edited, prefix)
+				fwd := formatTgMessage(edited, prefix, b.cfg.MessageNewline)
 				if fwd == "" {
 					continue
 				}
@@ -346,7 +346,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 
 			prefix := b.repo.HasPrefix("tg", msg.Chat.ID)
-			caption := formatTgCaption(msg, prefix)
+			caption := formatTgCaption(msg, prefix, b.cfg.MessageNewline)
 
 			// Проверяем anti-loop
 			checkText := msg.Text

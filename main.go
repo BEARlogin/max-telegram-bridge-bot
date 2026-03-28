@@ -112,6 +112,13 @@ func main() {
 		slog.Info("MAX file extension whitelist enabled", "count", len(cfg.MaxAllowedExts))
 	}
 
+	// MESSAGE_FORMAT=newline — текст с новой строки после имени: "Имя:\nтекст"
+	// По умолчанию (или MESSAGE_FORMAT=inline) — "Имя: текст"
+	if strings.ToLower(os.Getenv("MESSAGE_FORMAT")) == "newline" {
+		cfg.MessageNewline = true
+		slog.Info("Message format: newline")
+	}
+
 	tgToken := mustEnv("TG_TOKEN")
 	dbPath := envOr("DB_PATH", "bridge.db")
 

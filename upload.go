@@ -94,7 +94,7 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	}
 	req.Header.Set("Authorization", b.cfg.MaxToken)
 
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.apiClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("get upload url: %w", err)
 	}
@@ -280,7 +280,7 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 		req.Header.Set("Authorization", b.cfg.MaxToken)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := b.httpClient.Do(req)
+		resp, err := b.apiClient.Do(req)
 		if err != nil {
 			return "", err
 		}

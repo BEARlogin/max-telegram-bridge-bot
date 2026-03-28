@@ -86,9 +86,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 				var fwd string
 				if prefix {
-					fwd = fmt.Sprintf("[MAX] %s: %s", name, text)
+					fwd = formatAttribution("[MAX] "+name, text, b.cfg.MessageNewline)
 				} else {
-					fwd = fmt.Sprintf("%s: %s", name, text)
+					fwd = formatAttribution(name, text, b.cfg.MessageNewline)
 				}
 
 				// Проверяем вложения в edit — если есть медиа, используем editMessageMedia
@@ -468,7 +468,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				// Anti-loop
 				if !strings.HasPrefix(text, "[TG]") && !strings.HasPrefix(text, "[MAX]") {
 					prefix := b.repo.HasPrefix("max", chatID)
-					caption := formatMaxCaption(msgUpd, prefix)
+					caption := formatMaxCaption(msgUpd, prefix, b.cfg.MessageNewline)
 					go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
 				}
 				continue
