@@ -113,8 +113,10 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	}
 	slog.Debug("MAX upload endpoint", "url", endpoint.Url, "token", endpoint.Token)
 
-	// Если токен уже в ответе шага 1 — CDN загрузка не нужна
-	if endpoint.Token != "" {
+	// Для image/file: если токен уже в ответе шага 1 — CDN загрузка не нужна.
+	// Для audio/video: токен приходит в шаге 1, но файл всё равно нужно загрузить на CDN,
+	// после чего использовать тот же токен из шага 1 (CDN-ответ содержит только retval).
+	if endpoint.Token != "" && endpoint.Url == "" {
 		slog.Debug("MAX upload ok (endpoint token, no CDN needed)")
 		return &maxschemes.UploadedInfo{Token: endpoint.Token}, nil
 	}
@@ -168,6 +170,11 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	if err := json.Unmarshal(cdnBody, &cdnResult); err == nil && cdnResult.Token != "" {
 		slog.Debug("MAX upload ok", "fileId", cdnResult.FileID)
 		return &maxschemes.UploadedInfo{Token: cdnResult.Token, FileID: cdnResult.FileID}, nil
+	}
+	// Для audio/video CDN возвращает retval, а не token — используем токен из шага 1
+	if endpoint.Token != "" {
+		slog.Debug("MAX upload ok (CDN uploaded, using endpoint token)")
+		return &maxschemes.UploadedInfo{Token: endpoint.Token}, nil
 	}
 	return nil, fmt.Errorf("no token in CDN response: %s", string(cdnBody))
 }
