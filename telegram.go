@@ -668,13 +668,36 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 	}
 
-	// Конвертируем TG entities в markdown для MAX
+	// Конвертируем TG entities в markdown для MAX.
+	// Важно: entities содержат offsets относительно оригинального msg.Text/Caption,
+	// поэтому конвертируем сначала чистый текст, а attribution добавляем поверх.
+	rawText := msg.Text
+	if rawText == "" {
+		rawText = msg.Caption
+	}
 	entities := msg.Entities
 	if entities == nil {
 		entities = msg.CaptionEntities
 	}
-	mdCaption := tgEntitiesToMarkdown(caption, entities)
-	hasFormatting := mdCaption != caption
+	mdText := tgEntitiesToMarkdown(rawText, entities)
+	hasFormatting := mdText != rawText
+
+	// Собираем итоговый caption: attribution + отформатированный текст
+	var mdCaption string
+	if rawText == "" {
+		mdCaption = caption // только attribution (для медиа без текста)
+	} else {
+		name := tgName(msg)
+		prefix := b.repo.HasPrefix("tg", msg.Chat.ID)
+		if prefix {
+			name = "[TG] " + name
+		}
+		if b.cfg.MessageNewline {
+			mdCaption = name + ":\n" + mdText
+		} else {
+			mdCaption = name + ": " + mdText
+		}
+	}
 
 	var mid string
 	var sendErr error
