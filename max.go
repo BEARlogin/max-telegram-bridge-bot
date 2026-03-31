@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -878,11 +879,26 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	mediaSent := false
 	var qAttType, qAttURL string // для очереди при ошибке
 
-	// Определяем HTML caption если есть markups (для кросспостинга)
+	// Конвертируем MAX markups в TG HTML.
+	// Attribution добавляем поверх отформатированного текста, чтобы не сбивать offsets.
 	htmlCaption := caption
-	useHTML := len(body.Markups) > 0 && caption == text
+	useHTML := len(body.Markups) > 0
 	if useHTML {
-		htmlCaption = maxMarkupsToHTML(text, body.Markups)
+		htmlText := maxMarkupsToHTML(text, body.Markups)
+		// Строим caption с attribution поверх HTML-текста
+		name := msgUpd.Message.Sender.Name
+		if name == "" {
+			name = msgUpd.Message.Sender.Username
+		}
+		prefix := b.repo.HasPrefix("max", chatID)
+		if prefix {
+			name = "[MAX] " + name
+		}
+		if b.cfg.MessageNewline {
+			htmlCaption = html.EscapeString(name) + ":\n" + htmlText
+		} else {
+			htmlCaption = html.EscapeString(name) + ": " + htmlText
+		}
 	}
 
 	// Собираем вложения: фото/видео → albumMedia (отправляем вместе), остальные → soloMedia
@@ -1041,10 +1057,8 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		if text == "" {
 			return
 		}
-		// Если есть markups и caption = оригинальный текст (кросспостинг), конвертируем в HTML
-		if len(body.Markups) > 0 && caption == text {
-			htmlText := maxMarkupsToHTML(text, body.Markups)
-			tgMsg := tgbotapi.NewMessage(tgChatID, htmlText)
+		if useHTML {
+			tgMsg := tgbotapi.NewMessage(tgChatID, htmlCaption)
 			tgMsg.ParseMode = "HTML"
 			tgMsg.ReplyToMessageID = replyToID
 			sent, sendErr = b.tgBot.Send(tgMsg)
