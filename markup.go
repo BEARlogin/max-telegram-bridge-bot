@@ -108,6 +108,9 @@ func utf16ToString(units []uint16) string {
 // --- MAX Markups → TG HTML ---
 
 // maxMarkupsToHTML конвертирует MAX text + markups в TG-совместимый HTML.
+// Корректно обрабатывает перекрывающиеся диапазоны через interval splitting:
+// разбивает текст на непересекающиеся отрезки и для каждого выводит
+// правильно вложенные теги.
 func maxMarkupsToHTML(text string, markups []maxschemes.MarkUp) string {
 	if len(markups) == 0 {
 		return html.EscapeString(text)
@@ -115,15 +118,15 @@ func maxMarkupsToHTML(text string, markups []maxschemes.MarkUp) string {
 
 	runes := []rune(text)
 	utf16units := utf16.Encode(runes)
+	n := len(utf16units)
 
-	type tag struct {
-		pos   int
-		open  bool
-		order int
-		tag   string
+	// Описание одного markup с HTML-тегами
+	type markupInfo struct {
+		from, to        int // UTF-16 offsets
+		openTag, closeTag string
 	}
 
-	var tags []tag
+	var infos []markupInfo
 	for _, m := range markups {
 		var openTag, closeTag string
 		switch m.Type {
@@ -143,33 +146,59 @@ func maxMarkupsToHTML(text string, markups []maxschemes.MarkUp) string {
 		default:
 			continue
 		}
-		tags = append(tags, tag{pos: m.From, open: true, order: 0, tag: openTag})
-		tags = append(tags, tag{pos: m.From + m.Length, open: false, order: 1, tag: closeTag})
+		to := m.From + m.Length
+		if to > n {
+			to = n
+		}
+		if m.From >= to {
+			continue
+		}
+		infos = append(infos, markupInfo{m.From, to, openTag, closeTag})
 	}
 
-	sort.Slice(tags, func(i, j int) bool {
-		if tags[i].pos != tags[j].pos {
-			return tags[i].pos < tags[j].pos
-		}
-		return tags[i].order > tags[j].order
-	})
+	if len(infos) == 0 {
+		return html.EscapeString(text)
+	}
+
+	// Собираем все граничные точки → разбиваем на непересекающиеся отрезки
+	boundarySet := map[int]struct{}{0: {}, n: {}}
+	for _, m := range infos {
+		boundarySet[m.from] = struct{}{}
+		boundarySet[m.to] = struct{}{}
+	}
+	boundaries := make([]int, 0, len(boundarySet))
+	for b := range boundarySet {
+		boundaries = append(boundaries, b)
+	}
+	sort.Ints(boundaries)
 
 	var sb strings.Builder
-	tagIdx := 0
-	for i := 0; i <= len(utf16units); i++ {
-		for tagIdx < len(tags) && tags[tagIdx].pos == i {
-			sb.WriteString(tags[tagIdx].tag)
-			tagIdx++
+
+	for seg := 0; seg < len(boundaries)-1; seg++ {
+		segStart := boundaries[seg]
+		segEnd := boundaries[seg+1]
+		if segStart >= segEnd {
+			continue
 		}
-		if i < len(utf16units) {
-			if utf16.IsSurrogate(rune(utf16units[i])) && i+1 < len(utf16units) {
-				r := utf16.DecodeRune(rune(utf16units[i]), rune(utf16units[i+1]))
-				sb.WriteString(html.EscapeString(string(r)))
-				i++
-			} else {
-				sb.WriteString(html.EscapeString(string(rune(utf16units[i]))))
+
+		// Определяем какие markups активны на этом отрезке
+		var active []markupInfo
+		for _, m := range infos {
+			if m.from <= segStart && segEnd <= m.to {
+				active = append(active, m)
 			}
 		}
+
+		// Текст отрезка
+		segText := html.EscapeString(utf16ToString(utf16units[segStart:segEnd]))
+
+		// Оборачиваем текст в теги (порядок стабилен — по индексу в infos)
+		result := segText
+		for i := len(active) - 1; i >= 0; i-- {
+			result = active[i].openTag + result + active[i].closeTag
+		}
+		sb.WriteString(result)
 	}
+
 	return sb.String()
 }
