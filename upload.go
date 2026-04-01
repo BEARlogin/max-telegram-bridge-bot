@@ -128,10 +128,14 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	}
 	slog.Debug("MAX upload endpoint", "url", endpoint.Url, "token", endpoint.Token)
 
-	// Если токен уже в ответе шага 1 — CDN загрузка не нужна
-	if endpoint.Token != "" {
+	// Для video/audio: token приходит сразу, но файл ВСЁ РАВНО нужно загрузить на CDN URL.
+	// Для file/image: token приходит после загрузки на CDN.
+	videoToken := endpoint.Token // сохраняем для video/audio
+
+	if endpoint.Url == "" && videoToken != "" {
+		// Нет URL для загрузки, но есть token — file/image (не video/audio)
 		slog.Debug("MAX upload ok (endpoint token, no CDN needed)")
-		return &maxschemes.UploadedInfo{Token: endpoint.Token}, nil
+		return &maxschemes.UploadedInfo{Token: videoToken}, nil
 	}
 
 	if endpoint.Url == "" {
@@ -175,7 +179,13 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 		return nil, &ErrForbiddenExtension{Name: fileName}
 	}
 
-	// 3. Парсим CDN ответ (fileId в camelCase)
+	// 3. Для video/audio: используем token из шага 1 (CDN возвращает только retval)
+	if videoToken != "" {
+		slog.Debug("MAX upload ok (video/audio token from endpoint)", "token", videoToken)
+		return &maxschemes.UploadedInfo{Token: videoToken}, nil
+	}
+
+	// Для file/image: парсим CDN ответ (fileId + token в camelCase)
 	var cdnResult struct {
 		FileID int64  `json:"fileId"`
 		Token  string `json:"token"`
