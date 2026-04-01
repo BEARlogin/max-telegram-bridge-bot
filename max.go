@@ -1060,12 +1060,21 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	}
 
 	if sendErr != nil {
-		slog.Error("MAX→TG send failed", "err", sendErr, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
+		errStr := sendErr.Error()
+		slog.Error("MAX→TG send failed", "err", errStr, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
+
+		// TOPIC_CLOSED — General топик закрыт, уведомляем и не ретраим
+		if strings.Contains(errStr, "TOPIC_CLOSED") {
+			m := maxbot.NewMessage().SetChat(chatID).SetText(
+				"Не удалось переслать в Telegram: основной топик (General) закрыт.\nОткройте General в настройках TG-группы или сделайте бота админом.")
+			b.maxApi.Messages.Send(ctx, m)
+			return
+		}
+
 		parseMode := ""
 		if useHTML {
 			parseMode = "HTML"
 		}
-		// ErrFileTooLarge уже уведомил пользователя выше — не дублируем
 		var eTooLarge *ErrFileTooLarge
 		if !errors.As(sendErr, &eTooLarge) {
 			notifyText := "Не удалось переслать сообщение в Telegram. Попробуем ещё раз автоматически."
