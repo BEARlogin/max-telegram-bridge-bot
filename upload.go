@@ -286,16 +286,25 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 
 	url := fmt.Sprintf("https://platform-api.max.ru/messages?chat_id=%d&v=1.2.5", chatID)
 
+	// Пауза перед первой отправкой если есть вложение (MAX CDN нужно время на обработку)
+	if attType != "" && token != "" {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+
 	// Retry при attachment.not.ready (файл ещё обрабатывается)
 	for attempt := 0; attempt < 20; attempt++ {
 		if attempt > 0 {
-			delay := time.Duration(2+attempt) * time.Second
+			delay := time.Duration(3+attempt*2) * time.Second
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
 			case <-time.After(delay):
 			}
-			slog.Warn("MAX retry", "attempt", attempt+1, "maxAttempts", 10)
+			slog.Warn("MAX retry", "attempt", attempt+1, "maxAttempts", 20)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
