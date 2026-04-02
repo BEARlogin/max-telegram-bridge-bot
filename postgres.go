@@ -29,7 +29,7 @@ func NewPostgresRepo(dsn string) (Repository, error) {
 	return &pgRepo{db: db}, nil
 }
 
-func (r *pgRepo) Register(key, platform string, chatID int64) (bool, string, error) {
+func (r *pgRepo) Register(key, platform string, chatID int64, threadID int) (bool, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -63,10 +63,20 @@ func (r *pgRepo) Register(key, platform string, chatID int64) (bool, string, err
 		tgID, maxID = peerChatID, chatID
 	}
 
+	tgThreadID := 0
+	if platform == "tg" {
+		tgThreadID = threadID
+	}
 	_, err = r.db.Exec(
-		"INSERT INTO pairs (tg_chat_id, max_chat_id) VALUES ($1, $2) ON CONFLICT (tg_chat_id, max_chat_id) DO NOTHING",
-		tgID, maxID)
+		"INSERT INTO pairs (tg_chat_id, max_chat_id, tg_thread_id) VALUES ($1, $2, $3) ON CONFLICT (tg_chat_id, max_chat_id) DO UPDATE SET tg_thread_id = EXCLUDED.tg_thread_id",
+		tgID, maxID, tgThreadID)
 	return true, "", err
+}
+
+func (r *pgRepo) GetTgThreadID(tgChatID int64) int {
+	var id int
+	r.db.QueryRow("SELECT tg_thread_id FROM pairs WHERE tg_chat_id = $1", tgChatID).Scan(&id)
+	return id
 }
 
 func (r *pgRepo) GetMaxChat(tgChatID int64) (int64, bool) {

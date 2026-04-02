@@ -303,7 +303,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 				key := strings.TrimSpace(strings.TrimPrefix(text, "/bridge"))
-				paired, generatedKey, err := b.repo.Register(key, "tg", msg.Chat.ID)
+				paired, generatedKey, err := b.repo.Register(key, "tg", msg.Chat.ID, 0)
 				if err != nil {
 					slog.Error("register failed", "err", err)
 					continue

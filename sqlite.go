@@ -26,7 +26,7 @@ func NewSQLiteRepo(dbPath string) (Repository, error) {
 	return &sqliteRepo{db: db}, nil
 }
 
-func (r *sqliteRepo) Register(key, platform string, chatID int64) (bool, string, error) {
+func (r *sqliteRepo) Register(key, platform string, chatID int64, threadID int) (bool, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -60,8 +60,19 @@ func (r *sqliteRepo) Register(key, platform string, chatID int64) (bool, string,
 		tgID, maxID = peerChatID, chatID
 	}
 
-	_, err = r.db.Exec("INSERT OR REPLACE INTO pairs (tg_chat_id, max_chat_id) VALUES (?, ?)", tgID, maxID)
+	// threadID приходит от TG-стороны, сохраняем при паринге
+	tgThreadID := 0
+	if platform == "tg" {
+		tgThreadID = threadID
+	}
+	_, err = r.db.Exec("INSERT OR REPLACE INTO pairs (tg_chat_id, max_chat_id, tg_thread_id) VALUES (?, ?, ?)", tgID, maxID, tgThreadID)
 	return true, "", err
+}
+
+func (r *sqliteRepo) GetTgThreadID(tgChatID int64) int {
+	var id int
+	r.db.QueryRow("SELECT tg_thread_id FROM pairs WHERE tg_chat_id = ?", tgChatID).Scan(&id)
+	return id
 }
 
 func (r *sqliteRepo) GetMaxChat(tgChatID int64) (int64, bool) {
