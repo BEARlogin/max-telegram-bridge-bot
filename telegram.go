@@ -312,9 +312,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 				if paired {
 					b.tg.SendMessage(ctx, msg.Chat.ID, "Связано! Сообщения теперь пересылаются.", &SendOpts{ThreadID: msg.MessageThreadID})
-					if msg.MessageThreadID != 0 {
-						b.repo.SetTgThreadID(msg.Chat.ID, msg.MessageThreadID)
-					}
+					b.repo.SetTgThreadID(msg.Chat.ID, msg.MessageThreadID) // 0 = no topics
 					slog.Info("paired", "platform", "tg", "chat", msg.Chat.ID, "key", key)
 				} else if generatedKey != "" {
 					b.tg.SendMessage(ctx, msg.Chat.ID,

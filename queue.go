@@ -152,6 +152,15 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 
 	if err != nil {
 		errStr := err.Error()
+		// Топики выключены — сбрасываем и повторяем без thread_id
+		if threadID != 0 && (strings.Contains(errStr, "message thread not found") ||
+			strings.Contains(errStr, "TOPIC_NOT_FOUND") ||
+			strings.Contains(errStr, "topics are disabled")) {
+			slog.Info("queue: forum topics disabled, resetting thread_id", "tgChat", item.DstChatID)
+			b.repo.SetTgThreadID(item.DstChatID, 0)
+			b.repo.IncrementAttempt(item.ID, now.Unix()) // retry immediately
+			return
+		}
 		if strings.Contains(errStr, "TOPIC_CLOSED") || strings.Contains(errStr, "403") || strings.Contains(errStr, "chat not found") {
 			slog.Warn("queue item dropped (permanent error)", "id", item.ID, "dir", "max2tg", "err", errStr)
 			b.repo.DeleteFromQueue(item.ID)

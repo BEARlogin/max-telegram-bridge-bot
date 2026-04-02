@@ -1057,6 +1057,16 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			return
 		}
 
+		// Топики были выключены — сбрасываем thread_id и повторяем
+		if threadID != 0 && (strings.Contains(errStr, "message thread not found") ||
+			strings.Contains(errStr, "TOPIC_NOT_FOUND") ||
+			strings.Contains(errStr, "topics are disabled")) {
+			slog.Info("TG forum topics disabled, resetting thread_id", "tgChat", tgChatID, "oldThread", threadID)
+			b.repo.SetTgThreadID(tgChatID, 0)
+			go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption)
+			return
+		}
+
 		parseMode := ""
 		if useHTML {
 			parseMode = "HTML"
