@@ -69,6 +69,14 @@ func (r *pgRepo) Register(key, platform string, chatID int64) (bool, string, err
 	return true, "", err
 }
 
+func (r *pgRepo) MigrateTgChat(oldID, newID int64) error {
+	_, err := r.db.Exec("UPDATE pairs SET tg_chat_id = $1 WHERE tg_chat_id = $2", newID, oldID)
+	if err == nil {
+		r.db.Exec("UPDATE messages SET tg_chat_id = $1 WHERE tg_chat_id = $2", newID, oldID)
+	}
+	return err
+}
+
 func (r *pgRepo) GetMaxChat(tgChatID int64) (int64, bool) {
 	var id int64
 	err := r.db.QueryRow("SELECT max_chat_id FROM pairs WHERE tg_chat_id = $1", tgChatID).Scan(&id)

@@ -1063,6 +1063,27 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		errStr := sendErr.Error()
 		slog.Error("MAX→TG send failed", "err", errStr, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
 
+		// Группа преобразована в supergroup — автоматически мигрируем chat ID
+		var tgErr *tgbotapi.Error
+		if errors.As(sendErr, &tgErr) && tgErr.MigrateToChatID != 0 {
+			newChatID := tgErr.MigrateToChatID
+			slog.Info("TG chat migrated, updating pair", "old", tgChatID, "new", newChatID)
+			if err := b.repo.MigrateTgChat(tgChatID, newChatID); err != nil {
+				slog.Error("MigrateTgChat failed", "err", err)
+			} else {
+				// Повторяем отправку с новым ID
+				go b.forwardMaxToTg(ctx, msgUpd, newChatID, caption)
+			}
+			return
+		}
+		if strings.Contains(errStr, "upgraded to a supergroup") {
+			// Fallback если не удалось получить новый ID из ошибки
+			m := maxbot.NewMessage().SetChat(chatID).SetText(
+				"TG-группа была преобразована в супергруппу. Перепривяжите чат: /unbridge в MAX, затем /bridge заново в обоих чатах.")
+			b.maxApi.Messages.Send(ctx, m)
+			return
+		}
+
 		// TOPIC_CLOSED — General топик закрыт, уведомляем и не ретраим
 		if strings.Contains(errStr, "TOPIC_CLOSED") {
 			m := maxbot.NewMessage().SetChat(chatID).SetText(

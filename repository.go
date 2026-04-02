@@ -31,6 +31,7 @@ type Repository interface {
 
 	GetMaxChat(tgChatID int64) (int64, bool)
 	GetTgChat(maxChatID int64) (int64, bool)
+	MigrateTgChat(oldID, newID int64) error
 
 	SaveMsg(tgChatID int64, tgMsgID int, maxChatID int64, maxMsgID string)
 	LookupMaxMsgID(tgChatID int64, tgMsgID int) (string, bool)

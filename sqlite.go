@@ -64,6 +64,16 @@ func (r *sqliteRepo) Register(key, platform string, chatID int64) (bool, string,
 	return true, "", err
 }
 
+func (r *sqliteRepo) MigrateTgChat(oldID, newID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.db.Exec("UPDATE pairs SET tg_chat_id = ? WHERE tg_chat_id = ?", newID, oldID)
+	if err == nil {
+		r.db.Exec("UPDATE messages SET tg_chat_id = ? WHERE tg_chat_id = ?", newID, oldID)
+	}
+	return err
+}
+
 func (r *sqliteRepo) GetMaxChat(tgChatID int64) (int64, bool) {
 	var id int64
 	err := r.db.QueryRow("SELECT max_chat_id FROM pairs WHERE tg_chat_id = ?", tgChatID).Scan(&id)

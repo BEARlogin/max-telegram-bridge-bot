@@ -112,6 +112,16 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 
 			msg := update.Message
+
+			// Обработка миграции группы в supergroup — обновляем chat ID в базе
+			if msg.MigrateToChatID != 0 {
+				slog.Info("TG chat migrated to supergroup", "old", msg.Chat.ID, "new", msg.MigrateToChatID)
+				if err := b.repo.MigrateTgChat(msg.Chat.ID, msg.MigrateToChatID); err != nil {
+					slog.Error("MigrateTgChat failed", "err", err)
+				}
+				continue
+			}
+
 			text := strings.TrimSpace(msg.Text)
 			slog.Debug("TG msg received", "uid", tgUserID(msg), "chat", msg.Chat.ID, "type", msg.Chat.Type)
 
