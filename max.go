@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -93,11 +94,28 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if strings.HasPrefix(text, "[TG]") || strings.HasPrefix(text, "[MAX]") {
 					continue
 				}
+
+				// Конвертируем markups в HTML если есть
 				var fwd string
-				if prefix {
-					fwd = formatAttribution("[MAX] "+name, text, b.cfg.MessageNewline)
+				var editParseMode string
+				if len(editUpd.Message.Body.Markups) > 0 {
+					htmlText := maxMarkupsToHTML(text, editUpd.Message.Body.Markups)
+					escapedName := html.EscapeString(name)
+					if prefix {
+						escapedName = "[MAX] " + escapedName
+					}
+					if b.cfg.MessageNewline {
+						fwd = escapedName + ":\n" + htmlText
+					} else {
+						fwd = escapedName + ": " + htmlText
+					}
+					editParseMode = "HTML"
 				} else {
-					fwd = formatAttribution(name, text, b.cfg.MessageNewline)
+					if prefix {
+						fwd = formatAttribution("[MAX] "+name, text, b.cfg.MessageNewline)
+					} else {
+						fwd = formatAttribution(name, text, b.cfg.MessageNewline)
+					}
 				}
 
 				// Проверяем вложения в edit — если есть медиа, используем editMessageMedia
@@ -131,16 +149,16 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						var mediaIM TGInputMedia
 						switch mediaType {
 						case "photo":
-							mediaIM = TGInputMedia{Type: "photo", File: FileArg{Name: name, Bytes: data}, Caption: fwd}
+							mediaIM = TGInputMedia{Type: "photo", File: FileArg{Name: name, Bytes: data}, Caption: fwd, ParseMode: editParseMode}
 						case "video":
-							mediaIM = TGInputMedia{Type: "video", File: FileArg{Name: name, Bytes: data}, Caption: fwd}
+							mediaIM = TGInputMedia{Type: "video", File: FileArg{Name: name, Bytes: data}, Caption: fwd, ParseMode: editParseMode}
 						case "document":
-							mediaIM = TGInputMedia{Type: "document", File: FileArg{Name: name, Bytes: data}, Caption: fwd}
+							mediaIM = TGInputMedia{Type: "document", File: FileArg{Name: name, Bytes: data}, Caption: fwd, ParseMode: editParseMode}
 						}
 						if err := b.tg.EditMessageMedia(ctx, tgChatID, tgMsgID, mediaIM); err != nil {
 							slog.Error("MAX→TG edit media failed", "err", err, "uid", editUpd.Message.Sender.UserId)
 							// Fallback — отправляем как новое сообщение
-							go b.sendTgMediaFromURL(ctx, tgChatID, mediaURL, mediaType, fwd, "", 0, 0, b.cfg.maxMaxFileBytes())
+							go b.sendTgMediaFromURL(ctx, tgChatID, mediaURL, mediaType, fwd, editParseMode, 0, 0, b.cfg.maxMaxFileBytes())
 						} else {
 							slog.Info("MAX→TG edited media", "tgMsg", tgMsgID, "type", mediaType, "uid", editUpd.Message.Sender.UserId)
 						}
@@ -151,7 +169,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if text == "" {
 					continue
 				}
-				if err := b.tg.EditMessageText(ctx, tgChatID, tgMsgID, fwd, nil); err != nil {
+				var editOpts *SendOpts
+				if editParseMode != "" {
+					editOpts = &SendOpts{ParseMode: editParseMode}
+				}
+				if err := b.tg.EditMessageText(ctx, tgChatID, tgMsgID, fwd, editOpts); err != nil {
 					slog.Error("MAX→TG edit failed", "err", err, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
 				} else {
 					slog.Info("MAX→TG edited", "tgMsg", tgMsgID, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
@@ -910,11 +932,27 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	mediaSent := false
 	var qAttType, qAttURL string // для очереди при ошибке
 
-	// Определяем HTML caption если есть markups (для кросспостинга)
+	// Определяем HTML caption если есть markups
 	htmlCaption := caption
-	useHTML := len(body.Markups) > 0 && caption == text
+	useHTML := len(body.Markups) > 0
 	if useHTML {
-		htmlCaption = maxMarkupsToHTML(text, body.Markups)
+		htmlText := maxMarkupsToHTML(text, body.Markups)
+		if caption == text {
+			// Кросспостинг: caption = сырой текст, без атрибуции
+			htmlCaption = htmlText
+		} else {
+			// Bridge: caption с атрибуцией — конвертируем текст отдельно, потом строим атрибуцию
+			name := maxName(msgUpd)
+			if b.repo.HasPrefix("max", msgUpd.Message.Recipient.ChatId) {
+				name = "[MAX] " + name
+			}
+			escapedName := html.EscapeString(name)
+			if b.cfg.MessageNewline {
+				htmlCaption = escapedName + ":\n" + htmlText
+			} else {
+				htmlCaption = escapedName + ": " + htmlText
+			}
+		}
 	}
 
 	// Собираем вложения: фото/видео → albumMedia (отправляем вместе), остальные → soloMedia
@@ -1059,10 +1097,8 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		if text == "" {
 			return
 		}
-		// Если есть markups и caption = оригинальный текст (кросспостинг), конвертируем в HTML
-		if len(body.Markups) > 0 && caption == text {
-			htmlText := maxMarkupsToHTML(text, body.Markups)
-			sentMsgID, sendErr = b.tg.SendMessage(ctx, tgChatID, htmlText, &SendOpts{ParseMode: "HTML", ReplyToID: replyToID, ThreadID: threadID})
+		if useHTML {
+			sentMsgID, sendErr = b.tg.SendMessage(ctx, tgChatID, htmlCaption, &SendOpts{ParseMode: "HTML", ReplyToID: replyToID, ThreadID: threadID})
 		} else {
 			sentMsgID, sendErr = b.tg.SendMessage(ctx, tgChatID, caption, &SendOpts{ReplyToID: replyToID, ThreadID: threadID})
 		}

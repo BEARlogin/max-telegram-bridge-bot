@@ -89,12 +89,26 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 
-				// Текстовый edit
-				fwd := formatTgMessage(edited, prefix, b.cfg.MessageNewline)
-				if fwd == "" {
+				// Текстовый edit — конвертируем entities в markdown
+				rawText := edited.Text
+				editEntities := edited.Entities
+				if rawText == "" {
+					rawText = edited.Caption
+					editEntities = edited.CaptionEntities
+				}
+				if rawText == "" {
 					continue
 				}
+				mdText := tgEntitiesToMarkdown(rawText, editEntities)
+				name := tgName(edited)
+				if prefix {
+					name = "[TG] " + name
+				}
+				fwd := formatAttribution(name, mdText, b.cfg.MessageNewline)
 				m := maxbot.NewMessage().SetChat(maxChatID).SetText(fwd)
+				if mdText != rawText {
+					m.SetFormat("markdown")
+				}
 				if err := b.maxApi.Messages.EditMessage(ctx, maxMsgID, m); err != nil {
 					slog.Error("TG→MAX edit failed", "err", err, "uid", tgUserID(edited), "tgChat", edited.Chat.ID)
 				} else {
@@ -463,11 +477,19 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		if checkSize(photo.FileSize, "") {
 			return
 		}
-		// Конвертируем entities в markdown для caption фото
-		photoEntities := msg.CaptionEntities
-		mdCaption := tgEntitiesToMarkdown(caption, photoEntities)
+		// Конвертируем entities в markdown на сыром тексте (до атрибуции, иначе офсеты съезжают)
+		rawText := msg.Caption
+		if rawText == "" {
+			rawText = msg.Text
+		}
+		mdText := tgEntitiesToMarkdown(rawText, msg.CaptionEntities)
+		name := tgName(msg)
+		if b.repo.HasPrefix("tg", msg.Chat.ID) {
+			name = "[TG] " + name
+		}
+		mdCaption := formatAttribution(name, mdText, b.cfg.MessageNewline)
 		m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
-		if mdCaption != caption {
+		if mdText != rawText {
 			m.SetFormat("markdown")
 		}
 		if b.cfg.TgAPIURL != "" {
@@ -687,6 +709,16 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		}
 	}
 
+	// Конвертируем TG entities в markdown на сыром тексте (до атрибуции, иначе офсеты съезжают)
+	rawText := msg.Text
+	entities := msg.Entities
+	if rawText == "" {
+		rawText = msg.Caption
+		entities = msg.CaptionEntities
+	}
+	mdText := tgEntitiesToMarkdown(rawText, entities)
+	hasFormatting := mdText != rawText
+
 	// Fallback для неудавшейся загрузки медиа
 	if mediaAttType == "" && msg.Text == "" {
 		mediaType := ""
@@ -706,7 +738,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		default:
 			return
 		}
-		caption = caption + mediaType
+		mdText = mdText + mediaType
 	}
 
 	// Reply ID
@@ -717,13 +749,11 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		}
 	}
 
-	// Конвертируем TG entities в markdown для MAX
-	entities := msg.Entities
-	if entities == nil {
-		entities = msg.CaptionEntities
+	name := tgName(msg)
+	if b.repo.HasPrefix("tg", msg.Chat.ID) {
+		name = "[TG] " + name
 	}
-	mdCaption := tgEntitiesToMarkdown(caption, entities)
-	hasFormatting := mdCaption != caption
+	mdCaption := formatAttribution(name, mdText, b.cfg.MessageNewline)
 
 	var mid string
 	var sendErr error
@@ -771,14 +801,26 @@ func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID
 	uid := tgUserID(msg)
 	m := maxbot.NewMessage().SetChat(maxChatID)
 
+	// Конвертируем entities в markdown на сыром тексте (до атрибуции)
+	rawText := msg.Caption
+	editEntities := msg.CaptionEntities
+	if rawText == "" {
+		rawText = msg.Text
+		editEntities = msg.Entities
+	}
+	mdText := tgEntitiesToMarkdown(rawText, editEntities)
+	name := tgName(msg)
+	if b.repo.HasPrefix("tg", msg.Chat.ID) {
+		name = "[TG] " + name
+	}
+	mdCaption := formatAttribution(name, mdText, b.cfg.MessageNewline)
+	m.SetText(mdCaption)
+	if mdText != rawText {
+		m.SetFormat("markdown")
+	}
+
 	if msg.Photo != nil {
 		photo := msg.Photo[len(msg.Photo)-1]
-		photoEntities := msg.CaptionEntities
-		mdCaption := tgEntitiesToMarkdown(caption, photoEntities)
-		m.SetText(mdCaption)
-		if mdCaption != caption {
-			m.SetFormat("markdown")
-		}
 		if b.cfg.TgAPIURL != "" {
 			if uploaded, err := b.uploadTgPhotoToMax(ctx, photo.FileID); err == nil {
 				m.AddPhoto(uploaded)
@@ -793,19 +835,6 @@ func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID
 				slog.Error("TG→MAX edit photo upload failed", "err", err)
 				return
 			}
-		}
-	} else {
-		// Видео, документ, анимация, голос, аудио — для edit обновляем только текст,
-		// т.к. замена нефотовложений через edit не поддерживается MAX API (только photo payload).
-		// Медиа остаётся прежним, обновляется caption.
-		entities := msg.CaptionEntities
-		if entities == nil {
-			entities = msg.Entities
-		}
-		mdCaption := tgEntitiesToMarkdown(caption, entities)
-		m.SetText(mdCaption)
-		if mdCaption != caption {
-			m.SetFormat("markdown")
 		}
 	}
 
