@@ -18,3 +18,5 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+replace github.com/go-telegram/bot => github.com/Flipped199/telegram-bot v1.20.0-fix.1
