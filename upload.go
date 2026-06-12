@@ -77,7 +77,7 @@ func (b *Bridge) sendTgMediaFromURL(ctx context.Context, tgChatID int64, mediaUR
 	default:
 		// sticker и прочее — как фото
 		return b.tg.SendPhoto(ctx, tgChatID, file, &SendOpts{
-			Caption: caption, ThreadID: threadID,
+			Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
 		})
 	}
 }
