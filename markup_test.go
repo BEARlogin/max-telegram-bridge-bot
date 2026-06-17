@@ -90,21 +90,24 @@ func TestTgEntitiesToMarkdown_MultipleEntities(t *testing.T) {
 }
 
 func TestTgEntitiesToMarkdown_TrailingSpaces(t *testing.T) {
-	// Entity covering "hello " (with trailing space) — markers placed at exact boundaries
+	// Хвостовой пробел внутри bold-entity нужно вытолкнуть наружу — иначе
+	// markdown-парсер MAX/CommonMark не закрывает `**` перед пробелом.
 	got := tgEntitiesToMarkdown("hello world", []Entity{
 		{Type: "bold", Offset: 0, Length: 6}, // "hello "
 	})
-	want := "**hello **world"
+	want := "**hello** world"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestTgEntitiesToMarkdown_LeadingSpaces(t *testing.T) {
+	// Ведущие пробелы внутри bold-entity нужно вытолкнуть наружу — иначе
+	// открывающий `**` стоит перед пробелом и парсер его не подхватывает.
 	got := tgEntitiesToMarkdown("a  bold rest", []Entity{
 		{Type: "bold", Offset: 1, Length: 6}, // "  bold"
 	})
-	want := "a**  bold** rest"
+	want := "a  **bold** rest"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

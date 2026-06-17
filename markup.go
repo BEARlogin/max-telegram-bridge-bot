@@ -58,8 +58,22 @@ func tgEntitiesToMarkdown(text string, entities []Entity) string {
 		if end > len(utf16units) {
 			end = len(utf16units)
 		}
-		tags = append(tags, tag{pos: e.Offset, open: true, idx: i, text: open})
-		tags = append(tags, tag{pos: end, open: false, idx: i, text: close})
+		// Markdown-парсер MAX (как и CommonMark) не принимает delimiter с пробелом
+		// вплотную к нему: "** жирный**" не превратится в bold. TG включает пробел
+		// внутрь entity → обрезаем границы внутрь, чтобы не оставлять "** " / " **".
+		openPos := e.Offset
+		for openPos < end && utf16units[openPos] == ' ' {
+			openPos++
+		}
+		closePos := end
+		for closePos > openPos && utf16units[closePos-1] == ' ' {
+			closePos--
+		}
+		if openPos >= closePos {
+			continue
+		}
+		tags = append(tags, tag{pos: openPos, open: true, idx: i, text: open})
+		tags = append(tags, tag{pos: closePos, open: false, idx: i, text: close})
 	}
 
 	if len(tags) == 0 {

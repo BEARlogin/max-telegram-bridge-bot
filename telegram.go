@@ -611,7 +611,10 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 			mdCaption = formatAttributionMD(name, mdText, b.cfg.MessageNewline)
 		}
 		m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
-		if !isCrosspost {
+		// Caption всегда markdown — и для bridge (с **жирной** атрибуцией),
+		// и для crosspost (formatTgCrosspostCaption уже сконвертил entities).
+		// При пустом тексте MAX отвергает payload с format — пропускаем.
+		if mdCaption != "" {
 			m.SetFormat("markdown")
 		}
 		if b.cfg.TgAPIURL != "" {
