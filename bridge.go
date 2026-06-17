@@ -71,6 +71,10 @@ type Bridge struct {
 	// Буферизация TG media groups (альбомы)
 	mgMu      sync.Mutex
 	mgBuffers map[string]*mediaGroupBuffer // MediaGroupID → buffer
+
+	// Опциональный аддон-расширение. Подключается через build-tag,
+	// в публичной сборке всегда nil.
+	addon Addon
 }
 
 // NewBridge создаёт экземпляр Bridge.
@@ -79,7 +83,7 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 	h := sha256.Sum256([]byte(cfg.MaxToken + tg.BotToken()))
 	secret := hex.EncodeToString(h[:8])
 
-	return &Bridge{
+	b := &Bridge{
 		cfg:    cfg,
 		repo:   repo,
 		tg:        tg,
@@ -97,6 +101,8 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		breakers:  make(map[int64]*chatBreaker),
 		mgBuffers: make(map[string]*mediaGroupBuffer),
 	}
+	b.addon = loadAddon(b)
+	return b
 }
 
 // cbBlocked проверяет, заблокирован ли чат.
@@ -358,5 +364,14 @@ func (b *Bridge) Run(ctx context.Context) {
 	wg.Add(2)
 	go func() { defer wg.Done(); b.listenTelegram(ctx) }()
 	go func() { defer wg.Done(); b.listenMax(ctx) }()
+	if b.addon != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := b.addon.Start(ctx); err != nil {
+				slog.Error("addon stopped with error", "err", err)
+			}
+		}()
+	}
 	wg.Wait()
 }

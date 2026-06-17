@@ -182,6 +182,11 @@ type TGSender interface {
 	DeleteMessage(ctx context.Context, chatID int64, msgID int) error
 	AnswerCallback(ctx context.Context, callbackID string, text string) error
 
+	// ForwardMessage пересылает сообщение и возвращает полный Message с контентом.
+	// Используется аддоном импорта канала для извлечения контента старых постов
+	// (Bot API не имеет getMessage, но forwardMessage в ответе отдаёт весь Message).
+	ForwardMessage(ctx context.Context, fromChatID, toChatID int64, msgID int, silent bool) (*TGMessage, error)
+
 	GetFile(ctx context.Context, fileID string) (filePath string, err error)
 	GetFileDirectURL(filePath string) string
 	GetChatMember(ctx context.Context, chatID, userID int64) (status string, err error)

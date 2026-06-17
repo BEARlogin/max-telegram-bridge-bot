@@ -266,6 +266,19 @@ func (s *tgBotSender) SetMyCommands(ctx context.Context, commands []BotCommand, 
 	return wrapErr(err)
 }
 
+func (s *tgBotSender) ForwardMessage(ctx context.Context, fromChatID, toChatID int64, msgID int, silent bool) (*TGMessage, error) {
+	m, err := s.b.ForwardMessage(ctx, &bot.ForwardMessageParams{
+		ChatID:              toChatID,
+		FromChatID:          fromChatID,
+		MessageID:           msgID,
+		DisableNotification: silent,
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	return convertMsg(m), nil
+}
+
 func (s *tgBotSender) GetChat(ctx context.Context, chatID int64) (string, error) {
 	chat, err := s.b.GetChat(ctx, &bot.GetChatParams{ChatID: chatID})
 	if err != nil {

@@ -22,4 +22,8 @@ bridge.db.bak
 broadcast.sh
 broadcast_*.html
 .broadcast_sent/
-bridge_chats.csv
+go.work
+go.work.sum
+
+.addon/
+addon_local.go

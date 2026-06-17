@@ -162,6 +162,20 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				b.repo.TouchUser(msg.From.ID, "tg", msg.From.UserName, msg.From.FirstName)
 			}
 
+			// Опциональные аддоны (если подключены build-тегом) первыми получают
+			// личные сообщения и форварды из каналов. Если аддон взял сообщение в
+			// работу — бридж дальше не обрабатывает. В публичной сборке addon == nil.
+			if msg.Chat.Type == "private" && b.addon != nil && msg.From != nil {
+				if msg.ForwardOriginChat != nil && msg.ForwardOriginChat.Type == "channel" {
+					if b.addon.HandleDMForward(ctx, msg.From.ID, msg.Chat.ID, msg.ForwardOriginChat.ID, msg.ForwardOriginChat.Title) {
+						continue
+					}
+				}
+				if b.addon.HandleDMCommand(ctx, msg.From.ID, msg.Chat.ID, text) {
+					continue
+				}
+			}
+
 			if text == "/whoami" {
 				b.tg.SendMessage(ctx, msg.Chat.ID,
 					"MaxTelegramBridgeBot — мост между Telegram и MAX.\n"+
