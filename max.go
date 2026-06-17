@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -14,6 +15,52 @@ import (
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
+
+// parseMaxRawAttachments превращает сырой JSON-массив вложений MAX в концретные
+// типы (PhotoAttachment, VideoAttachment, FileAttachment, и т.д.). Используется
+// для forwarded-сообщений: SDK не парсит Link.Message.RawAttachments если
+// body.RawAttachments выставлен в [] (а не nil).
+func parseMaxRawAttachments(raw []json.RawMessage) []interface{} {
+	out := make([]interface{}, 0, len(raw))
+	for _, r := range raw {
+		var base maxschemes.Attachment
+		if err := json.Unmarshal(r, &base); err != nil {
+			continue
+		}
+		var att interface{}
+		switch base.Type {
+		case maxschemes.AttachmentImage:
+			a := &maxschemes.PhotoAttachment{}
+			if err := json.Unmarshal(r, a); err == nil {
+				att = a
+			}
+		case maxschemes.AttachmentVideo:
+			a := &maxschemes.VideoAttachment{}
+			if err := json.Unmarshal(r, a); err == nil {
+				att = a
+			}
+		case maxschemes.AttachmentAudio:
+			a := &maxschemes.AudioAttachment{}
+			if err := json.Unmarshal(r, a); err == nil {
+				att = a
+			}
+		case maxschemes.AttachmentFile:
+			a := &maxschemes.FileAttachment{}
+			if err := json.Unmarshal(r, a); err == nil {
+				att = a
+			}
+		case maxschemes.AttachmentSticker:
+			a := &maxschemes.StickerAttachment{}
+			if err := json.Unmarshal(r, a); err == nil {
+				att = a
+			}
+		}
+		if att != nil {
+			out = append(out, att)
+		}
+	}
+	return out
+}
 
 func (b *Bridge) listenMax(ctx context.Context) {
 	var updates <-chan maxschemes.UpdateInterface
@@ -1061,8 +1108,17 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			}
 		}
 		// Вложения оригинала добавляем перед вложениями обёртки (обычно она пустая).
+		// SDK MAX парсит Link.Message.RawAttachments → Attachments только если
+		// body.RawAttachments == nil. У forwarded-сообщений MAX шлёт body.RawAttachments=[]
+		// (пустой массив, не nil) → парсинг пропускается, Link.Message.Attachments пуст.
+		// Поэтому парсим сырые JSON-байты сами.
 		if len(lk.Message.Attachments) > 0 {
 			body.Attachments = append(lk.Message.Attachments, body.Attachments...)
+		} else if len(lk.Message.RawAttachments) > 0 {
+			parsed := parseMaxRawAttachments(lk.Message.RawAttachments)
+			if len(parsed) > 0 {
+				body.Attachments = append(parsed, body.Attachments...)
+			}
 		}
 	}
 
