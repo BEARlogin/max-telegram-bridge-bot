@@ -76,8 +76,9 @@ type TGMessage struct {
 	VideoNote       *FileInfo
 	MediaGroupID    string
 	ReplyToMessage  *TGMessage
-	ForwardOriginChat *ChatInfo // replaces ForwardFromChat, from forward_origin
-	MigrateToChatID int64
+	ForwardOriginChat  *ChatInfo // replaces ForwardFromChat, from forward_origin
+	ForwardOriginMsgID int       // msg_id оригинала в канале-источнике (для старта импорта с поста)
+	MigrateToChatID    int64
 	Entities        []Entity
 	CaptionEntities []Entity
 }

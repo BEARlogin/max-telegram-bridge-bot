@@ -1,0 +1,40 @@
+//go:build addon
+
+// ОБРАЗЕЦ склейки расширения с бриджом.
+//
+// Как использовать:
+//   1. Скопируйте этот файл в КОРЕНЬ проекта под именем addon_local.go
+//      (оно уже в .gitignore — в публичный репозиторий не попадёт):
+//        cp examples/addon_local.go.example addon_local.go
+//   2. Соберите с тегом addon:
+//        go build -tags addon -o bridge .
+//   3. Запустите бридж — в личке боту заработает команда /echo.
+//
+// Файл собирается ТОЛЬКО с `-tags addon`. Без тега используется addon_stub.go,
+// где loadAddon возвращает nil и расширения выключены.
+
+package main
+
+import (
+	"context"
+
+	"bearlogin-bridge/examples/echoaddon"
+)
+
+// loadAddon вызывается ядром при старте. Здесь создаётся экземпляр расширения и
+// пробрасываются нужные операции бриджа. Ядро о внутренностях расширения не знает.
+func loadAddon(b *Bridge) Addon {
+	// Команда расширения в меню бота. Ядро покажет её в setMyCommands, не зная
+	// её семантику (см. b.extraCommands в bridge.go).
+	b.extraCommands = append(b.extraCommands, BotCommand{
+		Command:     "echo",
+		Description: "Повторить текст (пример аддона)",
+	})
+
+	return echoaddon.New(echoaddon.Deps{
+		Reply: func(ctx context.Context, chatID int64, text string) error {
+			_, err := b.tg.SendMessage(ctx, chatID, text, nil)
+			return err
+		},
+	})
+}

@@ -588,3 +588,14 @@ func TestGetFileDirectURL_CustomAPI(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// В режиме --local getFile отдаёт абсолютный путь — срезаем префикс до токена,
+// чтобы получился относительный путь, который раздаёт nginx.
+func TestGetFileDirectURL_LocalAbsolutePath(t *testing.T) {
+	s := &tgBotSender{token: "123:ABC", apiURL: "http://localhost:8081"}
+	got := s.GetFileDirectURL("/var/lib/telegram-bot-api/123:ABC/videos/file_5.mp4")
+	want := "http://localhost:8081/videos/file_5.mp4"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

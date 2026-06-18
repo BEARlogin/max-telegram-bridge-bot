@@ -167,7 +167,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			// работу — бридж дальше не обрабатывает. В публичной сборке addon == nil.
 			if msg.Chat.Type == "private" && b.addon != nil && msg.From != nil {
 				if msg.ForwardOriginChat != nil && msg.ForwardOriginChat.Type == "channel" {
-					if b.addon.HandleDMForward(ctx, msg.From.ID, msg.Chat.ID, msg.ForwardOriginChat.ID, msg.ForwardOriginChat.Title) {
+					if b.addon.HandleDMForward(ctx, msg.From.ID, msg.Chat.ID, msg.ForwardOriginChat.ID, msg.ForwardOriginChat.Title, msg.ForwardOriginMsgID) {
 						continue
 					}
 				}
@@ -228,7 +228,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					b.clearReplWait(msg.From.ID)
 					rule, valid := parseReplacementInput(text)
 					if !valid {
-						b.tg.SendMessage(ctx, msg.Chat.ID, "Неверный формат. Используйте:\n<code>from | to</code>\nили\n<code>/regex/ | to</code>", &SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
+						b.tg.SendMessage(ctx, msg.Chat.ID, "Не получилось разобрать. Нужна одна строка с вертикальной чертой «|»:\n<code>что заменить | на что</code>\n\nНапример: <code>наш Телеграм | наш канал в MAX</code>\n\nПопробуйте ещё раз через кнопку «🔄 Замены».", &SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
 						continue
 					}
 					rule.Target = w.target
@@ -1106,6 +1106,15 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		return
 	}
 
+	go b.publishTgCrosspost(ctx, msg, maxChatID)
+}
+
+// publishTgCrosspost формирует caption (markdown-разметка + замены TG→MAX) и
+// публикует TG-пост в MAX как кросспост: альбом → буфер, иначе одиночное сообщение.
+// Единая точка для обычного кросспостинга канала и импорта истории — логику не
+// дублируем. Синхронная: канал оборачивает в goroutine, импорт зовёт напрямую и
+// ждёт завершения (чтобы удалить scratch-копию только после публикации).
+func (b *Bridge) publishTgCrosspost(ctx context.Context, msg *TGMessage, maxChatID int64) {
 	caption := formatTgCrosspostCaption(msg)
 
 	// Применяем замены для TG→MAX
@@ -1120,7 +1129,7 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		if msg.Video != nil {
 			videoID = msg.Video.FileID
 		}
-		go b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
+		b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
 			photoSizes:  msg.Photo,
 			videoFileID: videoID,
 			caption:     caption,
@@ -1133,7 +1142,7 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		return
 	}
 
-	go b.forwardTgToMax(ctx, msg, maxChatID, caption, true)
+	b.forwardTgToMax(ctx, msg, maxChatID, caption, true)
 }
 
 // handleTgCallback обрабатывает нажатия inline-кнопок (crosspost management).
@@ -1149,7 +1158,7 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 
 	// Опциональный аддон первым получает callback — если это его кнопка, обработает.
 	if b.addon != nil {
-		if b.addon.HandleCallback(ctx, fromID, chatID, query.ID, data) {
+		if b.addon.HandleCallback(ctx, fromID, chatID, query.ID, data, msgID) {
 			return
 		}
 	}
@@ -1359,7 +1368,18 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		}
 		b.setReplWait(fromID, maxChatID, dir, target)
 		b.tg.EditMessageText(ctx, chatID, msgID,
-			fmt.Sprintf("Отправьте правило замены:\n<code>from | to</code>\n\nДля регулярного выражения:\n<code>/regex/ | to</code>\n\nНапример:\n<code>utm_source=tg | utm_source=max</code>"),
+			"✏️ Какой текст на какой заменить?\n\n"+
+				"Напишите одной строкой и разделите вертикальной чертой «|»:\n"+
+				"<b>что заменить | на что заменить</b>\n\n"+
+				"Примеры:\n"+
+				"• <code>наш Телеграм | наш канал в MAX</code>\n"+
+				"   — заменит эту фразу во всех постах\n"+
+				"• <code>t.me/old_channel | max.ru/new_channel</code>\n"+
+				"   — заменит ссылку\n"+
+				"• <code>#реклама | </code>\n"+
+				"   — удалит текст (правую часть оставили пустой)\n\n"+
+				"Просто отправьте такую строку сообщением.\n\n"+
+				"Для продвинутых (регулярное выражение): <code>/utm_source=\\w+/ | utm_source=max</code>",
 			&SendOpts{ParseMode: "HTML"})
 		b.tg.AnswerCallback(ctx, query.ID, "")
 		return

@@ -15,6 +15,50 @@ const (
 	queueBatchSize   = 10
 )
 
+// humanQueueError переводит техническую ошибку доставки в MAX в понятную причину
+// для пользователя.
+func humanQueueError(errStr string) string {
+	switch {
+	case strings.Contains(errStr, "send-message.empty"):
+		return "пустой пост — нет текста, а медиа не прикрепилось (вероятно, видео или файл больше лимита MAX)"
+	case strings.Contains(errStr, "not enough rights"), strings.Contains(errStr, "chat.denied"),
+		strings.Contains(errStr, "403"):
+		return "у бота нет прав публиковать в MAX-чат (сделайте бота администратором канала в MAX)"
+	case strings.Contains(errStr, "must be at most"), strings.Contains(errStr, "too big"):
+		return "файл больше максимального размера, разрешённого в MAX"
+	case strings.Contains(errStr, "attachment not ready"):
+		return "MAX не успел обработать вложение"
+	case strings.Contains(errStr, "404"):
+		return "MAX-чат не найден (связка устарела?)"
+	case strings.Contains(errStr, "service.unavailable"), strings.Contains(errStr, "503"):
+		return "MAX временно недоступен"
+	case errStr == "":
+		return "превышено число попыток доставки"
+	default:
+		return errStr
+	}
+}
+
+// notifyTg2MaxFailure сообщает о невозможности доставить пост в MAX: владельцу
+// связки (для crosspost) с номером поста и причиной, иначе — в исходный чат.
+func (b *Bridge) notifyTg2MaxFailure(ctx context.Context, item QueueItem, reason string) {
+	post := ""
+	if item.SrcMsgID != "" && item.SrcMsgID != "0" {
+		post = fmt.Sprintf(" (пост #%s)", item.SrcMsgID)
+	}
+	text := fmt.Sprintf("⚠️ Не удалось перенести сообщение в MAX%s.\nПричина: %s.", post, reason)
+	if _, _, isCp := b.repo.GetCrosspostMaxChat(item.SrcChatID); isCp {
+		_, tgOwner := b.repo.GetCrosspostOwner(item.DstChatID)
+		if tgOwner != 0 {
+			b.tg.SendMessage(ctx, tgOwner, text, nil)
+		} else {
+			slog.Warn("queue fail notify skipped: no tg owner", "srcChat", item.SrcChatID, "maxChat", item.DstChatID)
+		}
+	} else {
+		b.tg.SendMessage(ctx, item.SrcChatID, text, nil)
+	}
+}
+
 // retryDelay возвращает задержку перед следующей попыткой (экспоненциально).
 func retryDelay(attempt int) time.Duration {
 	switch {
@@ -96,20 +140,7 @@ func (b *Bridge) processQueue(ctx context.Context) {
 			slog.Warn("queue item expired", "id", item.ID, "dir", item.Direction, "attempts", item.Attempts, "age", age)
 			b.repo.DeleteFromQueue(item.ID)
 			if item.Direction == "tg2max" {
-				text := fmt.Sprintf("Сообщение не доставлено в MAX после %d попыток.", item.Attempts)
-				// Для crosspost (TG-канал → MAX) шлём в ЛС владельцу связки, а не в канал —
-				// подписчикам видеть «не доставлено» нет смысла.
-				if _, _, isCp := b.repo.GetCrosspostMaxChat(item.SrcChatID); isCp {
-					_, tgOwner := b.repo.GetCrosspostOwner(item.DstChatID)
-					if tgOwner != 0 {
-						b.tg.SendMessage(ctx, tgOwner, text, nil)
-					} else {
-						slog.Warn("queue expire notify skipped: no tg owner",
-							"srcChat", item.SrcChatID, "maxChat", item.DstChatID)
-					}
-				} else {
-					b.tg.SendMessage(ctx, item.SrcChatID, text, nil)
-				}
+				b.notifyTg2MaxFailure(ctx, item, "MAX долго не принимал сообщение (превышено число попыток)")
 			}
 			continue
 		}
@@ -127,13 +158,17 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 	mid, err := b.sendMaxDirectFormatted(ctx, item.DstChatID, item.Text, item.AttType, item.AttToken, item.ReplyTo, item.Format)
 	if err != nil {
 		errStr := err.Error()
-		// Permanent errors — дропаем сразу, чтобы не блокировать очередь HoL-ом.
+		// Permanent errors — дропаем сразу (бессмысленно ретраить) и объясняем владельцу
+		// причину с номером поста, чтобы было понятно что и почему не перенеслось.
 		if strings.Contains(errStr, "403") || strings.Contains(errStr, "404") ||
 			strings.Contains(errStr, "chat.denied") ||
 			strings.Contains(errStr, "attachment not ready after") ||
-			strings.Contains(errStr, "must be at most") {
+			strings.Contains(errStr, "must be at most") ||
+			strings.Contains(errStr, "send-message.empty") ||
+			strings.Contains(errStr, "not enough rights") {
 			slog.Warn("queue item dropped (permanent error)", "id", item.ID, "err", errStr)
 			b.repo.DeleteFromQueue(item.ID)
+			b.notifyTg2MaxFailure(ctx, item, humanQueueError(errStr))
 			return
 		}
 		slog.Warn("queue retry failed", "id", item.ID, "dir", "tg2max", "attempt", item.Attempts+1, "err", err)

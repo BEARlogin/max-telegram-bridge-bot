@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -236,6 +237,15 @@ func (s *tgBotSender) GetFile(ctx context.Context, fileID string) (string, error
 }
 
 func (s *tgBotSender) GetFileDirectURL(filePath string) string {
+	// В режиме --local локальный Bot API возвращает АБСОЛЮТНЫЙ путь к файлу
+	// (например /var/lib/telegram-bot-api/<token>/videos/file_5.mp4), а nginx
+	// раздаёт файлы по относительному пути (videos/file_5.mp4). Срезаем префикс
+	// до токена включительно. Для относительных путей (без --local) это no-op.
+	if strings.HasPrefix(filePath, "/") {
+		if i := strings.LastIndex(filePath, s.token+"/"); i >= 0 {
+			filePath = filePath[i+len(s.token)+1:]
+		}
+	}
 	if s.apiURL != "" {
 		return s.apiURL + "/" + filePath
 	}
@@ -547,6 +557,7 @@ func convertMsg(m *models.Message) *TGMessage {
 			Type:  string(ch.Type),
 			Title: ch.Title,
 		}
+		msg.ForwardOriginMsgID = m.ForwardOrigin.MessageOriginChannel.MessageID
 	}
 
 	// Photo

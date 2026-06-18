@@ -75,6 +75,9 @@ type Bridge struct {
 	// Опциональный аддон-расширение. Подключается через build-tag,
 	// в публичной сборке всегда nil.
 	addon Addon
+	// extraCommands — команды меню, добавленные расширением (заполняет loadAddon).
+	// Бридж не знает их семантику, просто показывает в setMyCommands.
+	extraCommands []BotCommand
 }
 
 // NewBridge создаёт экземпляр Bridge.
@@ -294,6 +297,9 @@ func (b *Bridge) registerCommands(ctx context.Context) {
 		{Command: "crosspost", Description: "Список связок кросспостинга"},
 		{Command: "help", Description: "Инструкция"},
 	}
+	// Команды, добавленные опциональными расширениями (через loadAddon). Бридж не
+	// знает, что это за команды — только что их нужно показать в меню.
+	cmds = append(cmds, b.extraCommands...)
 	if err := b.tg.SetMyCommands(ctx, cmds, nil); err != nil {
 		slog.Error("TG setMyCommands (default) failed", "err", err)
 	}

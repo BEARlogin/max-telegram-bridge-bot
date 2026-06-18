@@ -204,6 +204,73 @@ export MAX_TOKEN=your_token
 | `MAX_ALLOWED_EXTENSIONS` | Список расширений файлов через запятую, которые разрешены к отправке. Если не задано - без ограничений | — |
 | `MESSAGE_FORMAT` | Формат сообщений. inline (текущий Имя: текст) и newline (Имя:\nтекст) | inline  |
 
+## Расширения (аддоны)
+
+Бридж умеет подключать **опциональные расширения** — отдельные модули, которые добавляют свои команды и обработчики, не меняя ядро. В публичной сборке аддоны отсутствуют (всё работает как обычный мост); реализация подключается отдельной сборкой через build-тег.
+
+### Как это устроено
+
+- **`addon.go`** — интерфейс `Addon`, который должно реализовать расширение:
+
+  ```go
+  type Addon interface {
+      // Запуск фоновой работы (воркеры, регистрация вебхуков и т.п.).
+      Start(ctx context.Context) error
+      // Личное сообщение боту: вернуть true, если расширение его обработало.
+      HandleDMCommand(ctx context.Context, userID, chatID int64, text string) (handled bool)
+      // Нажатие inline-кнопки. msgID — id сообщения с кнопкой (можно удалить).
+      HandleCallback(ctx context.Context, userID, chatID int64, callbackID, data string, msgID int) (handled bool)
+      // Пересланный в личку пост из канала (sourceMsgID — id оригинала в канале).
+      HandleDMForward(ctx context.Context, userID, dmChatID, sourceChatID int64, sourceTitle string, sourceMsgID int) (handled bool)
+  }
+  ```
+
+  Аддон получает личные сообщения, форварды и callback'и **первым**: если он вернул `true`, ядро дальше их не обрабатывает.
+
+- **`addon_stub.go`** (`//go:build !addon`) — публичная сборка, расширения выключены:
+
+  ```go
+  func loadAddon(b *Bridge) Addon { return nil }
+  ```
+
+- **`addon_local.go`** (`//go:build addon`) — склейка с конкретным расширением. Этот файл **не входит в публичный репозиторий** (в `.gitignore`); его пишет тот, кто подключает своё расширение. Здесь:
+  - создаётся экземпляр расширения и пробрасываются нужные операции бриджа (отправка, пересылка, удаление сообщений, резолв связок и т.п.) через узкие колбэки — ядро не знает внутренней логики расширения;
+  - команды меню расширения добавляются обобщённо: `b.extraCommands = append(b.extraCommands, BotCommand{...})` — ядро лишь покажет их в `setMyCommands`, не зная их семантики.
+
+### Сборка
+
+```bash
+# Без аддонов (публичная сборка)
+go build -o bridge .
+
+# С подключённым расширением
+go build -tags addon -o bridge .
+```
+
+Для локальной разработки приватного расширения как отдельного Go-модуля удобно использовать [`go.work`](https://go.dev/doc/tutorial/workspaces) (тоже в `.gitignore`):
+
+```bash
+go work init . ../path-to-addon-module
+go build -tags addon -o bridge .
+```
+
+### Как написать своё расширение
+
+1. Реализуйте интерфейс `Addon` в своём пакете (отдельный модуль или подпапка).
+2. Создайте `addon_local.go` с тегом `//go:build addon` и функцией `loadAddon(b *Bridge) Addon`, которая собирает ваш аддон, прокидывая ему нужные операции бриджа.
+3. Соберите с `-tags addon`.
+
+Ядро остаётся независимым: убрав тег (или собрав публично), вы получаете чистый мост без следов расширения.
+
+### Готовый пример
+
+В [`examples/`](examples/) лежит рабочий аддон `echoaddon` (отвечает на `/echo` в личке) вместе с образцом склейки `addon_local.go.example`. Запуск:
+
+```bash
+cp examples/addon_local.go.example addon_local.go
+go build -tags addon -o bridge .
+```
+
 ## Лицензия
 
 [CC BY-NC 4.0](LICENSE) — свободное использование и модификация, но коммерческое использование только с письменного разрешения автора.

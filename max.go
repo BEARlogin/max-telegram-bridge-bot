@@ -506,7 +506,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					b.clearReplWait(msgUpd.Message.Sender.UserId)
 					rule, valid := parseReplacementInput(text)
 					if !valid {
-						m := maxbot.NewMessage().SetChat(chatID).SetText("Неверный формат. Используйте:\nfrom | to\nили\n/regex/ | to")
+						m := maxbot.NewMessage().SetChat(chatID).SetText("Не получилось разобрать. Нужна одна строка с вертикальной чертой «|»:\nчто заменить | на что\n\nНапример: наш Телеграм | наш канал в MAX\n\nПопробуйте ещё раз через кнопку «🔄 Замены».")
 						b.maxApi.Messages.Send(ctx, m)
 						continue
 					}
@@ -962,7 +962,15 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		}
 		b.setReplWait(userID, maxChatID, dir, target)
 		body := &maxschemes.NewMessageBody{
-			Text: "Отправьте правило замены:\nfrom | to\n\nДля регулярного выражения:\n/regex/ | to\n\nНапример:\nutm_source=tg | utm_source=max",
+			Text: "✏️ Какой текст на какой заменить?\n\n" +
+				"Напишите одной строкой и разделите вертикальной чертой «|»:\n" +
+				"что заменить | на что заменить\n\n" +
+				"Примеры:\n" +
+				"• наш Телеграм | наш канал в MAX — заменит фразу во всех постах\n" +
+				"• t.me/old_channel | max.ru/new_channel — заменит ссылку\n" +
+				"• #реклама |   — удалит текст (правую часть оставили пустой)\n\n" +
+				"Просто отправьте такую строку сообщением.\n\n" +
+				"Для продвинутых (регулярное выражение): /utm_source=\\w+/ | utm_source=max",
 		}
 		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Message: body})
 		return
