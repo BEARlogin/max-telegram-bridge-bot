@@ -346,7 +346,11 @@ func toLibKeyboard(kb *InlineKeyboardMarkup) *models.InlineKeyboardMarkup {
 	for i, row := range kb.Rows {
 		btns := make([]models.InlineKeyboardButton, len(row))
 		for j, b := range row {
-			btns[j] = models.InlineKeyboardButton{Text: b.Text, CallbackData: b.CallbackData}
+			if b.URL != "" {
+				btns[j] = models.InlineKeyboardButton{Text: b.Text, URL: b.URL}
+			} else {
+				btns[j] = models.InlineKeyboardButton{Text: b.Text, CallbackData: b.CallbackData}
+			}
 		}
 		rows[i] = btns
 	}

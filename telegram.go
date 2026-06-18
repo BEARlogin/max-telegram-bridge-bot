@@ -747,7 +747,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
 		} else {
-			slog.Error("TG→MAX video upload failed", "err", err)
+			slog.Error("TG→MAX video upload failed", "err", err, "fileSizeBytes", msg.Video.FileSize, "fileSizeMB", msg.Video.FileSize/1048576, "name", name)
 			b.notifyTgUser(ctx, msg, maxChatID, uploadErrMsg(fmt.Sprintf("Не удалось отправить видео \"%s\" в MAX", name), err), isCrosspost)
 			// Видео не залилось — не блокируем отправку текста/подписи, fallback ниже подмешает [Видео].
 		}

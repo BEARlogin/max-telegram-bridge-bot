@@ -113,6 +113,7 @@ type InlineKeyboardMarkup struct {
 type InlineKeyboardButton struct {
 	Text         string
 	CallbackData string
+	URL          string // если задан — кнопка-ссылка (вместо callback)
 }
 
 // FileArg — source for file upload: either Bytes (upload) or URL (send from URL).
