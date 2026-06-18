@@ -1147,6 +1147,13 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 
 	fromID := query.From.ID
 
+	// Опциональный аддон первым получает callback — если это его кнопка, обработает.
+	if b.addon != nil {
+		if b.addon.HandleCallback(ctx, fromID, chatID, query.ID, data) {
+			return
+		}
+	}
+
 	// cpd:dir:maxChatID — change direction
 	if strings.HasPrefix(data, "cpd:") {
 		parts := strings.SplitN(data, ":", 3)
