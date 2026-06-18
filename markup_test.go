@@ -277,3 +277,14 @@ func TestMaxMarkupsToHTML_LinkEscapesURL(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestTgEntitiesToMarkdown_TrailingNewlines(t *testing.T) {
+	// Bold-entity с хвостовыми \n\n — маркеры должны встать вплотную к тексту.
+	got := tgEntitiesToMarkdown("Header\n\nbody", []Entity{
+		{Type: "bold", Offset: 0, Length: 8}, // "Header\n\n"
+	})
+	want := "**Header**\n\nbody"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

@@ -58,15 +58,16 @@ func tgEntitiesToMarkdown(text string, entities []Entity) string {
 		if end > len(utf16units) {
 			end = len(utf16units)
 		}
-		// Markdown-парсер MAX (как и CommonMark) не принимает delimiter с пробелом
-		// вплотную к нему: "** жирный**" не превратится в bold. TG включает пробел
-		// внутрь entity → обрезаем границы внутрь, чтобы не оставлять "** " / " **".
+		// Markdown-парсер MAX (как и CommonMark) не принимает delimiter с пробельным
+		// символом вплотную: "** жирный**" / "**жирный \n**" не станут bold. TG часто
+		// включает пробелы/переносы внутрь entity → обрезаем границы внутрь, чтобы
+		// маркеры стояли вплотную к тексту.
 		openPos := e.Offset
-		for openPos < end && utf16units[openPos] == ' ' {
+		for openPos < end && isMarkupSpace(utf16units[openPos]) {
 			openPos++
 		}
 		closePos := end
-		for closePos > openPos && utf16units[closePos-1] == ' ' {
+		for closePos > openPos && isMarkupSpace(utf16units[closePos-1]) {
 			closePos--
 		}
 		if openPos >= closePos {
@@ -114,6 +115,12 @@ func tgEntitiesToMarkdown(text string, entities []Entity) string {
 		}
 	}
 	return sb.String()
+}
+
+// isMarkupSpace — пробельный UTF-16 код-юнит (ASCII whitespace), который нельзя
+// оставлять вплотную к markdown-delimiter.
+func isMarkupSpace(u uint16) bool {
+	return u == ' ' || u == '\n' || u == '\r' || u == '\t'
 }
 
 // utf16ToString конвертирует UTF-16 slice обратно в Go string.
