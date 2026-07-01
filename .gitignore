@@ -1,0 +1,15 @@
+# frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# backend
+backend/commenter
+*.db
+*.db-shm
+*.db-wal
+
+# misc
+.DS_Store
+*.log
+.env

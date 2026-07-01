@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Оплата прошла</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0; min-height: 100dvh;
+      display: flex; align-items: center; justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0e0f12; color: #e8e9ed;
+      padding: 24px;
+    }
+    @media (prefers-color-scheme: light) {
+      body { background: #f5f6f8; color: #14151a; }
+      .card { background: #fff; }
+      .btn.ghost { color: #14151a; border-color: rgba(0,0,0,.15); }
+    }
+    .card {
+      max-width: 360px; width: 100%; text-align: center;
+      background: #17181c; border-radius: 18px; padding: 32px 24px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.25);
+    }
+    .icon { font-size: 56px; line-height: 1; margin-bottom: 12px; }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    p { font-size: 15px; line-height: 1.5; opacity: .75; margin: 0 0 20px; }
+    .btn {
+      display: block; width: 100%; box-sizing: border-box; padding: 14px 16px;
+      border-radius: 12px; font: inherit; font-size: 15px; font-weight: 600;
+      cursor: pointer; text-decoration: none; border: 1px solid transparent;
+    }
+    .btn.accent { background: #2563eb; color: #fff; }
+    .btn.ghost { background: transparent; color: #e8e9ed; border-color: rgba(255,255,255,.18); margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>Оплата прошла</h1>
+    <p>PRO-подписка активирована. Статус обновится автоматически.</p>
+    <button class="btn accent" id="back">Вернуться в бот</button>
+    <a class="btn ghost" href="https://t.me/MaxTelegramBridgeBot">Открыть бота</a>
+  </div>
+  <script>
+    function back() {
+      try {
+        var wa = window.Telegram && window.Telegram.WebApp;
+        if (wa && typeof wa.close === 'function') { wa.close(); return; }
+      } catch (e) {}
+      try { window.close(); } catch (e) {}
+      // фолбэк: переход к боту
+      location.href = 'https://t.me/MaxTelegramBridgeBot';
+    }
+    document.getElementById('back').addEventListener('click', back);
+  </script>
+</body>
+</html>
