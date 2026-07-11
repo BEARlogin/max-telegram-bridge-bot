@@ -237,6 +237,17 @@ export async function deleteMirror(platform, srcChat, dstChat) {
   return r.json()
 }
 
+// Расчёт покупки слотов (без платежа): прорейт, конец периода, будущий рекуррент.
+export async function previewSlots(groups) {
+  const r = await fetch(`${API}/slots/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ groups }),
+  })
+  if (!r.ok) throw new Error('preview failed')
+  return r.json()
+}
+
 // Докупка слотов тарифа (мосты/зеркала/каналы). Возвращает { pay_url }.
 export async function buySlots(groups) {
   const r = await fetch(`${API}/slots/buy`, {

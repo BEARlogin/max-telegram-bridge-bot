@@ -187,6 +187,40 @@ func (s *server) handleDeleteMirror(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handlePreviewSlots — расчёт покупки слотов (промежуточный экран): прорейт-сумма за
+// остаток периода, конец периода, цена слота и будущий рекуррент. Платёж НЕ создаётся.
+func (s *server) handlePreviewSlots(w http.ResponseWriter, r *http.Request) {
+	u := authUser(r)
+	if !u.Valid {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var in struct {
+		Groups int `json:"groups"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.Groups <= 0 || in.Groups > 50 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if s.billing == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "биллинг недоступен"})
+		return
+	}
+	bid := s.billing.BillingID(u.ID)
+	amount, paidUntil, err := s.billing.PreviewMirrorSlots(bid, in.Groups)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "нужна активная подписка PRO"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                     true,
+		"amount_kopecks":         amount,                 // разовый прорейт-платёж сейчас
+		"paid_until":             paidUntil,              // конец оплаченного периода (unix)
+		"slot_price_kopecks":     s.billing.SlotPrice(),  // цена слота за полный период
+		"next_recurrent_kopecks": s.billing.EffectiveAmount(bid) + uint64(in.Groups)*s.billing.SlotPrice(), // рекуррент после покупки
+	})
+}
+
 // handleBuySlots — докупка слотов из кабинета: возвращает платёжную ссылку T-Bank.
 func (s *server) handleBuySlots(w http.ResponseWriter, r *http.Request) {
 	u := authUser(r)

@@ -63,15 +63,18 @@ func (s *Service) chargeDue(ctx context.Context) {
 // charge: новый Init (без Recurrent) → Charge(PaymentID, RebillID). Подтверждение — нотификацией.
 func (s *Service) charge(ctx context.Context, userID int64, rebillID string) error {
 	orderID := fmt.Sprintf("sub-%d-%d", userID, time.Now().UnixNano())
+	// Сумма продления = база + докупленные слоты зеркала×цена (A1: рекуррент растёт/падает
+	// вместе со слотами; изменение слот применяется со следующего списания автоматически).
+	amount := s.EffectiveAmount(userID)
 	req := &tinkoff.InitRequest{
-		Amount:      s.cfg.AmountKopecks,
+		Amount:      amount,
 		OrderID:     orderID,
 		CustomerKey: strconv.FormatInt(userID, 10),
 		Description: "Продление PRO-подписки",
 		Recurrent:   "", // автосписание делает Charge, не Recurrent
 	}
 	if s.cfg.ReceiptEmail != "" {
-		req.Receipt = s.receiptFor(s.cfg.AmountKopecks)
+		req.Receipt = s.receiptFor(amount)
 	}
 	initResp, err := s.cli.InitWithContext(ctx, req)
 	if err != nil {

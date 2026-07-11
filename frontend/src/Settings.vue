@@ -8,7 +8,7 @@ import {
   setGroupPrefix, unbridgeGroup, setAntispam, setGroupAntispam, linkStart,
   setCrosspostPaused, setGroupPaused,
   getBlocks, unbanUser, checkBotAdmin, initData,
-  addGroupRule, delGroupRule, deleteMirror, buySlots,
+  addGroupRule, delGroupRule, deleteMirror, buySlots, previewSlots,
 } from './api.js'
 
 const loading = ref(true)
@@ -33,6 +33,12 @@ const mirrors = ref([])
 const slots = ref(null) // { used, base, extra, limit }
 const mirrorBusy = reactive({})
 const slotsBuying = ref(false)
+// Покупка слотов: промежуточный экран (кол-во, прорейт, согласие на рост рекуррента).
+const slotsOpen = ref(false)
+const slotQty = ref(1)
+const slotPreview = ref(null) // { amount_kopecks, paid_until, slot_price_kopecks, next_recurrent_kopecks }
+const slotPreviewErr = ref('')
+const slotConsent = ref(false)
 const blockBusy = reactive({})
 const groupUi = reactive({}) // { [tg_chat_id]: { busy, confirm } }
 const importBalance = ref(0)
@@ -308,14 +314,35 @@ async function onDeleteMirror(m) {
   }
 }
 
+function rub(kopecks) { return (Math.round(kopecks) / 100).toFixed(0) + ' ₽' }
+function dateStr(unix) { return new Date(unix * 1000).toLocaleDateString('ru-RU') }
+
+async function openSlotsPanel() {
+  slotsOpen.value = !slotsOpen.value
+  if (slotsOpen.value) { slotQty.value = 1; slotConsent.value = false; await refreshSlotPreview() }
+}
+async function refreshSlotPreview() {
+  slotPreview.value = null
+  slotPreviewErr.value = ''
+  try {
+    const r = await previewSlots(slotQty.value)
+    if (r.ok) slotPreview.value = r
+    else slotPreviewErr.value = r.error || 'Расчёт недоступен'
+  } catch { slotPreviewErr.value = 'Расчёт недоступен' }
+}
+function slotQtyDelta(d) {
+  const n = Math.min(50, Math.max(1, slotQty.value + d))
+  if (n !== slotQty.value) { slotQty.value = n; refreshSlotPreview() }
+}
 async function onBuySlot() {
-  if (slotsBuying.value) return
+  if (slotsBuying.value || !slotConsent.value) return
   slotsBuying.value = true
   try {
-    const r = await buySlots(1)
+    const r = await buySlots(slotQty.value)
     if (r.ok && r.pay_url) {
       window.open(r.pay_url, '_blank')
-      flash('Откройте ссылку оплаты — слот начислится после платежа')
+      flash('Откройте ссылку оплаты — слоты начислятся после платежа')
+      slotsOpen.value = false
     } else {
       flash(r.error || 'Не удалось создать оплату')
     }
@@ -659,7 +686,37 @@ async function saveRepl(c) {
       <div class="help-card" v-show="!anyOpen && slots">
         <div class="help-body" style="display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px">
           <span class="muted small">🧩 Слоты: <b>{{ slots.used }}</b> из <b>{{ slots.limit }}</b> (база {{ slots.base }} + докуплено {{ slots.extra }})</span>
-          <button v-if="isPro" class="btn ghost" :disabled="slotsBuying" @click="onBuySlot">{{ slotsBuying ? '…' : '+ слот (300 ₽/мес)' }}</button>
+          <button v-if="isPro" class="btn ghost" @click="openSlotsPanel">{{ slotsOpen ? 'Скрыть' : '+ слот (49 ₽/мес)' }}</button>
+        </div>
+        <!-- Промежуточный экран покупки: кол-во, прорейт, будущий рекуррент, согласие -->
+        <div v-if="slotsOpen" class="help-body" style="padding:0 12px 12px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <span class="muted small">Слотов:</span>
+            <button class="btn ghost" style="min-width:36px" @click="slotQtyDelta(-1)">−</button>
+            <b>{{ slotQty }}</b>
+            <button class="btn ghost" style="min-width:36px" @click="slotQtyDelta(1)">+</button>
+          </div>
+          <p v-if="slotPreviewErr" class="muted small" style="color:#c00">{{ slotPreviewErr }}</p>
+          <template v-else-if="slotPreview">
+            <p class="muted small" style="margin:4px 0">
+              Сейчас к оплате по ссылке: <b>{{ rub(slotPreview.amount_kopecks) }}</b> — прорейт за остаток
+              оплаченного периода (до {{ dateStr(slotPreview.paid_until) }}). Полная цена слота —
+              {{ rub(slotPreview.slot_price_kopecks) }}/мес, сейчас вы платите только за оставшиеся дни.
+            </p>
+            <p class="muted small" style="margin:4px 0">
+              Со следующего продления подписка станет <b>{{ rub(slotPreview.next_recurrent_kopecks) }}/мес</b>
+              (PRO + все доп-слоты). Уменьшить слоты: /slots off в личке бота — рекуррент снизится со следующего периода.
+            </p>
+            <label class="consent-check" style="margin:8px 0">
+              <input type="checkbox" v-model="slotConsent" />
+              <span>Согласен, что после покупки регулярное списание составит {{ rub(slotPreview.next_recurrent_kopecks) }} раз в 30 дней до отмены подписки или уменьшения слотов.</span>
+            </label>
+            <button class="btn accent full" :disabled="slotsBuying || !slotConsent" @click="onBuySlot">
+              {{ slotsBuying ? '…' : 'Оплатить ' + rub(slotPreview.amount_kopecks) }}
+            </button>
+            <div class="consent-contact" style="margin-top:6px">Возврат, отмена, вопросы оплаты — <a href="https://t.me/+0ucbOj4wBwQzMWNi">группа поддержки</a></div>
+          </template>
+          <p v-else class="muted small">Расчёт…</p>
         </div>
       </div>
       <div v-show="tab === 'channels'">

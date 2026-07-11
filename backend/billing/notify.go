@@ -52,6 +52,13 @@ func (s *Service) HandleNotification(body []byte) (string, error) {
 		if n.RebillIDUInt64 != 0 {
 			rebill = strconv.FormatUint(n.RebillIDUInt64, 10)
 		}
+		// Докупка слотов зеркала (mslot-<uid>-<ts>-<n>): начисляем слоты, подписку НЕ продлеваем.
+		if uid, cnt, isMirror := parseMirrorOrder(n.OrderID); isMirror {
+			if s.recordPayment(pid, n.OrderID, string(n.Status), rebill, "mirror", n.Amount) {
+				s.grantMirrorSlots(uid, cnt)
+			}
+			return s.cli.GetNotificationSuccessResponse(), nil
+		}
 		if !s.recordPayment(pid, n.OrderID, string(n.Status), rebill, "sub", n.Amount) {
 			return s.cli.GetNotificationSuccessResponse(), nil
 		}

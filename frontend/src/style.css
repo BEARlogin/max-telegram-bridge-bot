@@ -101,3 +101,11 @@ h1 { font-size: 17px; font-weight: 700; margin: 6px 0 14px; }
 .send:disabled { opacity: .4; cursor: default; }
 .send:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .send svg { width: 20px; height: 20px; }
+
+/* Согласие на регулярные списания (T-Bank рекуррент) */
+.consent { margin: 10px 0; padding: 10px; border: 1px solid var(--border, #e2e2e2); border-radius: 10px; background: rgba(0,0,0,0.02); }
+.consent-terms { font-size: 14px; margin-bottom: 8px; color: var(--text); }
+.consent-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.45; cursor: pointer; color: var(--text); }
+.consent-check input { margin-top: 2px; flex: 0 0 auto; width: 18px; height: 18px; }
+.consent-contact { font-size: 13px; color: var(--text); margin-top: 8px; }
+.consent-contact a { color: var(--accent, #3b82f6); font-weight: 600; }

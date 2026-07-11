@@ -123,6 +123,7 @@ func (s *Service) migrate() error {
 	_, _ = s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN payment_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN trial_used INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN card_pan TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN mirror_slots INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 

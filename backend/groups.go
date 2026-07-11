@@ -41,7 +41,9 @@ type groupInfo struct {
 	BlockWords   string `json:"block_words"`
 	BlockCats    string `json:"block_cats"`
 	DelService   bool   `json:"del_service"`
-	BotAdmin     bool   `json:"bot_admin"` // бот админ в группе (для модерации)
+	Tone         string       `json:"tone"`
+	Rules        []asRuleInfo `json:"rules"`
+	BotAdmin     bool         `json:"bot_admin"` // бот админ в группе (для модерации)
 }
 
 // tgIsChatAdmin — является ли юзер админом/создателем TG-чата (через локальный Bot API).
@@ -127,6 +129,20 @@ func userGroups(userID, effTg int64) []groupInfo {
 	defer db.Close()
 
 	seen := map[int64]bool{}
+
+	// Все спаренные TG-группы (owner-agnostic): tg_chat_id → max_chat_id.
+	// Нужна, чтобы не пометить standalone группу, у которой мост есть, но
+	// owner в паре не записан (старые связки) и admin-check в шаге (2) не прошёл.
+	bridged := map[int64]int64{}
+	if br, err := db.Query(`SELECT tg_chat_id, max_chat_id FROM pairs WHERE tg_chat_id < 0`); err == nil {
+		for br.Next() {
+			var t, m int64
+			if br.Scan(&t, &m) == nil {
+				bridged[t] = m
+			}
+		}
+		br.Close()
+	}
 
 	// (1) Точный путь по владельцу.
 	owned, err := db.Query(`SELECT p.tg_chat_id, p.max_chat_id, COALESCE(p.prefix,1), COALESCE(b.title,''), COALESCE(p.paused,0)
@@ -245,7 +261,11 @@ func userGroups(userID, effTg int64) []groupInfo {
 		wg.Wait()
 		for i, x := range list {
 			if admins[i] && !seen[x.id] {
-				out = append(out, groupInfo{TgChatID: x.id, TgTitle: x.title, Standalone: true})
+				gi := groupInfo{TgChatID: x.id, TgTitle: x.title, Standalone: true}
+				if mx, ok := bridged[x.id]; ok { // мост есть — не standalone
+					gi.Standalone, gi.MaxChatID, gi.MaxTitle = false, mx, botChatTitle(db, "max", mx)
+				}
+				out = append(out, gi)
 				seen[x.id] = true
 			}
 		}
@@ -268,7 +288,11 @@ func userGroups(userID, effTg int64) []groupInfo {
 			}
 			adb.Close()
 			for _, id := range ids {
-				out = append(out, groupInfo{TgChatID: id, TgTitle: botChatTitle(db, "tg", id), Standalone: true})
+				gi := groupInfo{TgChatID: id, TgTitle: botChatTitle(db, "tg", id), Standalone: true}
+				if mx, ok := bridged[id]; ok { // антиспам-группа, но мост есть — не standalone
+					gi.Standalone, gi.MaxChatID, gi.MaxTitle = false, mx, botChatTitle(db, "max", mx)
+				}
+				out = append(out, gi)
 				seen[id] = true
 			}
 		}
@@ -279,6 +303,8 @@ func userGroups(userID, effTg int64) []groupInfo {
 		out[i].Antispam, out[i].AntispamMode = antispamStatus("tg", out[i].TgChatID)
 		pol := antispamPolicy("tg", out[i].TgChatID)
 		out[i].StrikeLimit, out[i].BanAfter, out[i].Action, out[i].MuteMinutes, out[i].Warn, out[i].Notify, out[i].Captcha, out[i].Antiraid, out[i].BlockWords, out[i].BlockCats, out[i].DelService = pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.BlockWords, pol.BlockCats, pol.DelService
+		out[i].Tone = pol.Tone
+		out[i].Rules = readAntispamRules("tg", out[i].TgChatID)
 		if out[i].Antispam {
 			out[i].BotAdmin = tgBotIsAdmin(out[i].TgChatID)
 		}

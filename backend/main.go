@@ -113,6 +113,7 @@ func main() {
 	mux.HandleFunc("/api/group/antispam/rule/del", srv.handleDelGroupRule)    // удалить кастом-правило
 	mux.HandleFunc("/api/antispam/check", srv.handleBotAdminCheck)            // перепроверить права бота в группе
 	mux.HandleFunc("/api/mirror/delete", srv.handleDeleteMirror)              // удалить зеркальную связку (владелец)
+	mux.HandleFunc("/api/slots/preview", srv.handlePreviewSlots)              // расчёт покупки слотов (без платежа)
 	mux.HandleFunc("/api/slots/buy", srv.handleBuySlots)                      // докупка слотов тарифа (T-Bank ссылка)
 	mux.HandleFunc("/api/blocks", srv.handleBlocks)                           // журнал заблокированных антиспамом
 	mux.HandleFunc("/api/block/unban", srv.handleUnban)                       // разбанить (TG-мут/MAX-возврат)

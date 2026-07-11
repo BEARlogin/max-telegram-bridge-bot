@@ -39,7 +39,7 @@ func (s *server) handleCancelSub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
-	if err := s.billing.Cancel(u.ID); err != nil {
+	if err := s.billing.Cancel(s.billing.BillingID(u.ID)); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "cancel failed"})
 		return
 	}
@@ -60,7 +60,7 @@ func (s *server) handleResume(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
-	res, err := s.billing.Resume(r.Context(), u.ID)
+	res, err := s.billing.Resume(r.Context(), s.billing.BillingID(u.ID))
 	if err != nil {
 		log.Printf("billing resume failed user=%d: %v", u.ID, err)
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
