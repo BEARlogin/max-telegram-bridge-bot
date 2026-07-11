@@ -8,6 +8,7 @@ import {
   setGroupPrefix, unbridgeGroup, setAntispam, setGroupAntispam, linkStart,
   setCrosspostPaused, setGroupPaused,
   getBlocks, unbanUser, checkBotAdmin, initData,
+  addGroupRule, delGroupRule,
 } from './api.js'
 
 const loading = ref(true)
@@ -18,6 +19,7 @@ const isPro = ref(false)
 const subStatus = ref('') // '' | active | canceled | trial | past_due
 const subUntil = ref(0)
 const trialUsed = ref(false)
+const recurrentConsent = ref(false) // согласие на регулярные списания (обязательно для рекуррента T-Bank)
 const cardPan = ref('')
 const hasRebill = ref(false)
 const isAdmin = ref(false)
@@ -195,9 +197,29 @@ async function doUnbridge(g) {
   } catch (e) { flash(e.message || 'Не удалось разорвать') }
   finally { u.busy = false; u.confirm = false }
 }
+// Форма нового правила (на группу) + операции.
+function gRuleForm(g) {
+  const u = gUi(g)
+  if (!u.rule) u.rule = { descr: '', keywords: '', action: 'mute', warns: 0 }
+  return u.rule
+}
+async function addAsRule(g) {
+  const f = gRuleForm(g)
+  if (!f.descr.trim()) { flash('Опишите правило'); return }
+  try {
+    const r = await addGroupRule(g.tg_chat_id, { descr: f.descr, keywords: f.keywords, action: f.action, warns: Number(f.warns) || 0 })
+    g.rules = r.rules || []
+    f.descr = ''; f.keywords = ''; f.warns = 0
+    flash('Правило добавлено ✓')
+  } catch (e) { flash(e.message) }
+}
+async function delAsRule(g, rid) {
+  try { const r = await delGroupRule(g.tg_chat_id, rid); g.rules = r.rules || [] } catch (e) { flash(e.message) }
+}
+
 function gAsOf(g) {
   const u = gUi(g)
-  if (!u.as) u.as = { mode: g.antispam_mode || 'enforce', link_delay_h: 24, trust_msgs: 3, strike_limit: g.strike_limit || 2, ban_after: g.ban_after || 3, action: g.action || 'mute', mute_minutes: g.mute_minutes || 60, warn: !!g.warn, notify: g.notify || 'ban', captcha: !!g.captcha, antiraid: !!g.antiraid, block_words: g.block_words || '', block_cats: g.block_cats || '', del_service: !!g.del_service }
+  if (!u.as) u.as = { mode: g.antispam_mode || 'enforce', link_delay_h: 24, trust_msgs: 3, strike_limit: g.strike_limit || 2, ban_after: g.ban_after || 3, action: g.action || 'mute', mute_minutes: g.mute_minutes || 60, warn: !!g.warn, notify: g.notify || 'ban', captcha: !!g.captcha, antiraid: !!g.antiraid, block_words: g.block_words || '', block_cats: g.block_cats || '', del_service: !!g.del_service, tone: g.tone || 'strict' }
   return u.as
 }
 async function toggleGroupAntispam(g) {
@@ -506,11 +528,19 @@ async function saveRepl(c) {
       <!-- Бесплатный тариф: яркий CTA-блок (сразу видны кнопки, без раскрытия) -->
       <div v-if="!isPro" v-show="!anyOpen" class="cta">
         <div class="cta-title">🚀 Откройте PRO</div>
-        <div class="cta-sub">Безлимит каналов, комментарии под постами, антиспам в группах, без подписи бота.</div>
+        <div class="cta-sub">5 слотов на мосты, зеркала и каналы (с докупкой), комментарии под постами, антиспам в группах, без подписи бота.</div>
         <button v-if="!trialUsed" class="btn accent full" :disabled="subscribing" @click="tryTrial">
           {{ subscribing ? '…' : '🎁 Попробовать 7 дней бесплатно' }}
         </button>
-        <button class="btn full" :class="trialUsed ? 'accent' : 'ghost-light'" :disabled="subscribing" @click="upgrade" style="margin-top:8px">
+        <div class="consent">
+          <div class="consent-terms">Подписка <b>PRO — 299 ₽/мес</b>. Регулярное автосписание раз в 30 дней до отмены.</div>
+          <label class="consent-check">
+            <input type="checkbox" v-model="recurrentConsent" />
+            <span>Согласен на регулярные списания 299 ₽ раз в 30 дней. Отменить можно в любой момент в этом кабинете.</span>
+          </label>
+          <div class="consent-contact">Возврат, отмена, вопросы оплаты — <a href="https://t.me/+0ucbOj4wBwQzMWNi">группа поддержки</a></div>
+        </div>
+        <button class="btn full" :class="trialUsed ? 'accent' : 'ghost-light'" :disabled="subscribing || !recurrentConsent" @click="upgrade" style="margin-top:8px">
           {{ subscribing ? '…' : 'Оформить PRO — 299 ₽/мес' }}
         </button>
       </div>
@@ -533,13 +563,21 @@ async function saveRepl(c) {
           <!-- Привязанная карта + замена (полная оплата новой картой) -->
           <div v-if="cardPan" class="card-row">
             <span class="muted small">💳 Карта •••• {{ cardLast4(cardPan) }}</span>
-            <button class="btn ghost sm" :disabled="subscribing" @click="upgrade">Заменить</button>
+            <button class="btn ghost sm" :disabled="subscribing || !recurrentConsent" @click="upgrade">Заменить</button>
+          </div>
+          <!-- Согласие на рекуррент — обязательно перед оформлением/заменой карты (не для отмены). -->
+          <div v-if="subStatus === 'trial' || cardPan" class="consent">
+            <label class="consent-check">
+              <input type="checkbox" v-model="recurrentConsent" />
+              <span>Согласен на регулярные списания 299 ₽ раз в 30 дней до отмены (в кабинете).</span>
+            </label>
+            <div class="consent-contact">Возврат/отмена/вопросы — <a href="https://t.me/+0ucbOj4wBwQzMWNi">группа поддержки</a></div>
           </div>
           <!-- active: отменить. trial: оформить полную (карты ещё нет). canceled: возобновить без оплаты. -->
           <button v-if="subStatus === 'active'" class="btn ghost full" :disabled="subscribing" @click="cancelSub">
             {{ subscribing ? '…' : 'Отменить подписку' }}
           </button>
-          <button v-else-if="subStatus === 'trial'" class="btn accent full" :disabled="subscribing" @click="upgrade">
+          <button v-else-if="subStatus === 'trial'" class="btn accent full" :disabled="subscribing || !recurrentConsent" @click="upgrade">
             {{ subscribing ? '…' : 'Оформить полную PRO — 299 ₽/мес' }}
           </button>
           <button v-else class="btn accent full" :disabled="subscribing" @click="resumeSub">
@@ -577,8 +615,8 @@ async function saveRepl(c) {
       </div>
       <div v-show="tab === 'channels'">
       <p class="muted small" style="margin-top:-4px" v-show="!anyOpen">
-        <template v-if="isPro">Тариф PRO — каналов без лимита.</template>
-        <template v-else>Бесплатно — 1 канал, PRO — без лимита. Новый канал добавится, только если связок меньше лимита (удалите лишние или оформите PRO).</template>
+        <template v-if="isPro">Тариф PRO — 5 слотов на мосты, зеркала и каналы; доп-слоты — /slots в личке бота.</template>
+        <template v-else>Бесплатно — 1 канал, PRO — 5 слотов (мосты, зеркала, каналы) с докупкой. Новый канал добавится, только если есть свободный слот (удалите лишние связки или оформите PRO).</template>
       </p>
 
       <!-- Как связать канал — инструкция (линковка идёт через бота) -->
@@ -890,6 +928,11 @@ async function saveRepl(c) {
               <button type="button" :class="{ sel: gAsOf(g).action === 'ban' }" @click="gAsOf(g).action='ban'">бан</button>
               <button type="button" :class="{ sel: gAsOf(g).action === 'mute_then_ban' }" @click="gAsOf(g).action='mute_then_ban'">мут → бан</button>
             </div>
+            <div class="as-row">
+              <span class="muted">Тон уведомлений в чате:</span>
+              <button type="button" :class="{ sel: gAsOf(g).tone === 'strict' }" @click="gAsOf(g).tone='strict'">строгий</button>
+              <button type="button" :class="{ sel: gAsOf(g).tone === 'friendly' }" @click="gAsOf(g).tone='friendly'">мягкий</button>
+            </div>
             <label v-if="gAsOf(g).action !== 'ban'" class="as-field">Мут на сколько минут
               <input type="number" min="1" max="43200" v-model.number="gAsOf(g).mute_minutes" />
             </label>
@@ -930,6 +973,28 @@ async function saveRepl(c) {
               <button type="button" :class="{ sel: gAsOf(g).notify === 'all' }" @click="gAsOf(g).notify='all'">обо всём</button>
             </div>
             <p class="repl-hint muted">«мут → бан» — мут после N нарушений, бан после M. Уведомления и предупреждения троттлятся (не чаще раза в 30 сек на чат).</p>
+            <div class="repl-dir" style="margin-top:10px">📋 Кастомные правила</div>
+            <div v-if="(g.rules || []).length" class="as-rules">
+              <div v-for="r in g.rules" :key="r.rid" class="as-rule-row">
+                <span class="small">{{ r.descr }} · {{ r.keywords || 'семантика' }} · {{ r.action }} · warns:{{ r.warns }}</span>
+                <button type="button" class="btn ghost sm" @click="delAsRule(g, r.rid)">🗑</button>
+              </div>
+            </div>
+            <p v-else class="repl-hint muted">Правил нет. Описание обязательно; слова опционально (пусто = ловит по смыслу через AI).</p>
+            <div class="as-rule-add">
+              <input v-model="gRuleForm(g).descr" placeholder="Описание (напр. мат, реклама казино)" />
+              <input v-model="gRuleForm(g).keywords" placeholder="Слова через запятую (опционально)" />
+              <div class="as-row">
+                <span class="muted">Действие:</span>
+                <button type="button" :class="{ sel: gRuleForm(g).action === 'delete' }" @click="gRuleForm(g).action='delete'">удалить</button>
+                <button type="button" :class="{ sel: gRuleForm(g).action === 'mute' }" @click="gRuleForm(g).action='mute'">мут</button>
+                <button type="button" :class="{ sel: gRuleForm(g).action === 'ban' }" @click="gRuleForm(g).action='ban'">бан</button>
+              </div>
+              <label class="as-field">Предупреждений до наказания (0 = сразу)
+                <input type="number" min="0" max="10" v-model.number="gRuleForm(g).warns" />
+              </label>
+              <button type="button" class="btn accent sm" @click="addAsRule(g)">➕ Добавить правило</button>
+            </div>
             </div>
             <p class="repl-hint muted" style="text-align:center;margin:6px 0 0">✓ Изменения сохраняются автоматически</p>
           </div>
