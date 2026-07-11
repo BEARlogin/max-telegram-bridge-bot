@@ -96,6 +96,7 @@ func main() {
 	mux.HandleFunc("/api/internal/comment", srv.handleInternalComment) // приём комментов из TG-обсуждения (бридж)
 	mux.HandleFunc("/api/link/start", srv.handleLinkStart)             // выдать одноразовый код привязки MAX→TG
 	mux.HandleFunc("/api/internal/link", srv.handleLinkComplete)       // бридж: погасить код /link <код>
+	mux.HandleFunc("/api/internal/mirror-slots", srv.handleInternalMirrorSlots) // бридж: докупка/уменьшение групп зеркала
 	mux.HandleFunc("/api/posts/pay", srv.handlePostsPay)               // покупка постов импорта (T-Bank, из бота)
 	mux.HandleFunc("/api/posts/buy", srv.handleBuyPosts)               // докупка постов из кабинета (initData)
 	mux.HandleFunc("/api/crosspost/delete", srv.handleDeleteCrosspost)         // удалить связку (владелец)
@@ -108,7 +109,11 @@ func main() {
 	mux.HandleFunc("/api/group/pause", srv.handleSetGroupPaused)             // пауза связки группы (админ)
 	mux.HandleFunc("/api/group/unbridge", srv.handleUnbridgeGroup)            // разорвать связку группы (админ)
 	mux.HandleFunc("/api/group/antispam", srv.handleSetGroupAntispam)         // антиспам группы (PRO, админ)
+	mux.HandleFunc("/api/group/antispam/rule/add", srv.handleAddGroupRule)    // добавить кастом-правило
+	mux.HandleFunc("/api/group/antispam/rule/del", srv.handleDelGroupRule)    // удалить кастом-правило
 	mux.HandleFunc("/api/antispam/check", srv.handleBotAdminCheck)            // перепроверить права бота в группе
+	mux.HandleFunc("/api/mirror/delete", srv.handleDeleteMirror)              // удалить зеркальную связку (владелец)
+	mux.HandleFunc("/api/slots/buy", srv.handleBuySlots)                      // докупка слотов тарифа (T-Bank ссылка)
 	mux.HandleFunc("/api/blocks", srv.handleBlocks)                           // журнал заблокированных антиспамом
 	mux.HandleFunc("/api/block/unban", srv.handleUnban)                       // разбанить (TG-мут/MAX-возврат)
 	mux.HandleFunc("/api/debug", srv.handleDebug)       // временный сбор launch-контекста мини-аппа

@@ -8,7 +8,7 @@ import {
   setGroupPrefix, unbridgeGroup, setAntispam, setGroupAntispam, linkStart,
   setCrosspostPaused, setGroupPaused,
   getBlocks, unbanUser, checkBotAdmin, initData,
-  addGroupRule, delGroupRule,
+  addGroupRule, delGroupRule, deleteMirror, buySlots,
 } from './api.js'
 
 const loading = ref(true)
@@ -29,6 +29,10 @@ const tab = ref('channels') // вкладки: channels | groups
 const crossposts = ref([])
 const groups = ref([])
 const blocks = ref([])
+const mirrors = ref([])
+const slots = ref(null) // { used, base, extra, limit }
+const mirrorBusy = reactive({})
+const slotsBuying = ref(false)
 const blockBusy = reactive({})
 const groupUi = reactive({}) // { [tg_chat_id]: { busy, confirm } }
 const importBalance = ref(0)
@@ -83,6 +87,8 @@ async function load() {
     isAdmin.value = !!s.admin
     crossposts.value = s.crossposts || []
     groups.value = s.groups || []
+    mirrors.value = s.mirrors || []
+    slots.value = s.slots || null
     importBalance.value = s.import_balance || 0
     acctPlat.value = s.platform || ''
     accLinked.value = s.linked !== false
@@ -285,6 +291,40 @@ function secOpen(u, name) { return !!(u.sec && u.sec[name]) }
 function secToggle(u, name) { if (!u.sec) u.sec = {}; u.sec[name] = !u.sec[name] }
 
 function bKey(b) { return b.platform + b.chat_id + '_' + b.user_id }
+
+// Зеркала: удаление связки (владелец) + докупка слота тарифа.
+async function onDeleteMirror(m) {
+  const k = m.platform + m.src_chat + '-' + m.dst_chat
+  if (mirrorBusy[k]) return
+  mirrorBusy[k] = true
+  try {
+    await deleteMirror(m.platform, m.src_chat, m.dst_chat)
+    mirrors.value = mirrors.value.filter(x => !(x.platform === m.platform && x.src_chat === m.src_chat && x.dst_chat === m.dst_chat))
+    flash('Зеркало удалено')
+  } catch (e) {
+    flash('Не удалось удалить: ' + (e.message || e))
+  } finally {
+    mirrorBusy[k] = false
+  }
+}
+
+async function onBuySlot() {
+  if (slotsBuying.value) return
+  slotsBuying.value = true
+  try {
+    const r = await buySlots(1)
+    if (r.ok && r.pay_url) {
+      window.open(r.pay_url, '_blank')
+      flash('Откройте ссылку оплаты — слот начислится после платежа')
+    } else {
+      flash(r.error || 'Не удалось создать оплату')
+    }
+  } catch (e) {
+    flash('Ошибка: ' + (e.message || e))
+  } finally {
+    slotsBuying.value = false
+  }
+}
 async function doUnban(b) {
   const k = bKey(b)
   if (blockBusy[k]) return
@@ -611,7 +651,16 @@ async function saveRepl(c) {
       <div class="tabs" v-show="!anyOpen">
         <button type="button" :class="{ active: tab === 'channels' }" @click="tab = 'channels'">Каналы ({{ crossposts.length }})</button>
         <button type="button" :class="{ active: tab === 'groups' }" @click="tab = 'groups'">Группы ({{ groups.length }})</button>
+        <button type="button" :class="{ active: tab === 'mirrors' }" @click="tab = 'mirrors'">Зеркала ({{ mirrors.length }})</button>
         <button type="button" :class="{ active: tab === 'blocks' }" @click="tab = 'blocks'">Баны ({{ blocks.length }})</button>
+      </div>
+
+      <!-- Слоты тарифа: общий счётчик мостов/зеркал/каналов + докупка -->
+      <div class="help-card" v-show="!anyOpen && slots">
+        <div class="help-body" style="display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px">
+          <span class="muted small">🧩 Слоты: <b>{{ slots.used }}</b> из <b>{{ slots.limit }}</b> (база {{ slots.base }} + докуплено {{ slots.extra }})</span>
+          <button v-if="isPro" class="btn ghost" :disabled="slotsBuying" @click="onBuySlot">{{ slotsBuying ? '…' : '+ слот (300 ₽/мес)' }}</button>
+        </div>
       </div>
       <div v-show="tab === 'channels'">
       <p class="muted small" style="margin-top:-4px" v-show="!anyOpen">
@@ -1017,6 +1066,25 @@ async function saveRepl(c) {
         </div>
       </div>
 
+      </div>
+
+      <div v-show="tab === 'mirrors' && !anyOpen">
+      <h2>Зеркала <span class="muted">({{ mirrors.length }})</span></h2>
+      <p class="muted small" style="margin-top:-4px">Односторонние копии постов канала в группы: MAX-канал → MAX-группы и TG-канал → TG-группы (без плашки «переслано»).</p>
+      <p v-if="!mirrors.length" class="muted small">
+        Пока пусто. Подключение: в личке бота отправьте <b>/mirror</b> и перешлите пост канала-донора,
+        затем в каждой группе-приёмнике — <b>/mirror &lt;id канала&gt;</b> (бот должен быть админом).
+      </p>
+      <div v-for="m in mirrors" :key="m.platform + m.src_chat + '-' + m.dst_chat" class="card">
+        <div class="card-head static">
+          <div>
+            <div><b>{{ m.platform === 'tg' ? 'TG' : 'MAX' }}</b> · {{ m.src_title || m.src_chat }} → {{ m.dst_title || m.dst_chat }}</div>
+            <div class="muted small">{{ m.src_chat }} → {{ m.dst_chat }}</div>
+          </div>
+          <button v-if="m.owned" class="btn danger" :disabled="mirrorBusy[m.platform + m.src_chat + '-' + m.dst_chat]"
+            @click="onDeleteMirror(m)">Удалить</button>
+        </div>
+      </div>
       </div>
 
       <div v-show="tab === 'blocks' && !anyOpen">

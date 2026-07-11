@@ -115,6 +115,26 @@ export async function setGroupAntispam(tgChatId, opts) {
   return r.json()
 }
 
+// Кастомные правила антиспама группы: добавить / удалить. Возвращают обновлённый список rules.
+export async function addGroupRule(tgChatId, rule) {
+  const r = await fetch(`${API}/group/antispam/rule/add`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ tg_chat_id: tgChatId, ...rule }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'add failed')
+  return r.json()
+}
+export async function delGroupRule(tgChatId, rid) {
+  const r = await fetch(`${API}/group/antispam/rule/del`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ tg_chat_id: tgChatId, rid }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'del failed')
+  return r.json()
+}
+
 // Разорвать связку bridge-группы.
 export async function unbridgeGroup(tgChatId) {
   const r = await fetch(`${API}/group/unbridge`, {
@@ -203,6 +223,28 @@ export async function unbanUser(platform, chatId, userId) {
     body: JSON.stringify({ platform, chat_id: chatId, user_id: userId }),
   })
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'unban failed')
+  return r.json()
+}
+
+// Удалить зеркальную связку (владелец связки или донора).
+export async function deleteMirror(platform, srcChat, dstChat) {
+  const r = await fetch(`${API}/mirror/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ platform, src_chat: srcChat, dst_chat: dstChat }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'delete failed')
+  return r.json()
+}
+
+// Докупка слотов тарифа (мосты/зеркала/каналы). Возвращает { pay_url }.
+export async function buySlots(groups) {
+  const r = await fetch(`${API}/slots/buy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ groups }),
+  })
+  if (!r.ok) throw new Error('buy slots failed')
   return r.json()
 }
 

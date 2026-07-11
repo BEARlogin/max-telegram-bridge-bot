@@ -111,8 +111,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if tgKey == 0 {
 		tgKey = u.ID
 	}
-	// PRO = активная подписка T-Bank (по своему id или по привязанному TG-id).
-	pro := s.billing != nil && (s.billing.IsActive(u.ID) || (effTg != 0 && s.billing.IsActive(effTg)))
+	// PRO = активная подписка T-Bank. BillingID резолвит связку в ОБЕ стороны (подписка может
+	// быть под MAX- или TG-id) — иначе обратная сторона (купили в MAX, зашли из TG) не видела бы PRO.
+	pro := s.billing != nil && s.billing.IsActive(s.billing.BillingID(u.ID))
 	resp := map[string]any{
 		"user":     map[string]any{"id": u.ID, "name": u.Name},
 		"pro":      pro,
@@ -120,15 +121,22 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"platform": u.Platform,
 		"linked":   u.Platform != "max" || effTg != 0, // для MAX: есть ли привязка TG
 	}
-	// Статус T-Bank подписки (для кнопки «Отменить»/«Оформить» в кабинете).
+	// Статус T-Bank подписки (для кнопки «Отменить»/«Оформить» в кабинете). Резолвим id к тому,
+	// под которым лежит активная подписка (у MAX-юзера она под связанным TG-id) — иначе статус/
+	// карта показывались бы по пустой pending-строке MAX-id.
 	if s.billing != nil {
-		st, until := s.billing.SubStatus(u.ID)
+		bid := s.billing.BillingID(u.ID)
+		st, until := s.billing.SubStatus(bid)
 		resp["sub_status"] = st
 		resp["sub_until"] = until
-		resp["trial_used"] = s.billing.TrialUsed(u.ID)
-		resp["card_pan"] = s.billing.CardPAN(u.ID)   // маскированная карта ("" если нет)
-		resp["has_rebill"] = s.billing.HasRebill(u.ID) // можно возобновить без новой оплаты
+		resp["trial_used"] = s.billing.TrialUsed(bid)
+		resp["card_pan"] = s.billing.CardPAN(bid)   // маскированная карта ("" если нет)
+		resp["has_rebill"] = s.billing.HasRebill(bid) // можно возобновить без новой оплаты
+		resp["mirror_slots"] = s.billing.MirrorSlots(bid)
 	}
+	// Слоты тарифа (мосты + зеркала + каналы) и зеркальные связки юзера.
+	resp["slots"] = s.slotsInfo(u)
+	resp["mirrors"] = s.listMirrors(u)
 
 	var cps []crosspost
 	if bridgeDBPath != "" {
