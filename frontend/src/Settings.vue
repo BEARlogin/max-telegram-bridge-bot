@@ -8,7 +8,7 @@ import {
   setGroupPrefix, unbridgeGroup, setAntispam, setGroupAntispam, linkStart,
   setCrosspostPaused, setGroupPaused,
   getBlocks, unbanUser, checkBotAdmin, initData,
-  addGroupRule, delGroupRule, deleteMirror, buySlots, previewSlots,
+  addGroupRule, delGroupRule, deleteMirror, buySlots, previewSlots, reduceSlots,
 } from './api.js'
 
 const loading = ref(true)
@@ -39,6 +39,10 @@ const slotQty = ref(1)
 const slotPreview = ref(null) // { amount_kopecks, paid_until, slot_price_kopecks, next_recurrent_kopecks }
 const slotPreviewErr = ref('')
 const slotConsent = ref(false)
+// Уменьшение слотов: отдельная мини-панель (без возврата, рекуррент со след. периода).
+const slotReduceOpen = ref(false)
+const slotReduceQty = ref(1)
+const slotReducing = ref(false)
 const blockBusy = reactive({})
 const groupUi = reactive({}) // { [tg_chat_id]: { busy, confirm } }
 const importBalance = ref(0)
@@ -319,7 +323,35 @@ function dateStr(unix) { return new Date(unix * 1000).toLocaleDateString('ru-RU'
 
 async function openSlotsPanel() {
   slotsOpen.value = !slotsOpen.value
+  slotReduceOpen.value = false
   if (slotsOpen.value) { slotQty.value = 1; slotConsent.value = false; await refreshSlotPreview() }
+}
+function openReducePanel() {
+  slotReduceOpen.value = !slotReduceOpen.value
+  slotsOpen.value = false
+  slotReduceQty.value = 1
+}
+function reduceQtyDelta(d) {
+  const max = slots.value ? Math.max(1, slots.value.extra) : 1
+  slotReduceQty.value = Math.min(max, Math.max(1, slotReduceQty.value + d))
+}
+async function onReduceSlots() {
+  if (slotReducing.value) return
+  slotReducing.value = true
+  try {
+    const r = await reduceSlots(slotReduceQty.value)
+    if (r.ok) {
+      flash('Слоты уменьшены — списание снизится со следующего продления')
+      slotReduceOpen.value = false
+      await load() // обновить счётчик слотов
+    } else {
+      flash(r.error || 'Не удалось уменьшить')
+    }
+  } catch (e) {
+    flash('Ошибка: ' + (e.message || e))
+  } finally {
+    slotReducing.value = false
+  }
 }
 async function refreshSlotPreview() {
   slotPreview.value = null
@@ -686,7 +718,29 @@ async function saveRepl(c) {
       <div class="help-card" v-show="!anyOpen && slots">
         <div class="help-body" style="display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px">
           <span class="muted small">🧩 Слоты: <b>{{ slots.used }}</b> из <b>{{ slots.limit }}</b> (база {{ slots.base }} + докуплено {{ slots.extra }})</span>
-          <button v-if="isPro" class="btn ghost" @click="openSlotsPanel">{{ slotsOpen ? 'Скрыть' : '+ слот (49 ₽/мес)' }}</button>
+          <span style="display:flex;gap:6px">
+            <button v-if="isPro && slots.extra > 0" class="btn ghost" @click="openReducePanel">{{ slotReduceOpen ? 'Скрыть' : '−' }}</button>
+            <button v-if="isPro" class="btn ghost" @click="openSlotsPanel">{{ slotsOpen ? 'Скрыть' : '+ слот (49 ₽/мес)' }}</button>
+          </span>
+        </div>
+        <!-- Уменьшение слотов: без возврата, рекуррент снизится со следующего периода -->
+        <div v-if="slotReduceOpen" class="help-body" style="padding:0 12px 12px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <span class="muted small">Убрать слотов:</span>
+            <button class="btn ghost" style="min-width:36px" @click="reduceQtyDelta(-1)">−</button>
+            <b>{{ slotReduceQty }}</b>
+            <button class="btn ghost" style="min-width:36px" @click="reduceQtyDelta(1)">+</button>
+            <span class="muted small">из {{ slots.extra }} докупленных</span>
+          </div>
+          <p class="muted small" style="margin:4px 0">
+            Возврата за текущий оплаченный период нет — слоты работают до его конца.
+            Со следующего продления списание уменьшится на {{ slotReduceQty * 49 }} ₽/мес.
+            Если занятых связок останется больше лимита, существующие продолжат работать,
+            но новые подключить будет нельзя.
+          </p>
+          <button class="btn danger full" :disabled="slotReducing" @click="onReduceSlots">
+            {{ slotReducing ? '…' : 'Уменьшить на ' + slotReduceQty }}
+          </button>
         </div>
         <!-- Промежуточный экран покупки: кол-во, прорейт, будущий рекуррент, согласие -->
         <div v-if="slotsOpen" class="help-body" style="padding:0 12px 12px">

@@ -259,6 +259,17 @@ export async function buySlots(groups) {
   return r.json()
 }
 
+// Уменьшение доп-слотов (без возврата; рекуррент снизится со следующего периода).
+export async function reduceSlots(groups) {
+  const r = await fetch(`${API}/slots/reduce`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ groups }),
+  })
+  if (!r.ok) throw new Error('reduce failed')
+  return r.json()
+}
+
 // Бизнес-показатели для админ-панели (только владелец).
 export async function adminStats() {
   const r = await fetch(`${API}/admin/stats`, { headers: { 'X-Init-Data': initData() } })

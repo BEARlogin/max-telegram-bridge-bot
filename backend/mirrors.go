@@ -247,6 +247,35 @@ func (s *server) handleBuySlots(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pay_url": url, "amount_kopecks": amount})
 }
 
+// handleReduceSlots — уменьшение доп-слотов из кабинета. Без возврата за текущий период:
+// рекуррент снизится со следующего продления (EffectiveAmount пересчитается).
+func (s *server) handleReduceSlots(w http.ResponseWriter, r *http.Request) {
+	u := authUser(r)
+	if !u.Valid {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var in struct {
+		Groups int `json:"groups"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.Groups <= 0 || in.Groups > 50 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if s.billing == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "биллинг недоступен"})
+		return
+	}
+	bid := s.billing.BillingID(u.ID)
+	next, err := s.billing.ReduceMirrorSlots(bid, in.Groups)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "не удалось уменьшить"})
+		return
+	}
+	log.Printf("slots reduced via kabinet user=%d by=%d now=%d", u.ID, in.Groups, next)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "slots": next})
+}
+
 // sqlIn — плейсхолдеры и аргументы для IN (?,?,…).
 func sqlIn(ids []int64) (string, []any) {
 	ph := ""

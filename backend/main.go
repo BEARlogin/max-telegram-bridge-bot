@@ -115,6 +115,7 @@ func main() {
 	mux.HandleFunc("/api/mirror/delete", srv.handleDeleteMirror)              // удалить зеркальную связку (владелец)
 	mux.HandleFunc("/api/slots/preview", srv.handlePreviewSlots)              // расчёт покупки слотов (без платежа)
 	mux.HandleFunc("/api/slots/buy", srv.handleBuySlots)                      // докупка слотов тарифа (T-Bank ссылка)
+	mux.HandleFunc("/api/slots/reduce", srv.handleReduceSlots)                // уменьшение слотов (рекуррент со след. периода)
 	mux.HandleFunc("/api/blocks", srv.handleBlocks)                           // журнал заблокированных антиспамом
 	mux.HandleFunc("/api/block/unban", srv.handleUnban)                       // разбанить (TG-мут/MAX-возврат)
 	mux.HandleFunc("/api/debug", srv.handleDebug)       // временный сбор launch-контекста мини-аппа
