@@ -97,6 +97,7 @@ func main() {
 	mux.HandleFunc("/api/link/start", srv.handleLinkStart)             // выдать одноразовый код привязки MAX→TG
 	mux.HandleFunc("/api/internal/link", srv.handleLinkComplete)       // бридж: погасить код /link <код>
 	mux.HandleFunc("/api/internal/autolink", srv.handleAutoLink)       // бридж: автопривязка MAX↔TG при паринге
+	mux.HandleFunc("/api/internal/link-start", srv.handleInternalLinkStart) // бридж: выдать код привязки по /link в MAX-боте
 	mux.HandleFunc("/api/internal/mirror-slots", srv.handleInternalMirrorSlots) // бридж: докупка/уменьшение групп зеркала
 	mux.HandleFunc("/api/posts/pay", srv.handlePostsPay)               // покупка постов импорта (T-Bank, из бота)
 	mux.HandleFunc("/api/posts/buy", srv.handleBuyPosts)               // докупка постов из кабинета (initData)
