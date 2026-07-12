@@ -51,6 +51,30 @@ func (s *server) handleLinkStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "ttl_min": linkCodeTTL / 60})
 }
 
+// handleAutoLink — бридж зовёт при создании bridge-связки с известными владельцами обеих
+// сторон: автопривязка MAX↔TG без кода. Линкуем ТОЛЬКО не привязанные ранее аккаунты.
+func (s *server) handleAutoLink(w http.ResponseWriter, r *http.Request) {
+	secret := commentSyncSecret()
+	var in struct {
+		MaxID  int64  `json:"max_id"`
+		TgID   int64  `json:"tg_id"`
+		Secret string `json:"secret"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if secret == "" || in.Secret != secret || in.MaxID == 0 || in.TgID == 0 {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		return
+	}
+	ok := s.store.AutoLink(in.MaxID, in.TgID)
+	if ok {
+		log.Printf("auto-link max=%d tg=%d (bridge pairing)", in.MaxID, in.TgID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": ok})
+}
+
 // handleLinkComplete — бридж зовёт сюда, когда TG-юзер прислал /link <код>.
 func (s *server) handleLinkComplete(w http.ResponseWriter, r *http.Request) {
 	secret := commentSyncSecret()

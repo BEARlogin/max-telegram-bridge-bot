@@ -35,6 +35,8 @@ type store interface {
 	LinkRedeem(code string, tgID, ttlSec int64) (maxID int64, ok bool)
 	LinkedTg(maxID int64) int64
 	LinkedMax(tgID int64) int64
+	// AutoLink — автопривязка при bridge-паринге; только если оба аккаунта не привязаны.
+	AutoLink(maxID, tgID int64) bool
 }
 
 type asState struct {
@@ -71,6 +73,7 @@ func (m *memStore) LinkNewCode(maxID int64, code string)                     {}
 func (m *memStore) LinkRedeem(code string, tgID, ttlSec int64) (int64, bool) { return 0, false }
 func (m *memStore) LinkedTg(maxID int64) int64                               { return 0 }
 func (m *memStore) LinkedMax(tgID int64) int64                               { return 0 }
+func (m *memStore) AutoLink(maxID, tgID int64) bool                          { return false }
 
 func (m *memStore) List(postID string) []Comment {
 	m.mu.Lock()

@@ -161,3 +161,22 @@ func (s *sqliteStore) LinkedMax(tgID int64) int64 {
 	s.db.QueryRow(`SELECT max_id FROM account_links WHERE tg_id=? AND max_id!=0`, tgID).Scan(&mx)
 	return mx
 }
+
+// AutoLink — автопривязка MAX↔TG (бридж зовёт при создании bridge-связки, где известны
+// владельцы обеих сторон). Создаёт связь ТОЛЬКО если ни один из аккаунтов ещё не привязан —
+// существующие связи не перезаписываем (иначе можно завладеть чужой подпиской).
+func (s *sqliteStore) AutoLink(maxID, tgID int64) bool {
+	if maxID == 0 || tgID == 0 {
+		return false
+	}
+	if s.LinkedTg(maxID) != 0 || s.LinkedMax(tgID) != 0 {
+		return false
+	}
+	res, err := s.db.Exec(`INSERT INTO account_links (max_id, tg_id) VALUES (?, ?)
+		ON CONFLICT(max_id) DO UPDATE SET tg_id=excluded.tg_id WHERE account_links.tg_id=0`, maxID, tgID)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
