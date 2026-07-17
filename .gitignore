@@ -1,0 +1,33 @@
+# Binaries
+bridge
+bridge_linux
+max-telegram-bridge-bot
+*.exe
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Environment
+.env
+deploy.sh
+backup.sh
+backup-cleanup.sh
+bearlogin-bridge
+bridge.db.bak
+
+# Local tools
+.omc/
+broadcast.sh
+broadcast_*.html
+.broadcast_sent/
+go.work
+go.work.sum
+help.html
+bridge_chats_public.csv
+docs/superpowers/
+
+.addon/
+addon_local.go
+/addon_integration_local.go

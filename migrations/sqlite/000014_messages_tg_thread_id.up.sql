@@ -1,0 +1,1 @@
+ALTER TABLE messages ADD COLUMN tg_thread_id INTEGER NOT NULL DEFAULT 0;

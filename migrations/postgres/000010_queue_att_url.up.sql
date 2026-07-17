@@ -1,0 +1,2 @@
+ALTER TABLE send_queue ADD COLUMN att_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE send_queue ADD COLUMN parse_mode TEXT NOT NULL DEFAULT '';

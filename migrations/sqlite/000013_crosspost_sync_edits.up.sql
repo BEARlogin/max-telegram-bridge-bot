@@ -1,0 +1,1 @@
+ALTER TABLE crossposts ADD COLUMN sync_edits INTEGER NOT NULL DEFAULT 0;

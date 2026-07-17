@@ -1,0 +1,104 @@
+name: RouterOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  binaries:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: arm
+            goarm: '7'
+            cc: arm-linux-gnueabihf-gcc
+            pkg: gcc-arm-linux-gnueabihf
+            suffix: linux-armv7
+          - goarch: arm64
+            goarm: ''
+            cc: aarch64-linux-gnu-gcc
+            pkg: gcc-aarch64-linux-gnu
+            suffix: linux-arm64
+          - goarch: amd64
+            goarm: ''
+            cc: gcc
+            pkg: gcc
+            suffix: linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install cross-compilation toolchain
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.pkg }}
+
+      - name: Build ${{ matrix.suffix }}
+        env:
+          CGO_ENABLED: '1'
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CC: ${{ matrix.cc }}
+        run: go build -ldflags="-s -w" -o max-telegram-bridge-bot-${{ matrix.suffix }} .
+
+      - name: Save binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.suffix }}
+          retention-days: 7
+          path: max-telegram-bridge-bot-${{ matrix.suffix }}
+
+  docker-tar:
+    name: Build Docker tar
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/arm/v7
+            suffix: linux-armv7
+          - platform: linux/arm64
+            suffix: linux-arm64
+          - platform: linux/amd64
+            suffix: linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build via buildx (required for cross-platform) but export as
+      # legacy Docker format via "docker save" — RouterOS container
+      # engine only understands the legacy image format, not OCI.
+      - name: Build image via buildx
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: ${{ matrix.platform }}
+          tags: max-telegram-bridge-bot:build
+          # Load into local Docker daemon so we can docker save it
+          outputs: type=docker,dest=/tmp/image-${{ matrix.suffix }}.tar
+
+      # buildx already outputs a tar — but it's OCI format.
+      # Re-import into Docker daemon and re-export as legacy format.
+      - name: Re-export as legacy Docker format
+        run: |
+          docker load -i /tmp/image-${{ matrix.suffix }}.tar
+          docker save max-telegram-bridge-bot:build \
+            -o max-telegram-bridge-bot-${{ matrix.suffix }}-docker.tar
+
+      - name: Save tar as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-${{ matrix.suffix }}
+          retention-days: 7
+          path: max-telegram-bridge-bot-${{ matrix.suffix }}-docker.tar

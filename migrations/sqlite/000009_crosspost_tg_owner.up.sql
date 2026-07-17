@@ -1,0 +1,1 @@
+ALTER TABLE crossposts ADD COLUMN tg_owner_id INTEGER NOT NULL DEFAULT 0;

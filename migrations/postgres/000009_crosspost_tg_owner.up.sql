@@ -1,0 +1,1 @@
+ALTER TABLE crossposts ADD COLUMN tg_owner_id BIGINT NOT NULL DEFAULT 0;
