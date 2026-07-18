@@ -88,6 +88,9 @@ type Addon interface {
 	HandleMaxGroupCommand(ctx context.Context, userID, chatID int64, chatType, text string) (handled bool)
 	// HandleMaxPost передаёт расширению входящий пост MAX-чата.
 	HandleMaxPost(ctx context.Context, srcChatID, senderUserID int64, mid, text string, photoURLs, videoURLs []string)
+	// HandleMaxMessageRemoved сообщает расширению об удалении сообщения в MAX.
+	// Generic-хук позволяет расширению инвалидировать собственные ссылки на сообщение.
+	HandleMaxMessageRemoved(ctx context.Context, maxChatID int64, mid string)
 	// HandleTgGroupCommand — команда «/...» в TG-группе или TG-канале. Generic: ядро не знает
 	// семантику, отдаёт аддону; true ⇒ обработано.
 	// В канале userID=0 (у channel post нет отправителя).

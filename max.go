@@ -217,6 +217,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			// Обработка удаления (только bridge, не crosspost)
 			if delUpd, isDel := upd.(*maxschemes.MessageRemovedUpdate); isDel {
+				if b.addon != nil {
+					b.addon.HandleMaxMessageRemoved(ctx, delUpd.ChatID, delUpd.MessageId)
+				}
 				tgChatID, tgMsgID, _, ok := b.repo.LookupTgMsgID(delUpd.MessageId)
 				if !ok {
 					continue

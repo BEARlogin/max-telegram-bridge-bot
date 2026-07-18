@@ -1575,6 +1575,10 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 // Может вызываться асинхронно обработчиком канала или синхронно расширением.
 // includeFooter управляет добавлением footer, который может вернуть расширение.
 func (b *Bridge) publishTgCrosspost(ctx context.Context, msg *TGMessage, maxChatID int64, includeFooter bool) {
+	b.publishTgCrosspostWithMode(ctx, msg, maxChatID, includeFooter, false)
+}
+
+func (b *Bridge) publishTgCrosspostWithMode(ctx context.Context, msg *TGMessage, maxChatID int64, includeFooter, manualAlbumFlush bool) {
 	// Замены TG→MAX применяем на уровне (текст+entities) до HTML — чтобы вырезание
 	// видимого текста ссылки убирало и сам text_link. Схлопывание пробелов — после.
 	repl := b.repo.GetCrosspostReplacements(maxChatID)
@@ -1594,7 +1598,7 @@ func (b *Bridge) publishTgCrosspost(ctx context.Context, msg *TGMessage, maxChat
 		if msg.Video != nil {
 			videoID = msg.Video.FileID
 		}
-		b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
+		item := mediaGroupItem{
 			photoSizes:  msg.Photo,
 			videoFileID: videoID,
 			caption:     caption,
@@ -1603,7 +1607,12 @@ func (b *Bridge) publishTgCrosspost(ctx context.Context, msg *TGMessage, maxChat
 			msg:         msg,
 			maxChatID:   maxChatID,
 			crosspost:   true,
-		})
+		}
+		if manualAlbumFlush {
+			b.bufferMediaGroupManual(ctx, msg.MediaGroupID, item)
+		} else {
+			b.bufferMediaGroup(ctx, msg.MediaGroupID, item)
+		}
 		return
 	}
 

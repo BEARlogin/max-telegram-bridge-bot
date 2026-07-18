@@ -27,25 +27,39 @@ type mediaGroupItem struct {
 
 // mediaGroupBuffer накапливает сообщения альбома перед отправкой.
 type mediaGroupBuffer struct {
-	mu    sync.Mutex
-	items []mediaGroupItem
-	timer *time.Timer
+	mu          sync.Mutex
+	items       []mediaGroupItem
+	timer       *time.Timer
+	manualFlush bool
 }
 
 // bufferMediaGroup добавляет сообщение в буфер альбома.
 // Если это первое сообщение — запускает таймер.
 func (b *Bridge) bufferMediaGroup(ctx context.Context, groupID string, item mediaGroupItem) {
+	b.bufferMediaGroupMode(ctx, groupID, item, false)
+}
+
+// bufferMediaGroupManual накапливает заранее известный альбом без таймера.
+// Вызывающий обязан завершить его через flushMediaGroup; это сохраняет порядок
+// при пакетном переносе, где получение следующей части может занять больше секунды.
+func (b *Bridge) bufferMediaGroupManual(ctx context.Context, groupID string, item mediaGroupItem) {
+	b.bufferMediaGroupMode(ctx, groupID, item, true)
+}
+
+func (b *Bridge) bufferMediaGroupMode(ctx context.Context, groupID string, item mediaGroupItem, manual bool) {
 	b.mgMu.Lock()
 
 	buf, ok := b.mgBuffers[groupID]
 	if !ok {
-		buf = &mediaGroupBuffer{}
+		buf = &mediaGroupBuffer{manualFlush: manual}
 		b.mgBuffers[groupID] = buf
 		// Добавляем первый item до запуска таймера — исключает гонку
 		buf.items = append(buf.items, item)
-		buf.timer = time.AfterFunc(mediaGroupTimeout, func() {
-			b.flushMediaGroup(ctx, groupID)
-		})
+		if !manual {
+			buf.timer = time.AfterFunc(mediaGroupTimeout, func() {
+				_, _ = b.flushMediaGroup(ctx, groupID)
+			})
+		}
 		b.mgMu.Unlock()
 		return
 	}
@@ -57,35 +71,41 @@ func (b *Bridge) bufferMediaGroup(ctx context.Context, groupID string, item medi
 	// Debounce: продлеваем окно сбора на каждый новый элемент. Если части
 	// альбома приходят с задержкой (форвард+загрузка), и фиксированный таймер от
 	// первого элемента флашил бы группу до прихода остальных, разбивая альбом.
-	buf.timer.Reset(mediaGroupTimeout)
+	if buf.timer != nil {
+		buf.timer.Reset(mediaGroupTimeout)
+	}
 	buf.mu.Unlock()
 }
 
 // flushMediaGroup отправляет все накопленные фото/видео альбома одним сообщением в MAX.
-func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
+func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) (string, error) {
 	b.mgMu.Lock()
 	buf, ok := b.mgBuffers[groupID]
 	if !ok {
 		b.mgMu.Unlock()
-		return
+		return "", fmt.Errorf("media group %q is not buffered", groupID)
 	}
 	delete(b.mgBuffers, groupID)
 	b.mgMu.Unlock()
 
 	buf.mu.Lock()
-	buf.timer.Stop()
+	if buf.timer != nil {
+		buf.timer.Stop()
+	}
 	items := buf.items
+	manualFlush := buf.manualFlush
 	buf.mu.Unlock()
 
 	if len(items) == 0 {
-		return
+		return "", fmt.Errorf("media group %q is empty", groupID)
 	}
 
 	// Дедуп альбома: если первый элемент уже доставлен в MAX — пропускаем
 	// (защита от повторной обработки/реплея после рестарта).
 	if b.alreadyDeliveredToMax(items[0].msg.Chat.ID, items[0].msg.MessageID) {
 		slog.Info("skip duplicate media group", "tgChat", items[0].msg.Chat.ID, "tgMsg", items[0].msg.MessageID)
-		return
+		mid, _ := b.repo.LookupMaxMsgID(items[0].msg.Chat.ID, items[0].msg.MessageID)
+		return mid, nil
 	}
 
 	// Определяем maxChatID
@@ -96,16 +116,16 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 		maxChatID, linked = b.repo.GetMaxChat(items[0].msg.Chat.ID)
 		if !linked {
 			slog.Warn("media group: chat not linked", "tgChat", items[0].msg.Chat.ID)
-			return
+			return "", fmt.Errorf("media group: chat is not linked")
 		}
 	}
 	// Пауза связки — альбом тоже не пересылаем.
 	if isCrosspost {
 		if b.repo.CrosspostPaused(maxChatID) {
-			return
+			return "", fmt.Errorf("crosspost to MAX chat %d is paused", maxChatID)
 		}
 	} else if b.repo.PairPaused(items[0].msg.Chat.ID, maxChatID) {
-		return
+		return "", fmt.Errorf("bridge to MAX chat %d is paused", maxChatID)
 	}
 	// Дуал-бот: токен бота этого чата в ctx (аплоады + sendMaxDirect альбома идут им).
 	ctx = b.withMaxToken(ctx, b.maxTokenFor(ctx, maxChatID))
@@ -218,7 +238,7 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 	totalMedia := photosSent + videosSent
 	if totalMedia == 0 {
 		slog.Warn("media group: no media uploaded, skipping")
-		return
+		return "", fmt.Errorf("media group: no media uploaded")
 	}
 
 	slog.Info("TG→MAX sending media group", "photos", photosSent, "videos", videosSent, "uid", uid, "tgChat", items[0].msg.Chat.ID, "maxChat", maxChatID)
@@ -234,8 +254,12 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 			b.notifyTgUser(ctx, items[0].msg, maxChatID,
 				fmt.Sprintf("Не удалось переслать альбом в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes())), isCrosspost)
 		}
-		// Фолбэк — по одному вложению (чтобы не потерять при отказе).
+		// Для живого потока сохраняем прежний фолбэк. Пакетный перенос должен
+		// получить ошибку синхронно, иначе он отметит не подтверждённый альбом.
 		for _, it := range items {
+			if manualFlush {
+				break
+			}
 			var cap string
 			if isCrosspost {
 				// Замены на уровне (текст+entities) до HTML, схлопывание — после.
@@ -247,9 +271,12 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 			}
 			go b.forwardTgToMax(ctx, it.msg, maxChatID, cap, isCrosspost, false)
 		}
-		return
+		return "", err
 	}
 	b.cbSuccess(maxChatID)
 	slog.Info("TG→MAX media group sent", "mid", result.Body.Mid, "photos", photosSent, "videos", videosSent)
-	b.repo.SaveMsg(items[0].msg.Chat.ID, items[0].msg.MessageID, maxChatID, result.Body.Mid, items[0].msg.MessageThreadID)
+	for _, it := range items {
+		b.repo.SaveMsg(it.msg.Chat.ID, it.msg.MessageID, maxChatID, result.Body.Mid, it.msg.MessageThreadID)
+	}
+	return result.Body.Mid, nil
 }
