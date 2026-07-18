@@ -3,7 +3,7 @@ module bearlogin-bridge
 go 1.24.0
 
 require (
-	github.com/go-telegram/bot v1.20.0
+	github.com/go-telegram/bot v1.22.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/lib/pq v1.11.2
 	github.com/mattn/go-sqlite3 v1.14.34

@@ -44,6 +44,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 
 			if update.BusinessConnection != nil {
+				slog.Info("TG business connection parsed", "user", update.BusinessConnection.UserID, "enabled", update.BusinessConnection.IsEnabled, "canReply", update.BusinessConnection.CanReply)
 				b.addonTgBusinessConnection(ctx, update.BusinessConnection)
 				continue
 			}

@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -73,7 +75,27 @@ func (s *tgBotSender) StartPolling(ctx context.Context) <-chan TGUpdate {
 }
 
 func (s *tgBotSender) StartWebhook(ctx context.Context, path string) <-chan TGUpdate {
-	http.HandleFunc(path, s.b.WebhookHandler())
+	handler := s.b.WebhookHandler()
+	http.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			slog.Warn("TG webhook body read failed", "err", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+
+		var raw map[string]json.RawMessage
+		if json.Unmarshal(body, &raw) == nil {
+			for _, kind := range []string{"business_connection", "business_message", "edited_business_message", "deleted_business_messages", "managed_bot"} {
+				if _, ok := raw[kind]; ok {
+					slog.Info("TG automation update received", "kind", kind)
+					break
+				}
+			}
+		}
+		handler.ServeHTTP(w, r)
+	})
 	go s.b.StartWebhook(ctx) // start workers that dispatch updates to handlers
 	return s.updates
 }
