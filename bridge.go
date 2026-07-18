@@ -251,8 +251,14 @@ func (b *Bridge) cbPermanentFail(ctx context.Context, chatID int64) {
 func (b *Bridge) notifyChatPaused(ctx context.Context, chatID int64) {
 	msg := "🚫 Чат недоступен — бот заблокирован, удалён или лишён прав.\n\n" +
 		"Связку поставил на паузу, чтобы не терять сообщения на бесконечных ретраях. " +
-		"Когда вернёте бота в чат (и сделаете администратором) — отправьте /unpause, " +
-		"чтобы возобновить пересылку."
+		"Когда вернёте бота в чат и сделаете администратором, отправьте /unpause в связанной группе."
+	if _, _, ok := b.repo.GetCrosspostTgChat(chatID); ok {
+		msg = "🚫 Канал MAX недоступен — бот заблокирован, удалён или лишён прав администратора.\n\n" +
+			"Кросспостинг поставлен на паузу. Верните бота в канал, затем откройте /crosspost и нажмите «▶️ Возобновить»."
+	} else if _, _, ok := b.repo.GetCrosspostMaxChat(chatID); ok {
+		msg = "🚫 Канал Telegram недоступен — бот удалён или лишён прав администратора.\n\n" +
+			"Кросспостинг поставлен на паузу. Верните бота в канал, затем откройте /crosspost и нажмите «▶️ Возобновить»."
+	}
 	owner := b.repo.TgOwnerForChat(chatID)
 	if owner == 0 {
 		slog.Warn("paused-notify: владелец TG не найден", "chatID", chatID)

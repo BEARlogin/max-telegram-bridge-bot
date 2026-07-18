@@ -686,7 +686,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 				tgChats := b.repo.GetTgChats(chatID)
 				if len(tgChats) == 0 {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Этот чат не связан (пауза — для связки групп).")
+					reply := "Этот чат не связан (пауза — для связки групп)."
+					if isDialog {
+						reply = "Для управления паузой кросспостинга откройте /crosspost и нажмите кнопку под нужной связкой каналов."
+					}
+					m := maxbot.NewMessage().SetChat(chatID).SetText(reply)
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					continue
 				}
@@ -842,7 +846,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					} else {
 						for _, l := range links {
-							kb := maxCrosspostKeyboard(b.maxApi, l.Direction, l.MaxChatID, b.repo.GetCrosspostSyncEdits(l.MaxChatID))
+							kb := maxCrosspostKeyboard(b.maxApi, l.Direction, l.MaxChatID, b.repo.GetCrosspostSyncEdits(l.MaxChatID), b.repo.CrosspostPaused(l.MaxChatID))
 							tgTitle := b.tgChatTitle(ctx, l.TgChatID)
 							statusText := maxCrosspostStatusText(l.TgChatID, l.Direction)
 							if tgTitle != "" {
@@ -937,7 +941,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					}
 
 					// Показать статус + клавиатуру после паринга
-					kb := maxCrosspostKeyboard(b.maxApi, "both", maxChannelID, false)
+					kb := maxCrosspostKeyboard(b.maxApi, "both", maxChannelID, false, false)
 					m := maxbot.NewMessage().SetChat(chatID).
 						SetText(fmt.Sprintf("Кросспостинг настроен!\nTG: %d ↔ MAX: %d\nНаправление: ⟷ оба", tgChannelID, maxChannelID)).
 						AddKeyboard(kb)
@@ -961,7 +965,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 								}
 							}
 						}
-						kb := maxCrosspostKeyboard(b.maxApi, direction, maxChannelID, b.repo.GetCrosspostSyncEdits(maxChannelID))
+						kb := maxCrosspostKeyboard(b.maxApi, direction, maxChannelID, b.repo.GetCrosspostSyncEdits(maxChannelID), b.repo.CrosspostPaused(maxChannelID))
 						m := maxbot.NewMessage().SetChat(chatID).
 							SetText(statusText).
 							AddKeyboard(kb)
@@ -1193,7 +1197,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		b.repo.SetCrosspostDirection(maxChatID, dir)
 
 		tgID, _, _ := b.repo.GetCrosspostTgChat(maxChatID)
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, dir), dir, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID))
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, dir), dir, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
 			Message:      body,
 			Notification: "Готово",
@@ -1216,7 +1220,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		cur := b.repo.GetCrosspostSyncEdits(maxChatID)
 		b.repo.SetCrosspostSyncEdits(maxChatID, !cur)
 		tgID, direction, _ := b.repo.GetCrosspostTgChat(maxChatID)
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, !cur)
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, !cur, b.repo.CrosspostPaused(maxChatID))
 		note := "Синхронизация правок выключена"
 		if !cur {
 			note = "Синхронизация правок включена"
@@ -1225,6 +1229,37 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 			Message:      body,
 			Notification: note,
 		})
+		return
+	}
+
+	// cpp:maxChatID — toggle crosspost pause
+	if strings.HasPrefix(data, "cpp:") {
+		maxChatID, err := strconv.ParseInt(strings.TrimPrefix(data, "cpp:"), 10, 64)
+		if err != nil {
+			return
+		}
+		if !b.isCrosspostOwner(maxChatID, userID) {
+			b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
+				Notification: "Только владелец связки может изменять настройки.",
+			})
+			return
+		}
+		paused := !b.repo.CrosspostPaused(maxChatID)
+		if err := b.repo.SetCrosspostPaused(maxChatID, paused); err != nil {
+			b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Notification: "Не удалось изменить паузу."})
+			return
+		}
+		tgChatID, direction, _ := b.repo.GetCrosspostTgChat(maxChatID)
+		if !paused {
+			b.cbSuccess(maxChatID)
+			b.cbSuccess(tgChatID)
+		}
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgChatID, direction), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), paused)
+		note := "Кросспостинг поставлен на паузу"
+		if !paused {
+			note = "Кросспостинг возобновлён"
+		}
+		b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Message: body, Notification: note})
 		return
 	}
 
@@ -1467,7 +1502,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		if !ok {
 			return
 		}
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID))
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Message: body})
 		return
 	}
@@ -1486,7 +1521,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 			})
 			return
 		}
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID))
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
 			Message: body,
 		})
@@ -1510,8 +1545,8 @@ func maxCallbackChatID(cbUpd *maxschemes.MessageCallbackUpdate) int64 {
 }
 
 // maxCrosspostMessageBody строит NewMessageBody с текстом и inline-клавиатурой.
-func maxCrosspostMessageBody(api *maxbot.Api, text, direction string, maxChatID int64, syncEdits bool) *maxschemes.NewMessageBody {
-	kb := maxCrosspostKeyboard(api, direction, maxChatID, syncEdits)
+func maxCrosspostMessageBody(api *maxbot.Api, text, direction string, maxChatID int64, syncEdits, paused bool) *maxschemes.NewMessageBody {
+	kb := maxCrosspostKeyboard(api, direction, maxChatID, syncEdits, paused)
 	return &maxschemes.NewMessageBody{
 		Text:        text,
 		Attachments: []interface{}{maxschemes.NewInlineKeyboardAttachmentRequest(kb.Build())},
@@ -1519,7 +1554,7 @@ func maxCrosspostMessageBody(api *maxbot.Api, text, direction string, maxChatID 
 }
 
 // maxCrosspostKeyboard строит inline-клавиатуру для управления кросспостингом в MAX.
-func maxCrosspostKeyboard(api *maxbot.Api, direction string, maxChatID int64, syncEdits bool) *maxbot.Keyboard {
+func maxCrosspostKeyboard(api *maxbot.Api, direction string, maxChatID int64, syncEdits, paused bool) *maxbot.Keyboard {
 	lblTgMax := "TG → MAX"
 	lblMaxTg := "MAX → TG"
 	lblBoth := "⟷ Оба"
@@ -1536,6 +1571,10 @@ func maxCrosspostKeyboard(api *maxbot.Api, direction string, maxChatID int64, sy
 	if syncEdits {
 		lblSync = "✓ ✏️ Синк правок"
 	}
+	lblPause := "⏸ Поставить на паузу"
+	if paused {
+		lblPause = "▶️ Возобновить"
+	}
 	kb := api.Messages.NewKeyboardBuilder()
 	kb.AddRow().
 		AddCallback(lblTgMax, maxschemes.DEFAULT, "cpd:tg>max:"+id).
@@ -1545,6 +1584,7 @@ func maxCrosspostKeyboard(api *maxbot.Api, direction string, maxChatID int64, sy
 		AddCallback(lblSync, maxschemes.DEFAULT, "cps:"+id).
 		AddCallback("🔄 Замены", maxschemes.DEFAULT, "cpr:"+id).
 		AddCallback("❌ Удалить", maxschemes.NEGATIVE, "cpu:"+id)
+	kb.AddRow().AddCallback(lblPause, maxschemes.DEFAULT, "cpp:"+id)
 	return kb
 }
 

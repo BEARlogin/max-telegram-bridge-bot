@@ -90,6 +90,31 @@ func TestCbPauseForChat_NoPairing(t *testing.T) {
 	}
 }
 
+func TestCbPauseForChat_CrosspostAndKeyboardResume(t *testing.T) {
+	repo := testRepo(t)
+	const tgChat, maxChat, owner = int64(-100123), int64(-700456), int64(555)
+	if _, err := repo.db.Exec(`INSERT INTO crossposts
+		(tg_chat_id,max_chat_id,direction,created_at,owner_id,tg_owner_id,paused)
+		VALUES (?,?,?,?,?,?,0)`, tgChat, maxChat, "both", 1, 0, owner); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{repo: repo}
+	if !b.cbPauseForChat(maxChat) || !repo.CrosspostPaused(maxChat) {
+		t.Fatal("crosspost was not paused after permanent destination failure")
+	}
+
+	kb := tgCrosspostKeyboard("both", maxChat, false, true)
+	last := kb.Rows[len(kb.Rows)-1][0]
+	if last.Text != "▶️ Возобновить" || last.CallbackData != "cpp:-700456" {
+		t.Fatalf("resume button = %+v", last)
+	}
+	kb = tgCrosspostKeyboard("both", maxChat, false, false)
+	last = kb.Rows[len(kb.Rows)-1][0]
+	if last.Text != "⏸ Поставить на паузу" {
+		t.Fatalf("pause button = %+v", last)
+	}
+}
+
 func TestClaimCrosspost(t *testing.T) {
 	repo := testRepo(t)
 	// Первый claim того же сообщения — проходит (кросспостим); повтор — дубль (пропустить).
@@ -133,14 +158,14 @@ func TestMaxTextHasLink(t *testing.T) {
 		text string
 		want bool
 	}{
-		{"@id710708943262_4_bot", false},          // упоминание самого (запасного) бота — НЕ ссылка
-		{"@id710708943262_bot", false},            // основной бот — НЕ ссылка
-		{"@id710708943262_bot привет", false},     // бот + текст
-		{"@scamchannel подпишись", true},          // чужой канал — ссылка
-		{"@id710708943262_bot и @scam", true},     // есть чужое упоминание
-		{"http://evil.example", true},             // http
-		{"загляни на t.me/foo", true},             // t.me
-		{"обычный текст без ссылок", false},        // нет ничего
+		{"@id710708943262_4_bot", false},      // упоминание самого (запасного) бота — НЕ ссылка
+		{"@id710708943262_bot", false},        // основной бот — НЕ ссылка
+		{"@id710708943262_bot привет", false}, // бот + текст
+		{"@scamchannel подпишись", true},      // чужой канал — ссылка
+		{"@id710708943262_bot и @scam", true}, // есть чужое упоминание
+		{"http://evil.example", true},         // http
+		{"загляни на t.me/foo", true},         // t.me
+		{"обычный текст без ссылок", false},   // нет ничего
 		{"", false},
 	}
 	for _, c := range cases {
