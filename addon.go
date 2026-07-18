@@ -214,6 +214,15 @@ func (b *Bridge) maxAddonText(ctx context.Context, userID, chatID int64, text st
 	return ok && h.HandleMaxText(ctx, userID, chatID, text)
 }
 
+// maxAddonCallbackMessage передаёт расширению callback вместе с исходным mid.
+// Узкий optional-интерфейс сохраняет совместимость со сторонними Addon.
+func (b *Bridge) maxAddonCallbackMessage(ctx context.Context, userID, chatID int64, callbackID, data, mid string) bool {
+	h, ok := b.addon.(interface {
+		HandleMaxCallbackMessage(context.Context, int64, int64, string, string, string) bool
+	})
+	return ok && h.HandleMaxCallbackMessage(ctx, userID, chatID, callbackID, data, mid)
+}
+
 // chatShared — отдать аддону выбранный нативной кнопкой чат (если подключён). true ⇒ обработано.
 func (b *Bridge) chatShared(ctx context.Context, userID int64, requestID int, sharedChatID int64, title string) bool {
 	return b.addon != nil && b.addon.HandleChatShared(ctx, userID, requestID, sharedChatID, title)

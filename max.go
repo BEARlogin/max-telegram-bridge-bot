@@ -1136,6 +1136,10 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 	slog.Debug("MAX callback", "uid", userID, "data", data)
 
 	// Расширение обрабатывает собственные callback-префиксы. В личке chatID = userID.
+	if b.addon != nil && cbUpd.Message != nil &&
+		b.maxAddonCallbackMessage(ctx, userID, cbUpd.GetChatID(), callbackID, data, cbUpd.Message.Body.Mid) {
+		return
+	}
 	if b.addon != nil && b.addon.HandleMaxCallback(ctx, userID, userID, callbackID, data) {
 		return
 	}
