@@ -1135,9 +1135,12 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 
 	slog.Debug("MAX callback", "uid", userID, "data", data)
 
-	// Расширение обрабатывает собственные callback-префиксы. В личке chatID = userID.
+	// Расширение обрабатывает собственные callback-префиксы. У исходящего сообщения
+	// в личке recipient.user_id может указывать на бота, поэтому адресат ответа —
+	// пользователь, нажавший кнопку.
+	chatID := maxCallbackChatID(cbUpd)
 	if b.addon != nil && cbUpd.Message != nil &&
-		b.maxAddonCallbackMessage(ctx, userID, cbUpd.GetChatID(), callbackID, data, cbUpd.Message.Body.Mid) {
+		b.maxAddonCallbackMessage(ctx, userID, chatID, callbackID, data, cbUpd.Message.Body.Mid) {
 		return
 	}
 	if b.addon != nil && b.addon.HandleMaxCallback(ctx, userID, userID, callbackID, data) {
@@ -1471,6 +1474,16 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 	if b.addon != nil {
 		b.addon.HandleCallback(ctx, userID, userID, callbackID, data, 0)
 	}
+}
+
+func maxCallbackChatID(cbUpd *maxschemes.MessageCallbackUpdate) int64 {
+	if cbUpd == nil {
+		return 0
+	}
+	if cbUpd.Message == nil || cbUpd.Message.Recipient.ChatType == maxschemes.DIALOG || cbUpd.Message.Recipient.ChatId == 0 {
+		return cbUpd.Callback.User.UserId
+	}
+	return cbUpd.Message.Recipient.ChatId
 }
 
 // maxCrosspostMessageBody строит NewMessageBody с текстом и inline-клавиатурой.
