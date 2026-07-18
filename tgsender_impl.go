@@ -79,7 +79,20 @@ func (s *tgBotSender) StartWebhook(ctx context.Context, path string) <-chan TGUp
 }
 
 func (s *tgBotSender) SetWebhook(ctx context.Context, url string) error {
-	_, err := s.b.SetWebhook(ctx, &bot.SetWebhookParams{URL: url})
+	_, err := s.b.SetWebhook(ctx, &bot.SetWebhookParams{
+		URL: url,
+		AllowedUpdates: []string{
+			models.AllowedUpdateMessage,
+			models.AllowedUpdateEditedMessage,
+			models.AllowedUpdateChannelPost,
+			models.AllowedUpdateEditedChannelPost,
+			models.AllowedUpdateCallbackQuery,
+			models.AllowedUpdateBusinessConnection,
+			models.AllowedUpdateBusinessMessage,
+			models.AllowedUpdateEditedBusinessMessage,
+			models.AllowedUpdateDeletedBusinessMessages,
+		},
+	})
 	return wrapErr(err)
 }
 
@@ -107,6 +120,21 @@ func (s *tgBotSender) SendMessage(ctx context.Context, chatID int64, text string
 		msg, e = s.b.SendMessage(ctx, p)
 		return e
 	})
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	return msg.ID, nil
+}
+
+// SendBusinessMessage sends a message on behalf of a connected Telegram account.
+// It is intentionally an optional adapter capability and is not part of TGSender.
+func (s *tgBotSender) SendBusinessMessage(ctx context.Context, connectionID string, chatID int64, text string) (int, error) {
+	p := &bot.SendMessageParams{
+		BusinessConnectionID: connectionID,
+		ChatID:               chatID,
+		Text:                 text,
+	}
+	msg, err := s.b.SendMessage(ctx, p)
 	if err != nil {
 		return 0, wrapErr(err)
 	}
@@ -730,13 +758,35 @@ func wrapErr(err error) error {
 // --- Update conversion ---
 
 func convertUpdate(u *models.Update) TGUpdate {
-	return TGUpdate{
-		Message:           convertMsg(u.Message),
-		EditedMessage:     convertMsg(u.EditedMessage),
-		ChannelPost:       convertMsg(u.ChannelPost),
-		EditedChannelPost: convertMsg(u.EditedChannelPost),
-		CallbackQuery:     convertCallback(u.CallbackQuery),
+	out := TGUpdate{
+		Message:               convertMsg(u.Message),
+		EditedMessage:         convertMsg(u.EditedMessage),
+		ChannelPost:           convertMsg(u.ChannelPost),
+		EditedChannelPost:     convertMsg(u.EditedChannelPost),
+		CallbackQuery:         convertCallback(u.CallbackQuery),
+		BusinessMessage:       convertMsg(u.BusinessMessage),
+		EditedBusinessMessage: convertMsg(u.EditedBusinessMessage),
 	}
+	if u.BusinessConnection != nil {
+		out.BusinessConnection = &TGBusinessConnection{
+			ID:         u.BusinessConnection.ID,
+			UserID:     u.BusinessConnection.User.ID,
+			UserChatID: u.BusinessConnection.UserChatID,
+			IsEnabled:  u.BusinessConnection.IsEnabled,
+		}
+		if u.BusinessConnection.Rights != nil {
+			out.BusinessConnection.CanReply = u.BusinessConnection.Rights.CanReply
+			out.BusinessConnection.CanRead = u.BusinessConnection.Rights.CanReadMessages
+		}
+	}
+	if u.DeletedBusinessMessages != nil {
+		out.DeletedBusinessMessages = &TGBusinessMessagesDeleted{
+			ConnectionID: u.DeletedBusinessMessages.BusinessConnectionID,
+			ChatID:       u.DeletedBusinessMessages.Chat.ID,
+			MessageIDs:   append([]int(nil), u.DeletedBusinessMessages.MessageIDs...),
+		}
+	}
+	return out
 }
 
 func convertMsg(m *models.Message) *TGMessage {
@@ -751,10 +801,11 @@ func convertMsg(m *models.Message) *TGMessage {
 			Type:  string(m.Chat.Type),
 			Title: m.Chat.Title,
 		},
-		Text:            m.Text,
-		Caption:         m.Caption,
-		MediaGroupID:    m.MediaGroupID,
-		MigrateToChatID: m.MigrateToChatID,
+		Text:                 m.Text,
+		Caption:              m.Caption,
+		MediaGroupID:         m.MediaGroupID,
+		MigrateToChatID:      m.MigrateToChatID,
+		BusinessConnectionID: m.BusinessConnectionID,
 	}
 
 	// Служебные сообщения (вступил/вышел/смена названия/закреп и т.п.) — без

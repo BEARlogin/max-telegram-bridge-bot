@@ -95,6 +95,8 @@ type TGMessage struct {
 	MigrateToChatID int64
 	Entities        []Entity
 	CaptionEntities []Entity
+	// BusinessConnectionID задан у сообщений из Telegram Chat Automation.
+	BusinessConnectionID string
 	// IsService — служебное сообщение (вступил/вышел из чата, смена названия,
 	// закреп и т.п.). Такие не зеркалим в MAX (иначе летит пустое сообщение).
 	IsService bool
@@ -132,11 +134,30 @@ type TGCallback struct {
 }
 
 type TGUpdate struct {
-	Message           *TGMessage
-	EditedMessage     *TGMessage
-	ChannelPost       *TGMessage
-	EditedChannelPost *TGMessage
-	CallbackQuery     *TGCallback
+	Message                 *TGMessage
+	EditedMessage           *TGMessage
+	ChannelPost             *TGMessage
+	EditedChannelPost       *TGMessage
+	CallbackQuery           *TGCallback
+	BusinessConnection      *TGBusinessConnection
+	BusinessMessage         *TGMessage
+	EditedBusinessMessage   *TGMessage
+	DeletedBusinessMessages *TGBusinessMessagesDeleted
+}
+
+type TGBusinessConnection struct {
+	ID         string
+	UserID     int64
+	UserChatID int64
+	IsEnabled  bool
+	CanReply   bool
+	CanRead    bool
+}
+
+type TGBusinessMessagesDeleted struct {
+	ConnectionID string
+	ChatID       int64
+	MessageIDs   []int
 }
 
 // SendOpts — optional parameters for send methods.

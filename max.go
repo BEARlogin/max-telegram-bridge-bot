@@ -427,6 +427,15 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				b.addon.HandleMaxGroupCommand(ctx, msgUpd.Message.Sender.UserId, chatID, string(msgUpd.Message.Recipient.ChatType), text) {
 				continue
 			}
+			if !isDialog && !strings.HasPrefix(text, "/") {
+				replyMid := body.ReplyTo
+				if replyMid == "" && msgUpd.Message.Link != nil && msgUpd.Message.Link.Type == maxschemes.REPLY {
+					replyMid = msgUpd.Message.Link.Message.Mid
+				}
+				if b.addonMaxReply(ctx, chatID, msgUpd.Message.Sender.UserId, body.Mid, replyMid, text) {
+					continue
+				}
+			}
 
 			if text == "/whoami" {
 				m := maxbot.NewMessage().SetChat(chatID).SetText(

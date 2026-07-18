@@ -56,6 +56,33 @@ func TestConvertMsg_Basic(t *testing.T) {
 	}
 }
 
+func TestConvertUpdateBusinessFields(t *testing.T) {
+	u := &models.Update{
+		BusinessConnection: &models.BusinessConnection{
+			ID:         "connection",
+			User:       models.User{ID: 101},
+			UserChatID: 101,
+			IsEnabled:  true,
+			Rights:     &models.BusinessBotRights{CanReply: true, CanReadMessages: true},
+		},
+		BusinessMessage: &models.Message{
+			ID:                   7,
+			BusinessConnectionID: "connection",
+			Chat:                 models.Chat{ID: 404, Type: "private"},
+			From:                 &models.User{ID: 404, FirstName: "Иван"},
+			Text:                 "Привет",
+		},
+	}
+	got := convertUpdate(u)
+	if got.BusinessConnection == nil || got.BusinessConnection.ID != "connection" ||
+		!got.BusinessConnection.CanReply || !got.BusinessConnection.CanRead {
+		t.Fatalf("connection=%+v", got.BusinessConnection)
+	}
+	if got.BusinessMessage == nil || got.BusinessMessage.BusinessConnectionID != "connection" || got.BusinessMessage.Chat.ID != 404 {
+		t.Fatalf("message=%+v", got.BusinessMessage)
+	}
+}
+
 func TestConvertMsg_From(t *testing.T) {
 	m := &models.Message{
 		ID: 1,

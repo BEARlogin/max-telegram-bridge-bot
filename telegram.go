@@ -43,6 +43,23 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				return
 			}
 
+			if update.BusinessConnection != nil {
+				b.addonTgBusinessConnection(ctx, update.BusinessConnection)
+				continue
+			}
+			if update.EditedBusinessMessage != nil {
+				b.addonTgBusinessMessage(ctx, update.EditedBusinessMessage, true)
+				continue
+			}
+			if update.BusinessMessage != nil {
+				b.addonTgBusinessMessage(ctx, update.BusinessMessage, false)
+				continue
+			}
+			if update.DeletedBusinessMessages != nil {
+				b.addonTgBusinessDeleted(ctx, update.DeletedBusinessMessages)
+				continue
+			}
+
 			// Обработка channel posts (crosspost forwarding only)
 			if update.EditedChannelPost != nil {
 				b.handleTgEditedChannelPost(ctx, update.EditedChannelPost)

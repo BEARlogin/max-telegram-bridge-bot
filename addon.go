@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 )
 
 // Addon — опциональная точка расширения бриджа дополнительными командами.
@@ -212,6 +214,103 @@ func (b *Bridge) maxAddonText(ctx context.Context, userID, chatID int64, text st
 		HandleMaxText(context.Context, int64, int64, string) bool
 	})
 	return ok && h.HandleMaxText(ctx, userID, chatID, text)
+}
+
+// Telegram account automation hooks are optional so public/third-party addons keep compiling.
+func (b *Bridge) addonTgBusinessConnection(ctx context.Context, c *TGBusinessConnection) {
+	if c == nil {
+		return
+	}
+	h, ok := b.addon.(interface {
+		HandleTgBusinessConnection(context.Context, string, int64, int64, bool, bool, bool)
+	})
+	if ok {
+		h.HandleTgBusinessConnection(ctx, c.ID, c.UserID, c.UserChatID, c.IsEnabled, c.CanReply, c.CanRead)
+	}
+}
+
+func (b *Bridge) addonTgBusinessMessage(ctx context.Context, msg *TGMessage, edited bool) {
+	if msg == nil || msg.BusinessConnectionID == "" {
+		return
+	}
+	fromID := int64(0)
+	name, username := "", ""
+	if msg.From != nil {
+		fromID = msg.From.ID
+		name = strings.TrimSpace(msg.From.FirstName + " " + msg.From.LastName)
+		username = msg.From.UserName
+	}
+	text := msg.Text
+	if text == "" {
+		text = msg.Caption
+	}
+	mediaKind := ""
+	mediaFileID := ""
+	switch {
+	case len(msg.Photo) > 0:
+		mediaKind = "photo"
+		mediaFileID = msg.Photo[len(msg.Photo)-1].FileID
+	case msg.Video != nil:
+		mediaKind = "video"
+		mediaFileID = msg.Video.FileID
+	case msg.VideoNote != nil:
+		mediaKind = "video_note"
+	case msg.Voice != nil:
+		mediaKind = "voice"
+	case msg.Audio != nil:
+		mediaKind = "audio"
+	case msg.Document != nil:
+		mediaKind = "document"
+	case msg.Animation != nil:
+		mediaKind = "animation"
+	case msg.Sticker != nil:
+		mediaKind = "sticker"
+	}
+	mediaURL := ""
+	if mediaFileID != "" {
+		if path, err := b.tg.GetFile(ctx, mediaFileID); err == nil && path != "" {
+			mediaURL = b.tg.GetFileDirectURL(path)
+		}
+	}
+	h, ok := b.addon.(interface {
+		HandleTgBusinessMessage(context.Context, string, int64, int64, int, string, string, string, string, string, bool)
+	})
+	if ok {
+		h.HandleTgBusinessMessage(ctx, msg.BusinessConnectionID, msg.Chat.ID, fromID, msg.MessageID, name, username, text, mediaKind, mediaURL, edited)
+	}
+}
+
+func (b *Bridge) addonTgBusinessDeleted(ctx context.Context, d *TGBusinessMessagesDeleted) {
+	if d == nil {
+		return
+	}
+	h, ok := b.addon.(interface {
+		HandleTgBusinessDeleted(context.Context, string, int64, []int)
+	})
+	if ok {
+		h.HandleTgBusinessDeleted(ctx, d.ConnectionID, d.ChatID, d.MessageIDs)
+	}
+}
+
+func (b *Bridge) sendTgBusinessText(ctx context.Context, connectionID string, chatID int64, text string) error {
+	s, ok := b.tg.(interface {
+		SendBusinessMessage(context.Context, string, int64, string) (int, error)
+	})
+	if !ok {
+		return fmt.Errorf("Telegram business sending unavailable")
+	}
+	_, err := s.SendBusinessMessage(ctx, connectionID, chatID, text)
+	return err
+}
+
+func (b *Bridge) addonMaxReply(ctx context.Context, maxChatID, userID int64, mid, replyMid, text string) bool {
+	if replyMid == "" {
+		return false
+	}
+	h, ok := b.addon.(interface {
+		HandleMaxReply(context.Context, int64, int64, string, string, string) bool
+	})
+	return ok && h.HandleMaxReply(ctx, maxChatID, userID, mid, replyMid, text)
 }
 
 // observePrivateUser передаёт расширению актуальный публичный профиль собеседника.
