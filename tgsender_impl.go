@@ -560,7 +560,11 @@ func applySendMessageOpts(p *bot.SendMessageParams, opts *SendOpts) {
 		p.ReplyMarkup = &models.ReplyKeyboardRemove{RemoveKeyboard: true}
 	}
 	if opts.RequestChat != nil {
-		rights := &models.ChatAdministratorRights{CanDeleteMessages: true, CanRestrictMembers: true}
+		var userRights, botRights *models.ChatAdministratorRights
+		if opts.RequestChat.RequireAdmin {
+			rights := &models.ChatAdministratorRights{CanDeleteMessages: true, CanRestrictMembers: true}
+			userRights, botRights = rights, rights
+		}
 		p.ReplyMarkup = &models.ReplyKeyboardMarkup{
 			ResizeKeyboard:  true,
 			OneTimeKeyboard: true,
@@ -569,8 +573,9 @@ func applySendMessageOpts(p *bot.SendMessageParams, opts *SendOpts) {
 				RequestChat: &models.KeyboardButtonRequestChat{
 					RequestID:               int32(opts.RequestChat.RequestID),
 					ChatIsChannel:           false,
-					UserAdministratorRights: rights,
-					BotAdministratorRights:  rights,
+					UserAdministratorRights: userRights,
+					BotAdministratorRights:  botRights,
+					BotIsMember:             opts.RequestChat.BotIsMember,
 					RequestTitle:            true,
 				},
 			}}},

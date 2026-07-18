@@ -157,8 +157,10 @@ type SendOpts struct {
 // RequestChatSpec — параметры нативной кнопки выбора группы. Просим бота сделать
 // админом с правами модерации.
 type RequestChatSpec struct {
-	Text      string // подпись кнопки
-	RequestID int    // эхо в chat_shared.request_id (различать запросы)
+	Text         string // подпись кнопки
+	RequestID    int    // эхо в chat_shared.request_id (различать запросы)
+	RequireAdmin bool   // пользователь и бот должны стать администраторами
+	BotIsMember  bool   // показывать только группы, где бот уже состоит
 }
 
 type InlineKeyboardMarkup struct {

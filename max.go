@@ -605,13 +605,19 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				// Гейт free-лимита связок (аддон, фича-флаг PAIR_FREE_LIMIT). ДО паринга:
 				// при потреблении ключа знаем владельцев ОБЕИХ сторон (peek pending),
 				// при генерации ключа — только свою (вторая проверится при потреблении).
-				var pairTgOwner int64
+				var pairTgOwner, pairTgChatID int64
 				if key != "" {
-					if peerPlatform, _, peerUser, ok := b.repo.PeekBridgeKey(key); ok && peerPlatform == "tg" {
+					if peerPlatform, peerChat, peerUser, ok := b.repo.PeekBridgeKey(key); ok && peerPlatform == "tg" {
 						pairTgOwner = peerUser
+						pairTgChatID = peerChat
 					}
 				}
 				if allowed, reason := b.pairAllowed(ctx, msgUpd.Message.Sender.UserId, pairTgOwner); !allowed {
+					m := maxbot.NewMessage().SetChat(chatID).SetText(reason)
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
+				if allowed, reason := b.addonPairDestinationAllowed(ctx, key, "max", chatID, msgUpd.Message.Sender.UserId); !allowed {
 					m := maxbot.NewMessage().SetChat(chatID).SetText(reason)
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					continue
@@ -623,6 +629,12 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 
 				if paired {
+					if !b.addonPairCompleted(ctx, key, pairTgChatID, chatID) {
+						b.repo.Unpair("max", chatID)
+						m := maxbot.NewMessage().SetChat(chatID).SetText("Не удалось завершить настройку зеркала. Связка отменена, попробуйте ещё раз.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+						continue
+					}
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Связано! Сообщения теперь пересылаются.")
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					slog.Info("paired", "platform", "max", "chat", chatID, "key", key)

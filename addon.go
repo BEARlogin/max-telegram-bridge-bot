@@ -226,6 +226,26 @@ func (b *Bridge) observePrivateUser(ctx context.Context, platform string, userID
 	}
 }
 
+func (b *Bridge) addonPairCompleted(ctx context.Context, key string, tgChatID, maxChatID int64) bool {
+	h, ok := b.addon.(interface {
+		HandlePairCompleted(context.Context, string, int64, int64) bool
+	})
+	if ok {
+		return h.HandlePairCompleted(ctx, key, tgChatID, maxChatID)
+	}
+	return true
+}
+
+func (b *Bridge) addonPairDestinationAllowed(ctx context.Context, key, platform string, chatID, userID int64) (bool, string) {
+	h, ok := b.addon.(interface {
+		PairDestinationAllowed(context.Context, string, string, int64, int64) (bool, string)
+	})
+	if !ok {
+		return true, ""
+	}
+	return h.PairDestinationAllowed(ctx, key, platform, chatID, userID)
+}
+
 // maxAddonCallbackMessage передаёт расширению callback вместе с исходным mid.
 // Узкий optional-интерфейс сохраняет совместимость со сторонними Addon.
 func (b *Bridge) maxAddonCallbackMessage(ctx context.Context, userID, chatID int64, callbackID, data, mid string) bool {
