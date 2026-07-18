@@ -217,6 +217,10 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 			// Обработка удаления (только bridge, не crosspost)
 			if delUpd, isDel := upd.(*maxschemes.MessageRemovedUpdate); isDel {
+				if b.isSuppressedMaxDelete(delUpd.MessageId) {
+					slog.Info("MAX delete sync suppressed", "maxMid", delUpd.MessageId, "maxChat", delUpd.ChatID)
+					continue
+				}
 				if b.addon != nil {
 					b.addon.HandleMaxMessageRemoved(ctx, delUpd.ChatID, delUpd.MessageId)
 				}
@@ -1037,6 +1041,24 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption, true)
 		}
 	}
+}
+
+func (b *Bridge) suppressMaxDelete(mid string) {
+	if mid == "" {
+		return
+	}
+	b.maxDeleteSuppress.Store(mid, struct{}{})
+	time.AfterFunc(10*time.Minute, func() {
+		b.maxDeleteSuppress.Delete(mid)
+	})
+}
+
+func (b *Bridge) isSuppressedMaxDelete(mid string) bool {
+	if mid == "" {
+		return false
+	}
+	_, ok := b.maxDeleteSuppress.Load(mid)
+	return ok
 }
 
 // handleMaxCallback обрабатывает нажатия inline-кнопок (crosspost management).

@@ -71,6 +71,9 @@ type Bridge struct {
 	// в чате). Обрабатываем один раз.
 	maxSeenMu  sync.Mutex
 	maxSeenMid map[string]int64 // mid → unix-время (TTL-очистка)
+	// maxDeleteSuppress — сообщения, которые бот удаляет локальной операцией.
+	// Их message_removed нельзя зеркалировать обратно в Telegram.
+	maxDeleteSuppress sync.Map // mid → struct{}
 
 	httpClient *http.Client // для скачивания/загрузки файлов (большой таймаут)
 	apiClient  *http.Client // для коротких API-запросов (малый таймаут)
