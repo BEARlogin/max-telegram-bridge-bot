@@ -146,6 +146,17 @@ export async function unbridgeGroup(tgChatId) {
   return r.json()
 }
 
+// Направление пересылки моста группы: both | tg>max | max>tg (PRO).
+export async function setGroupDirection(tgChatId, direction) {
+  const r = await fetch(`${API}/group/direction`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ tg_chat_id: tgChatId, direction }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'save failed')
+  return r.json()
+}
+
 // Антиспам связки (PRO): вкл/выкл + настройки (режим, дилей ссылок, порог доверия).
 export async function setAntispam(maxChatId, opts) {
   const r = await fetch(`${API}/crosspost/antispam`, {

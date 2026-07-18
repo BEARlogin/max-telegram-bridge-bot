@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -36,6 +37,44 @@ func (s *server) effectiveTgID(u user) int64 {
 		return s.store.LinkedTg(u.ID)
 	}
 	return 0
+}
+
+// mergeLinkedEntitlements объединяет старые раздельные балансы MAX и Telegram.
+// Telegram-id — канонический ключ единого счёта; операция идемпотентна.
+func mergeLinkedEntitlements(maxID, tgID int64) error {
+	if addonDBPath == "" || maxID == 0 || tgID == 0 || maxID == tgID {
+		return nil
+	}
+	db, err := openRW(addonDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var credits, welcome int
+	err = tx.QueryRow(`SELECT credits, welcome_granted FROM entitlements WHERE user_id=?`, maxID).Scan(&credits, &welcome)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO entitlements (user_id, credits, welcome_granted, updated_at)
+		VALUES (?, ?, ?, strftime('%s','now'))
+		ON CONFLICT(user_id) DO UPDATE SET
+			credits = entitlements.credits + excluded.credits,
+			welcome_granted = MAX(entitlements.welcome_granted, excluded.welcome_granted),
+			updated_at = strftime('%s','now')`, tgID, credits, welcome); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM entitlements WHERE user_id=?`, maxID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // handleLinkStart — MAX-кабинет: выдать одноразовый код для привязки TG.
@@ -93,6 +132,9 @@ func (s *server) handleAutoLink(w http.ResponseWriter, r *http.Request) {
 	ok := s.store.AutoLink(in.MaxID, in.TgID)
 	if ok {
 		log.Printf("auto-link max=%d tg=%d (bridge pairing)", in.MaxID, in.TgID)
+		if err := mergeLinkedEntitlements(in.MaxID, in.TgID); err != nil {
+			log.Printf("auto-link balance merge max=%d tg=%d: %v", in.MaxID, in.TgID, err)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": ok})
 }
@@ -119,5 +161,8 @@ func (s *server) handleLinkComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("link complete max=%d tg=%d", maxID, in.TgID)
+	if err := mergeLinkedEntitlements(maxID, in.TgID); err != nil {
+		log.Printf("link balance merge max=%d tg=%d: %v", maxID, in.TgID, err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

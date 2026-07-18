@@ -84,7 +84,7 @@ func (s *server) handleBlocks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"blocks": out})
 }
 
-// handleUnban — разбанить: TG снять мут, MAX вернуть участника. Затем убрать из журнала.
+// handleUnban отменяет фактическое действие и затем убирает запись из журнала.
 func (s *server) handleUnban(w http.ResponseWriter, r *http.Request) {
 	u := authUser(r)
 	if !u.Valid {
@@ -104,9 +104,20 @@ func (s *server) handleUnban(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "не ваш чат"})
 		return
 	}
-	var err error
+	action, err := blockAction(in.Platform, in.ChatID, in.UserID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "запись блокировки не найдена"})
+		return
+	}
 	if in.Platform == "tg" {
-		err = tgUnmute(in.ChatID, in.UserID)
+		switch action {
+		case "ban":
+			err = tgUnban(in.ChatID, in.UserID)
+		case "kick":
+			err = nil // kick уже разрешает повторный вход; удаляем только запись журнала
+		default:
+			err = tgUnmute(in.ChatID, in.UserID)
+		}
 	} else {
 		err = maxAddMember(in.ChatID, in.UserID)
 	}
@@ -123,6 +134,37 @@ func (s *server) handleUnban(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func blockAction(platform string, chatID, userID int64) (string, error) {
+	if addonDBPath == "" {
+		return "", sql.ErrNoRows
+	}
+	db, err := sql.Open("sqlite", "file:"+addonDBPath+"?mode=ro&_pragma=busy_timeout(3000)")
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var action string
+	err = db.QueryRow(`SELECT action FROM as_blocks WHERE platform=? AND chat_id=? AND user_id=?`, platform, chatID, userID).Scan(&action)
+	return action, err
+}
+
+func tgUnban(chatID, userID int64) error {
+	if tgAPIURL == "" || tgBotToken == "" {
+		return errNoTG
+	}
+	u := tgAPIURL + "/bot" + tgBotToken + "/unbanChatMember?chat_id=" + strconv.FormatInt(chatID, 10) +
+		"&user_id=" + strconv.FormatInt(userID, 10) + "&only_if_banned=true"
+	resp, err := httpShort.Get(u)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return errHTTP(resp.StatusCode)
+	}
+	return nil
 }
 
 // tgUnmute снимает мут участника TG (restrictChatMember с полными правами).

@@ -52,6 +52,7 @@ type crosspost struct {
 	Captcha         bool    `json:"captcha"`
 	AntiraidWords   string  `json:"-"`
 	Antiraid        bool    `json:"antiraid"`
+	ProfileGuard    bool    `json:"profile_guard"`
 	BlockWords      string  `json:"block_words"`
 	BlockCats       string  `json:"block_cats"`
 	DelService      bool    `json:"del_service"`
@@ -130,7 +131,7 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		resp["sub_status"] = st
 		resp["sub_until"] = until
 		resp["trial_used"] = s.billing.TrialUsed(bid)
-		resp["card_pan"] = s.billing.CardPAN(bid)   // маскированная карта ("" если нет)
+		resp["card_pan"] = s.billing.CardPAN(bid)     // маскированная карта ("" если нет)
 		resp["has_rebill"] = s.billing.HasRebill(bid) // можно возобновить без новой оплаты
 		resp["mirror_slots"] = s.billing.MirrorSlots(bid)
 	}
@@ -167,7 +168,7 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				cps[i].Antispam, cps[i].AntispamMode = s.store.GetAntispam(cps[i].TgChatID)
 				if disc := tgLinkedChat(cps[i].TgChatID); disc != 0 {
 					pol := antispamPolicy("tg", disc)
-					cps[i].StrikeLimit, cps[i].BanAfter, cps[i].Action, cps[i].MuteMinutes, cps[i].Warn, cps[i].Notify, cps[i].Captcha, cps[i].Antiraid, cps[i].BlockWords, cps[i].BlockCats, cps[i].DelService = pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.BlockWords, pol.BlockCats, pol.DelService
+					cps[i].StrikeLimit, cps[i].BanAfter, cps[i].Action, cps[i].MuteMinutes, cps[i].Warn, cps[i].Notify, cps[i].Captcha, cps[i].Antiraid, cps[i].ProfileGuard, cps[i].BlockWords, cps[i].BlockCats, cps[i].DelService = pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.ProfileGuard, pol.BlockWords, pol.BlockCats, pol.DelService
 					if cps[i].Antispam { // проверяем права бота только если антиспам включён
 						cps[i].BotAdmin = tgBotIsAdmin(disc)
 					}
@@ -180,7 +181,13 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if db, err := sql.Open("sqlite", "file:"+addonDBPath+"?mode=ro&_pragma=busy_timeout(3000)"); err == nil {
 			defer db.Close()
 			var bal int
-			_ = db.QueryRow(`SELECT credits FROM entitlements WHERE user_id=?`, tgKey).Scan(&bal)
+			linkedKey := int64(0)
+			if u.Platform == "max" {
+				linkedKey = u.ID
+			} else {
+				linkedKey = s.store.LinkedMax(tgKey)
+			}
+			_ = db.QueryRow(`SELECT COALESCE(SUM(credits),0) FROM entitlements WHERE user_id=? OR user_id=?`, tgKey, linkedKey).Scan(&bal)
 			resp["import_balance"] = bal
 			// статус комментариев по каждой связке
 			for i := range cps {

@@ -44,12 +44,12 @@ func (s *server) handleComments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Антиспам мини-апп-комментов (если включён для канала связки): быстрый regex.
-		// В режиме debug ничего не режем — только логируем разбор.
+		// Только enforce отклоняет комментарий; observe/debug лишь фиксируют вердикт.
 		if chID := channelOfPostID(in.PostID); chID != 0 {
 			if on, mode := s.store.GetAntispam(chID); on {
 				if spam, why := commentLooksSpam(in.Text); spam {
-					if mode == "debug" {
-						log.Printf("comment [debug] WOULD reject post=%s: %s", in.PostID, why)
+					if mode != "enforce" {
+						log.Printf("comment [%s] WOULD reject post=%s: %s", mode, in.PostID, why)
 					} else {
 						log.Printf("comment rejected (spam) post=%s: %s", in.PostID, why)
 						writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Комментарий похож на спам и не опубликован."})

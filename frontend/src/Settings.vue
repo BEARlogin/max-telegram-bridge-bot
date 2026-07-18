@@ -6,7 +6,7 @@ import {
   getSettings, subscribePro, cancelPro, resumePro, startTrial, buyPosts,
   deleteCrosspost, setComments, setReplacements, setSyncEdits,
   setGroupPrefix, unbridgeGroup, setAntispam, setGroupAntispam, linkStart,
-  setCrosspostPaused, setGroupPaused,
+  setCrosspostPaused, setGroupPaused, setGroupDirection,
   getBlocks, unbanUser, checkBotAdmin, initData,
   addGroupRule, delGroupRule, deleteMirror, buySlots, previewSlots, reduceSlots,
 } from './api.js'
@@ -202,6 +202,18 @@ async function toggleGroupPause(g) {
   catch (e) { flash(e.message || 'Не удалось сохранить') }
   finally { u.busy = false }
 }
+async function setGroupDir(g, dir) {
+  if ((g.direction || 'both') === dir) return
+  if (!isPro.value) { flash('Направление пересылки — PRO-функция'); return }
+  const u = gUi(g)
+  if (u.busy) return
+  u.busy = true
+  const prev = g.direction
+  g.direction = dir
+  try { await setGroupDirection(g.tg_chat_id, dir); flash('Направление обновлено') }
+  catch (e) { g.direction = prev; flash(e.message || 'Не удалось сохранить') }
+  finally { u.busy = false }
+}
 async function doUnbridge(g) {
   const u = gUi(g)
   if (u.busy) return
@@ -235,7 +247,7 @@ async function delAsRule(g, rid) {
 
 function gAsOf(g) {
   const u = gUi(g)
-  if (!u.as) u.as = { mode: g.antispam_mode || 'enforce', link_delay_h: 24, trust_msgs: 3, strike_limit: g.strike_limit || 2, ban_after: g.ban_after || 3, action: g.action || 'mute', mute_minutes: g.mute_minutes || 60, warn: !!g.warn, notify: g.notify || 'ban', captcha: !!g.captcha, antiraid: !!g.antiraid, block_words: g.block_words || '', block_cats: g.block_cats || '', del_service: !!g.del_service, tone: g.tone || 'strict' }
+  if (!u.as) u.as = { mode: g.antispam_mode || 'enforce', link_delay_h: 24, trust_msgs: 3, strike_limit: g.strike_limit || 2, ban_after: g.ban_after || 3, action: g.action || 'mute', mute_minutes: g.mute_minutes || 60, warn: !!g.warn, notify: g.notify || 'ban', captcha: !!g.captcha, antiraid: !!g.antiraid, profile_guard: !!g.profile_guard, block_words: g.block_words || '', block_cats: g.block_cats || '', del_service: !!g.del_service, tone: g.tone || 'strict' }
   return u.as
 }
 async function toggleGroupAntispam(g) {
@@ -391,8 +403,8 @@ async function doUnban(b) {
   try {
     await unbanUser(b.platform, b.chat_id, b.user_id)
     blocks.value = blocks.value.filter(x => bKey(x) !== k)
-    flash('Разбанен')
-  } catch (e) { flash(e.message || 'Не удалось разбанить') } finally { blockBusy[k] = false }
+	    flash(b.action === 'kick' ? 'Запись удалена' : (b.action === 'ban' ? 'Пользователь разбанен' : 'Мут снят'))
+	  } catch (e) { flash(e.message || 'Не удалось отменить ограничение') } finally { blockBusy[k] = false }
 }
 
 async function recheckCp(c) {
@@ -431,7 +443,7 @@ async function tryTrial() {
   try {
     await startTrial()
     await load()
-    flash('PRO-триал активирован на 7 дней 🎉')
+    flash('PRO-триал активирован на 7 дней. Для общего PRO в Telegram и MAX свяжите аккаунты через /link в MAX-боте.')
   } catch (e) {
     flash(e.message || 'Не удалось активировать триал')
   } finally {
@@ -481,6 +493,63 @@ function fmtDate(unix) {
   return new Date(unix * 1000).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+// reasonLabel — превращает машинный код причины бана в понятную человеку фразу.
+// Формат причины: "<префикс>: <код>,<код>" либо просто "<код>,<код>" либо готовая фраза.
+const REASON_PREFIX = {
+  'join-profile-channel': 'приманка в профиле (описание канала)',
+  'join-profile': 'имя/юзернейм-приманка',
+}
+const REASON_CODE = {
+  'phone': 'номер телефона',
+  'bot-promo': 'ссылка на бота',
+  'shortener': 'сокращённая ссылка',
+  'contact-funnel': '«пишите менеджеру/организатору»',
+  'funnel': 'предложение скинуть инфопродукт',
+  'freebie': 'бесплатная раздача инфопродукта',
+  'begging': 'сбор денег/попрошайничество',
+  'link-new': 'ссылка от новичка',
+  'external-reply': 'цитата чужого канала',
+  'invisible': 'невидимые символы',
+  'rtl': 'переворот текста (RTL)',
+  'mixed-script': 'смешанные алфавиты',
+  'spacing': 'разрядка слов',
+  'digit-in-word': 'цифры внутри слов',
+  'emoji-letters': 'слово из эмодзи',
+  'caps': 'сплошной капс',
+  'emoji-flood': 'много эмодзи',
+  'emoji-junk': 'эмодзи без текста',
+  'repeat': 'повтор символов',
+  'kw-hard': 'стоп-слово',
+  'kw-soft': 'стоп-слово',
+  'kw-custom': 'стоп-слово чата',
+  'spam': 'спам',
+}
+function mapCode(code) {
+  const c = code.trim()
+  return REASON_CODE[c] || c
+}
+function reasonLabel(reason) {
+  if (!reason) return ''
+  const r = reason.trim()
+  const ci = r.indexOf(':')
+  if (ci > 0) {
+    const prefix = r.slice(0, ci).trim()
+    const rest = r.slice(ci + 1).trim()
+    const head = REASON_PREFIX[prefix]
+    if (head) {
+      // Остаток может быть списком кодов или уже готовой фразой.
+      const parts = rest.split(',').map(mapCode)
+      const known = rest.split(',').every(c => REASON_CODE[c.trim()])
+      return known ? head + ': ' + parts.join(', ') : head + ': ' + rest
+    }
+  }
+  // Без известного префикса: если это список кодов — маппим, иначе показываем как есть.
+  if (/^[a-z0-9,\- ]+$/i.test(r) && r.split(',').some(c => REASON_CODE[c.trim()])) {
+    return r.split(',').map(mapCode).join(', ')
+  }
+  return r
+}
+
 async function buy() {
   if (buying.value) return
   buying.value = true
@@ -522,7 +591,7 @@ async function togglePause(c) {
 // Настройки антиспама держим в ui-объекте связки (с дефолтами).
 function asOf(c) {
   const u = uiOf(c)
-  if (!u.as) u.as = { mode: c.antispam_mode || 'enforce', link_delay_h: 24, trust_msgs: 3, strike_limit: c.strike_limit || 2, ban_after: c.ban_after || 3, action: c.action || 'mute', mute_minutes: c.mute_minutes || 60, warn: !!c.warn, notify: c.notify || 'ban', captcha: !!c.captcha, antiraid: !!c.antiraid, block_words: c.block_words || '', block_cats: c.block_cats || '', del_service: !!c.del_service }
+  if (!u.as) u.as = { mode: c.antispam_mode || 'enforce', link_delay_h: 24, trust_msgs: 3, strike_limit: c.strike_limit || 2, ban_after: c.ban_after || 3, action: c.action || 'mute', mute_minutes: c.mute_minutes || 60, warn: !!c.warn, notify: c.notify || 'ban', captcha: !!c.captcha, antiraid: !!c.antiraid, profile_guard: !!c.profile_guard, block_words: c.block_words || '', block_cats: c.block_cats || '', del_service: !!c.del_service }
   return u.as
 }
 async function toggleAntispam(c) {
@@ -628,6 +697,9 @@ async function saveRepl(c) {
       <div v-if="!isPro" v-show="!anyOpen" class="cta">
         <div class="cta-title">🚀 Откройте PRO</div>
         <div class="cta-sub">5 слотов на мосты, зеркала и каналы (с докупкой), комментарии под постами, антиспам в группах, без подписи бота.</div>
+        <div class="consent-terms" style="margin-bottom:10px">
+          ℹ️ PRO активируется на аккаунте оплаты. Чтобы подписка, слоты и баланс были общими в Telegram и MAX, после оплаты отправьте <b>/link</b> в личке MAX-бота и привяжите Telegram.
+        </div>
         <button v-if="!trialUsed" class="btn accent full" :disabled="subscribing" @click="tryTrial">
           {{ subscribing ? '…' : '🎁 Попробовать 7 дней бесплатно' }}
         </button>
@@ -659,6 +731,9 @@ async function saveRepl(c) {
           <span class="chev">{{ proOpen ? '▾' : '▸' }}</span>
         </button>
         <div v-if="proOpen" class="pro-body">
+          <div class="muted small" style="margin-bottom:10px">
+            ℹ️ PRO привязан к аккаунту оплаты. Для общего PRO в Telegram и MAX отправьте <b>/link</b> в личке MAX-бота и привяжите Telegram.
+          </div>
           <!-- Привязанная карта + замена (полная оплата новой картой) -->
           <div v-if="cardPan" class="card-row">
             <span class="muted small">💳 Карта •••• {{ cardLast4(cardPan) }}</span>
@@ -898,10 +973,14 @@ async function saveRepl(c) {
               <input type="checkbox" v-model="asOf(c).warn" />
               <span>Предупреждать нарушителя в чате (удаляем сообщение и пишем «нарушаете»), пока не дошло до наказания</span>
             </label>
-            <label class="as-check">
-              <input type="checkbox" v-model="asOf(c).captcha" />
-              <span>🤖 Капча на входе (TG): новый участник мьютится до нажатия «Я не бот», не нажал — кик</span>
-            </label>
+			<label class="as-check">
+			  <input type="checkbox" v-model="asOf(c).captcha" />
+			  <span>🤖 Капча на входе (TG): новый участник мьютится до нажатия «Я не бот», не нажал — кик</span>
+			</label>
+			<label class="as-check">
+			  <input type="checkbox" v-model="asOf(c).profile_guard" />
+				  <span>Проверять профиль при входе (TG): подозрительный профиль получает выбранное выше наказание; в «репорт»/«тест» — только уведомление</span>
+			</label>
             <label class="as-check">
               <input type="checkbox" v-model="asOf(c).antiraid" />
               <span>🛡 Анти-рейд (TG): при массовом входе — новичков молча мьютим на случайное время (1–6 ч), чтобы не было синхронного спама</span>
@@ -1037,7 +1116,7 @@ async function saveRepl(c) {
           <span class="body">
             <span class="name" v-if="g.standalone">{{ g.tg_title || ('TG ' + g.tg_chat_id) }}</span>
             <span class="name" v-else>{{ g.tg_title || ('TG ' + g.tg_chat_id) }} ↔ {{ g.max_title || ('MAX ' + g.max_chat_id) }}</span>
-            <span class="muted small">{{ g.standalone ? 'TG-группа · антиспам без моста' : 'TG-группа ↔ MAX-чат' }}<template v-if="g.antispam"> · 🛡</template></span>
+            <span class="muted small">{{ g.standalone ? 'TG-группа · антиспам без моста' : 'TG-группа ↔ MAX-чат' }}<template v-if="!g.standalone && g.direction && g.direction !== 'both'"> · {{ dirLabel(g.direction) }}</template><template v-if="g.antispam"> · 🛡</template></span>
           </span>
           <span class="chev">{{ gUi(g).open ? '▾' : '▸' }}</span>
         </button>
@@ -1053,6 +1132,15 @@ async function saveRepl(c) {
               <span class="tg-desc muted">Временно остановить зеркалирование сообщений (в обе стороны). Связка не удаляется.</span>
             </span>
             <span class="switch" :class="{ on: g.paused }"></span>
+          </div>
+          <div v-if="!g.standalone" class="as-settings">
+            <div class="repl-dir">↔️ Направление пересылки <span class="muted small" v-if="!isPro">(PRO)</span></div>
+            <div class="as-row">
+              <button type="button" :class="{ sel: (g.direction || 'both') === 'both' }" @click="setGroupDir(g, 'both')">TG ↔ MAX</button>
+              <button type="button" :class="{ sel: (g.direction || 'both') === 'tg>max' }" @click="setGroupDir(g, 'tg>max')">TG → MAX</button>
+              <button type="button" :class="{ sel: (g.direction || 'both') === 'max>tg' }" @click="setGroupDir(g, 'max>tg')">MAX → TG</button>
+            </div>
+            <p class="repl-hint muted" style="margin-top:0">Односторонний режим (напр. TG → MAX) удобен, когда несколько TG-групп сливаются в одну MAX-группу.</p>
           </div>
           <div class="toggle-row" @click="toggleGroupAntispam(g)">
             <span class="tg-label">🛡 Антиспам <span class="muted small" v-if="!isPro">(PRO)</span>
@@ -1106,10 +1194,14 @@ async function saveRepl(c) {
               <input type="checkbox" v-model="gAsOf(g).warn" />
               <span>Предупреждать нарушителя в чате (удаляем сообщение и пишем «нарушаете»), пока не дошло до наказания</span>
             </label>
-            <label class="as-check">
-              <input type="checkbox" v-model="gAsOf(g).captcha" />
-              <span>🤖 Капча на входе (TG): новый участник мьютится до нажатия «Я не бот», не нажал — кик</span>
-            </label>
+			<label class="as-check">
+			  <input type="checkbox" v-model="gAsOf(g).captcha" />
+			  <span>🤖 Капча на входе (TG): новый участник мьютится до нажатия «Я не бот», не нажал — кик</span>
+			</label>
+			<label class="as-check">
+			  <input type="checkbox" v-model="gAsOf(g).profile_guard" />
+			  <span>Проверять профиль при входе (TG): подозрительный профиль получает выбранное выше наказание; в «репорт»/«тест» — только уведомление</span>
+			</label>
             <label class="as-check">
               <input type="checkbox" v-model="gAsOf(g).antiraid" />
               <span>🛡 Анти-рейд (TG): при массовом входе — новичков молча мьютим на случайное время (1–6 ч), чтобы не было синхронного спама</span>
@@ -1204,17 +1296,18 @@ async function saveRepl(c) {
       <p v-if="!blocks.length" class="muted small">Пока пусто — здесь появятся те, кого антиспам наказал в режиме «удалять» (в «репорт»/«тест» баны не выдаются).</p>
       <div v-for="b in blocks" :key="bKey(b)" class="card">
         <div class="card-head static">
-          <span class="row-icon">{{ b.action === 'ban' ? '⛔' : '🔇' }}</span>
+			  <span class="row-icon">{{ b.action === 'ban' ? '⛔' : (b.action === 'kick' ? '↪' : '🔇') }}</span>
           <span class="body">
             <span class="name">{{ b.title || (b.platform.toUpperCase() + ' ' + b.chat_id) }}</span>
             <span class="muted small">
-              {{ b.action === 'ban' ? 'бан' : 'мут' }} · {{ b.platform.toUpperCase() }} · юзер {{ b.user_id }} · {{ fmtDate(b.at) }}
-              <template v-if="b.reason"> · {{ b.reason }}</template>
+			      {{ b.action === 'ban' ? 'бан' : (b.action === 'kick' ? 'удалён' : 'мут') }} · {{ b.platform.toUpperCase() }} · юзер {{ b.user_id }} · {{ fmtDate(b.at) }}
+              <template v-if="b.reason"> · {{ reasonLabel(b.reason) }}</template>
             </span>
-            <span v-if="b.text" class="block-text">«{{ b.text }}»</span>
+            <span v-if="b.text" class="block-text"><b>Снимок профиля:</b>
+{{ b.text }}</span>
           </span>
           <button class="btn ghost sm" :disabled="blockBusy[bKey(b)]" @click="doUnban(b)">
-            {{ blockBusy[bKey(b)] ? '…' : 'Разбанить' }}
+			    {{ blockBusy[bKey(b)] ? '…' : (b.action === 'kick' ? 'Убрать запись' : (b.action === 'ban' ? 'Разбанить' : 'Снять мут')) }}
           </button>
         </div>
       </div>
@@ -1300,7 +1393,7 @@ h2 { font-size: 15px; margin: 20px 0 8px; }
 .repl-scope button.sel { background: var(--accent); color: #fff; border-color: var(--accent); }
 .repl-rule .x { flex: 0 0 auto; background: none; border: 0; color: #e5484d; font-size: 16px; cursor: pointer; padding: 2px 4px; }
 .repl-hint { font-size: 12px; line-height: 1.45; margin: 4px 0 10px; }
-.block-text { display: block; margin-top: 3px; font-size: 12px; line-height: 1.4; opacity: 0.8; word-break: break-word; max-height: 3.6em; overflow: hidden; }
+.block-text { display: block; margin-top: 5px; font-size: 12px; line-height: 1.4; opacity: 0.9; overflow-wrap: anywhere; white-space: pre-wrap; }
 .card-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .admin-link { margin: 10px 0; }
 .as-check { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0; font-size: 14px; line-height: 1.45; cursor: pointer; min-height: 28px; }

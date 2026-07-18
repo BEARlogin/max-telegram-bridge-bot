@@ -109,6 +109,7 @@ func main() {
 	mux.HandleFunc("/api/crosspost/pause", srv.handleSetPaused)               // пауза связки кросспоста (владелец)
 	mux.HandleFunc("/api/group/prefix", srv.handleSetGroupPrefix)             // префикс [TG]/[MAX] (админ группы)
 	mux.HandleFunc("/api/group/pause", srv.handleSetGroupPaused)             // пауза связки группы (админ)
+	mux.HandleFunc("/api/group/direction", srv.handleSetGroupDirection)       // направление пересылки моста (PRO, админ)
 	mux.HandleFunc("/api/group/unbridge", srv.handleUnbridgeGroup)            // разорвать связку группы (админ)
 	mux.HandleFunc("/api/group/antispam", srv.handleSetGroupAntispam)         // антиспам группы (PRO, админ)
 	mux.HandleFunc("/api/group/antispam/rule/add", srv.handleAddGroupRule)    // добавить кастом-правило

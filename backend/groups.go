@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -21,26 +22,28 @@ const maxGroupCandidates = 60
 // админ, не показываем — иначе утекли бы чужие связки.
 
 type groupInfo struct {
-	TgChatID     int64  `json:"tg_chat_id"`
-	MaxChatID    int64  `json:"max_chat_id"`
-	TgTitle      string `json:"tg_title"`
-	MaxTitle     string `json:"max_title"`
-	Standalone   bool   `json:"standalone"` // группа без моста — только антиспам
-	Prefix       bool   `json:"prefix"`
-	Paused       bool   `json:"paused"`
-	Antispam     bool   `json:"antispam"`
-	AntispamMode string `json:"antispam_mode"`
-	StrikeLimit  int    `json:"strike_limit"`
-	BanAfter     int    `json:"ban_after"`
-	Action       string `json:"action"`
-	MuteMinutes  int    `json:"mute_minutes"`
-	Warn         bool   `json:"warn"`
-	Notify       string `json:"notify"`
-	Captcha      bool   `json:"captcha"`
-	Antiraid     bool   `json:"antiraid"`
-	BlockWords   string `json:"block_words"`
-	BlockCats    string `json:"block_cats"`
-	DelService   bool   `json:"del_service"`
+	TgChatID     int64        `json:"tg_chat_id"`
+	MaxChatID    int64        `json:"max_chat_id"`
+	TgTitle      string       `json:"tg_title"`
+	MaxTitle     string       `json:"max_title"`
+	Standalone   bool         `json:"standalone"` // группа без моста — только антиспам
+	Prefix       bool         `json:"prefix"`
+	Paused       bool         `json:"paused"`
+	Direction    string       `json:"direction"` // both | tg>max | max>tg (PRO), пусто у standalone
+	Antispam     bool         `json:"antispam"`
+	AntispamMode string       `json:"antispam_mode"`
+	StrikeLimit  int          `json:"strike_limit"`
+	BanAfter     int          `json:"ban_after"`
+	Action       string       `json:"action"`
+	MuteMinutes  int          `json:"mute_minutes"`
+	Warn         bool         `json:"warn"`
+	Notify       string       `json:"notify"`
+	Captcha      bool         `json:"captcha"`
+	Antiraid     bool         `json:"antiraid"`
+	ProfileGuard bool         `json:"profile_guard"`
+	BlockWords   string       `json:"block_words"`
+	BlockCats    string       `json:"block_cats"`
+	DelService   bool         `json:"del_service"`
 	Tone         string       `json:"tone"`
 	Rules        []asRuleInfo `json:"rules"`
 	BotAdmin     bool         `json:"bot_admin"` // бот админ в группе (для модерации)
@@ -298,11 +301,37 @@ func userGroups(userID, effTg int64) []groupInfo {
 		}
 	}
 
+	// Направление bridge (both|tg>max|max>tg) — хранится в addon.db (pair_direction).
+	// Отсутствие строки = legacy both. Standalone-группам направление не показываем.
+	dirs := map[int64]string{}
+	if addonDBPath != "" {
+		if adb, err := sql.Open("sqlite", "file:"+addonDBPath+"?mode=ro&_pragma=busy_timeout(3000)"); err == nil {
+			if rows, err := adb.Query(`SELECT tg_chat_id, direction FROM pair_direction`); err == nil {
+				for rows.Next() {
+					var t int64
+					var d string
+					if rows.Scan(&t, &d) == nil {
+						dirs[t] = d
+					}
+				}
+				rows.Close()
+			}
+			adb.Close()
+		}
+	}
+
 	// статус антиспама по TG-стороне каждой группы + права бота (если антиспам включён)
 	for i := range out {
+		if !out[i].Standalone {
+			if d := dirs[out[i].TgChatID]; d != "" {
+				out[i].Direction = d
+			} else {
+				out[i].Direction = "both"
+			}
+		}
 		out[i].Antispam, out[i].AntispamMode = antispamStatus("tg", out[i].TgChatID)
 		pol := antispamPolicy("tg", out[i].TgChatID)
-		out[i].StrikeLimit, out[i].BanAfter, out[i].Action, out[i].MuteMinutes, out[i].Warn, out[i].Notify, out[i].Captcha, out[i].Antiraid, out[i].BlockWords, out[i].BlockCats, out[i].DelService = pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.BlockWords, pol.BlockCats, pol.DelService
+		out[i].StrikeLimit, out[i].BanAfter, out[i].Action, out[i].MuteMinutes, out[i].Warn, out[i].Notify, out[i].Captcha, out[i].Antiraid, out[i].ProfileGuard, out[i].BlockWords, out[i].BlockCats, out[i].DelService = pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.ProfileGuard, pol.BlockWords, pol.BlockCats, pol.DelService
 		out[i].Tone = pol.Tone
 		out[i].Rules = readAntispamRules("tg", out[i].TgChatID)
 		if out[i].Antispam {
@@ -405,6 +434,83 @@ func (s *server) handleSetGroupPaused(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("group pause uid=%d tg=%d paused=%v", u.ID, in.TgChatID, in.Paused)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// normalizeGroupDirection — допустимые значения направления bridge; "" при неверном.
+func normalizeGroupDirection(d string) string {
+	switch d {
+	case "tg>max", "max>tg", "both":
+		return d
+	default:
+		return ""
+	}
+}
+
+// handleSetGroupDirection — направление пересылки моста группы (both|tg>max|max>tg).
+// PRO-функция (как /bridge direction в боте). Хранится в addon.db (pair_direction),
+// поэтому core-схема pairs остаётся публичной/бесплатной.
+func (s *server) handleSetGroupDirection(w http.ResponseWriter, r *http.Request) {
+	u := authUser(r)
+	if !u.Valid {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var in struct {
+		TgChatID  int64  `json:"tg_chat_id"`
+		Direction string `json:"direction"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.TgChatID == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "tg_chat_id required"})
+		return
+	}
+	dir := normalizeGroupDirection(strings.TrimSpace(in.Direction))
+	if dir == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "direction must be both|tg>max|max>tg"})
+		return
+	}
+	if !ownsGroup(u.ID, in.TgChatID) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "вы не админ этой группы"})
+		return
+	}
+	if !s.userIsPro(u.ID) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "Направление пересылки — PRO-функция"})
+		return
+	}
+	// max_chat_id связки резолвим на сервере (не доверяем клиенту): pair_direction PK — (tg,max).
+	var maxChatID int64
+	if bridgeDBPath != "" {
+		if rdb, err := sql.Open("sqlite", "file:"+bridgeDBPath+"?mode=ro&_pragma=busy_timeout(3000)"); err == nil {
+			rdb.QueryRow(`SELECT max_chat_id FROM pairs WHERE tg_chat_id=?`, in.TgChatID).Scan(&maxChatID)
+			rdb.Close()
+		}
+	}
+	if maxChatID == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "у группы нет моста"})
+		return
+	}
+	if addonDBPath == "" {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db"})
+		return
+	}
+	db, err := openRW(addonDBPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db"})
+		return
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO pair_direction (tg_chat_id, max_chat_id, direction, updated_by, updated_at)
+			VALUES (?, ?, ?, ?, strftime('%s','now'))
+		ON CONFLICT(tg_chat_id, max_chat_id) DO UPDATE SET
+			direction = excluded.direction,
+			updated_by = excluded.updated_by,
+			updated_at = excluded.updated_at`,
+		in.TgChatID, maxChatID, dir, u.ID); err != nil {
+		log.Printf("group direction err uid=%d tg=%d: %v", u.ID, in.TgChatID, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "save failed"})
+		return
+	}
+	log.Printf("group direction uid=%d tg=%d max=%d dir=%s", u.ID, in.TgChatID, maxChatID, dir)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
