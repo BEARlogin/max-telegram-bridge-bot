@@ -413,11 +413,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 
 			// Команды MAX-диалога, обрабатываемые аддоном. Ядро не знает семантику.
-			if isDialog && strings.HasPrefix(text, "/") && b.maxAddonCommand(ctx, msgUpd.Message.Sender.UserId, chatID, text) {
+			if isDialog && strings.HasPrefix(text, "/") && b.maxAddonCommand(ctx, msgUpd.Message.Sender.UserId, msgUpd.Message.Sender.UserId, text) {
 				continue
 			}
 			if isDialog && !strings.HasPrefix(text, "/") &&
-				b.maxAddonText(ctx, msgUpd.Message.Sender.UserId, chatID, text) {
+				b.maxAddonText(ctx, msgUpd.Message.Sender.UserId, msgUpd.Message.Sender.UserId, text) {
 				continue
 			}
 			// Групповые команды расширения.
