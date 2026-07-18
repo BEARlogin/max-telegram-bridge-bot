@@ -406,6 +406,8 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			// Запоминаем юзера при личном сообщении
 			if isDialog && msgUpd.Message.Sender.UserId != 0 {
 				b.repo.TouchUser(msgUpd.Message.Sender.UserId, "max", msgUpd.Message.Sender.Username, msgUpd.Message.Sender.Name)
+				b.observePrivateUser(ctx, "max", msgUpd.Message.Sender.UserId,
+					msgUpd.Message.Sender.Name, msgUpd.Message.Sender.Username)
 			}
 			// Запоминаем MAX-чат/канал (для мастера линковки в кабинете).
 			if !isDialog {

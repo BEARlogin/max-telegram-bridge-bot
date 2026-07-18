@@ -214,6 +214,18 @@ func (b *Bridge) maxAddonText(ctx context.Context, userID, chatID int64, text st
 	return ok && h.HandleMaxText(ctx, userID, chatID, text)
 }
 
+// observePrivateUser передаёт расширению актуальный публичный профиль собеседника.
+// Узкий generic-хук не задаёт семантику использования и сохраняет совместимость
+// с реализациями Addon, которым сведения о пользователях не нужны.
+func (b *Bridge) observePrivateUser(ctx context.Context, platform string, userID int64, name, username string) {
+	h, ok := b.addon.(interface {
+		ObservePrivateUser(context.Context, string, int64, string, string)
+	})
+	if ok {
+		h.ObservePrivateUser(ctx, platform, userID, name, username)
+	}
+}
+
 // maxAddonCallbackMessage передаёт расширению callback вместе с исходным mid.
 // Узкий optional-интерфейс сохраняет совместимость со сторонними Addon.
 func (b *Bridge) maxAddonCallbackMessage(ctx context.Context, userID, chatID int64, callbackID, data, mid string) bool {

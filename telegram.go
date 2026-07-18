@@ -213,6 +213,8 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			// Запоминаем юзера при личном сообщении
 			if msg.Chat.Type == "private" && msg.From != nil {
 				b.repo.TouchUser(msg.From.ID, "tg", msg.From.UserName, msg.From.FirstName)
+				b.observePrivateUser(ctx, "tg", msg.From.ID,
+					strings.TrimSpace(msg.From.FirstName+" "+msg.From.LastName), msg.From.UserName)
 			}
 
 			// Опциональные аддоны (если подключены build-тегом) первыми получают
