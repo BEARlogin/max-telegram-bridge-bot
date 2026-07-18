@@ -210,10 +210,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			// Кнопка «Начать» в MAX (bot_started) — отвечаем приветствием, как на /start.
 			// Без этого новый бот молчит на старте (текст «/start» MAX не шлёт).
 			if bs, isStart := upd.(*maxschemes.BotStartedUpdate); isStart {
-				slog.Info("MAX bot started", "maxChat", bs.GetChatID(), "user", bs.GetUserID(), "hasPayload", bs.Payload != "")
-				if b.maxAddonStartPayload(ctx, bs.GetUserID(), bs.GetChatID(), bs.Payload) {
-					continue
-				}
+				slog.Info("MAX bot started", "maxChat", bs.GetChatID(), "user", bs.GetUserID())
 				b.sendMaxStart(ctx, bs.GetChatID())
 				continue
 			}
