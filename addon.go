@@ -214,6 +214,15 @@ func (b *Bridge) maxAddonText(ctx context.Context, userID, chatID int64, text st
 	return ok && h.HandleMaxText(ctx, userID, chatID, text)
 }
 
+// maxAddonStartPayload отдаёт аддону payload MAX deep link. Узкий интерфейс
+// сохраняет публичный Addon совместимым с реализациями без deep links.
+func (b *Bridge) maxAddonStartPayload(ctx context.Context, userID, chatID int64, payload string) bool {
+	h, ok := b.addon.(interface {
+		HandleMaxStartPayload(context.Context, int64, int64, string) bool
+	})
+	return ok && h.HandleMaxStartPayload(ctx, userID, chatID, payload)
+}
+
 // chatShared — отдать аддону выбранный нативной кнопкой чат (если подключён). true ⇒ обработано.
 func (b *Bridge) chatShared(ctx context.Context, userID int64, requestID int, sharedChatID int64, title string) bool {
 	return b.addon != nil && b.addon.HandleChatShared(ctx, userID, requestID, sharedChatID, title)
