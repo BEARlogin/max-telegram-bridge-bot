@@ -205,6 +205,15 @@ func (b *Bridge) maxAddonCommand(ctx context.Context, userID, chatID int64, text
 	return b.addon != nil && b.addon.HandleMaxCommand(ctx, userID, chatID, text)
 }
 
+// maxAddonText — опциональный хук свободного текста в MAX-диалоге. Он вынесен
+// в узкий интерфейс, чтобы не ломать сторонние Addon-реализации, которым ввод не нужен.
+func (b *Bridge) maxAddonText(ctx context.Context, userID, chatID int64, text string) bool {
+	h, ok := b.addon.(interface {
+		HandleMaxText(context.Context, int64, int64, string) bool
+	})
+	return ok && h.HandleMaxText(ctx, userID, chatID, text)
+}
+
 // chatShared — отдать аддону выбранный нативной кнопкой чат (если подключён). true ⇒ обработано.
 func (b *Bridge) chatShared(ctx context.Context, userID int64, requestID int, sharedChatID int64, title string) bool {
 	return b.addon != nil && b.addon.HandleChatShared(ctx, userID, requestID, sharedChatID, title)

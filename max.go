@@ -416,6 +416,10 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			if isDialog && strings.HasPrefix(text, "/") && b.maxAddonCommand(ctx, msgUpd.Message.Sender.UserId, chatID, text) {
 				continue
 			}
+			if isDialog && !strings.HasPrefix(text, "/") &&
+				b.maxAddonText(ctx, msgUpd.Message.Sender.UserId, chatID, text) {
+				continue
+			}
 			// Групповые команды расширения.
 			if !isDialog && strings.HasPrefix(text, "/") && b.addon != nil &&
 				b.addon.HandleMaxGroupCommand(ctx, msgUpd.Message.Sender.UserId, chatID, string(msgUpd.Message.Recipient.ChatType), text) {
