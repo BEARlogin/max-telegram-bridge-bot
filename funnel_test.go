@@ -79,3 +79,22 @@ func TestMaxMsgDeliveredTo_PerChat(t *testing.T) {
 		t.Fatal("пустой mid должен давать false")
 	}
 }
+
+func TestMaxMessageAlreadyMappedSuppressesTgToMaxEcho(t *testing.T) {
+	repo := testRepo(t)
+	b := &Bridge{repo: repo}
+
+	if b.maxMessageAlreadyMapped("") {
+		t.Fatal("empty mid must not be treated as mapped")
+	}
+	if b.maxMessageAlreadyMapped("mid-imported") {
+		t.Fatal("unknown mid must not be treated as mapped")
+	}
+
+	// Channel import relays through the user's scratch DM, so the mapped TG chat
+	// may differ from the TG channel paired with the MAX destination.
+	repo.SaveMsg(332817449, 254414, -76980483059929, "mid-imported", 0)
+	if !b.maxMessageAlreadyMapped("mid-imported") {
+		t.Fatal("TG->MAX result must suppress its MAX channel webhook echo")
+	}
+}

@@ -394,6 +394,15 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			slog.Debug("MAX msg received", "uid", msgUpd.Message.Sender.UserId, "chat", chatID, "type", msgUpd.Message.Recipient.ChatType,
 				"textLen", len(body.Text), "att", len(body.Attachments), "rawAtt", len(body.RawAttachments), "markups", len(body.Markups))
 
+			// MAX channel webhooks may report bot-created posts with sender uid=0, so the
+			// sender-based self-bot check cannot stop the echo. A known mid means this
+			// MAX message is already mapped to a Telegram message: either we just sent
+			// it TG->MAX or this is a replay of an already delivered MAX->TG update.
+			if b.maxMessageAlreadyMapped(body.Mid) {
+				slog.Info("skip mapped MAX message (echo/replay)", "maxChat", chatID, "mid", body.Mid)
+				continue
+			}
+
 			// Запоминаем юзера при личном сообщении
 			if isDialog && msgUpd.Message.Sender.UserId != 0 {
 				b.repo.TouchUser(msgUpd.Message.Sender.UserId, "max", msgUpd.Message.Sender.Username, msgUpd.Message.Sender.Name)
@@ -1041,6 +1050,14 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption, true)
 		}
 	}
+}
+
+func (b *Bridge) maxMessageAlreadyMapped(mid string) bool {
+	if mid == "" {
+		return false
+	}
+	_, _, _, ok := b.repo.LookupTgMsgID(mid)
+	return ok
 }
 
 func (b *Bridge) suppressMaxDelete(mid string) {
