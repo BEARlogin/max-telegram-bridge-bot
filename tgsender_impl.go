@@ -67,6 +67,14 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 func (s *tgBotSender) BotUsername() string { return s.username }
 func (s *tgBotSender) BotToken() string    { return s.token }
 
+func (s *tgBotSender) GetBusinessConnection(ctx context.Context, connectionID string) (*TGBusinessConnection, error) {
+	c, err := s.b.GetBusinessConnection(ctx, &bot.GetBusinessConnectionParams{BusinessConnectionID: connectionID})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	return convertBusinessConnection(c), nil
+}
+
 // --- Updates ---
 
 func (s *tgBotSender) StartPolling(ctx context.Context) <-chan TGUpdate {
@@ -789,24 +797,30 @@ func convertUpdate(u *models.Update) TGUpdate {
 		BusinessMessage:       convertMsg(u.BusinessMessage),
 		EditedBusinessMessage: convertMsg(u.EditedBusinessMessage),
 	}
-	if u.BusinessConnection != nil {
-		out.BusinessConnection = &TGBusinessConnection{
-			ID:         u.BusinessConnection.ID,
-			UserID:     u.BusinessConnection.User.ID,
-			UserChatID: u.BusinessConnection.UserChatID,
-			IsEnabled:  u.BusinessConnection.IsEnabled,
-		}
-		if u.BusinessConnection.Rights != nil {
-			out.BusinessConnection.CanReply = u.BusinessConnection.Rights.CanReply
-			out.BusinessConnection.CanRead = u.BusinessConnection.Rights.CanReadMessages
-		}
-	}
+	out.BusinessConnection = convertBusinessConnection(u.BusinessConnection)
 	if u.DeletedBusinessMessages != nil {
 		out.DeletedBusinessMessages = &TGBusinessMessagesDeleted{
 			ConnectionID: u.DeletedBusinessMessages.BusinessConnectionID,
 			ChatID:       u.DeletedBusinessMessages.Chat.ID,
 			MessageIDs:   append([]int(nil), u.DeletedBusinessMessages.MessageIDs...),
 		}
+	}
+	return out
+}
+
+func convertBusinessConnection(c *models.BusinessConnection) *TGBusinessConnection {
+	if c == nil {
+		return nil
+	}
+	out := &TGBusinessConnection{
+		ID:         c.ID,
+		UserID:     c.User.ID,
+		UserChatID: c.UserChatID,
+		IsEnabled:  c.IsEnabled,
+	}
+	if c.Rights != nil {
+		out.CanReply = c.Rights.CanReply
+		out.CanRead = c.Rights.CanReadMessages
 	}
 	return out
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -233,6 +234,7 @@ func (b *Bridge) addonTgBusinessMessage(ctx context.Context, msg *TGMessage, edi
 	if msg == nil || msg.BusinessConnectionID == "" {
 		return
 	}
+	b.ensureTgBusinessConnection(ctx, msg.BusinessConnectionID)
 	fromID := int64(0)
 	name, username := "", ""
 	if msg.From != nil {
@@ -278,6 +280,28 @@ func (b *Bridge) addonTgBusinessMessage(ctx context.Context, msg *TGMessage, edi
 	if ok {
 		h.HandleTgBusinessMessage(ctx, msg.BusinessConnectionID, msg.Chat.ID, fromID, msg.MessageID, name, username, text, mediaKind, mediaURL, edited)
 	}
+}
+
+func (b *Bridge) ensureTgBusinessConnection(ctx context.Context, connectionID string) {
+	checker, ok := b.addon.(interface {
+		HasTgBusinessConnection(context.Context, string) bool
+	})
+	if !ok || checker.HasTgBusinessConnection(ctx, connectionID) {
+		return
+	}
+	getter, ok := b.tg.(interface {
+		GetBusinessConnection(context.Context, string) (*TGBusinessConnection, error)
+	})
+	if !ok {
+		return
+	}
+	c, err := getter.GetBusinessConnection(ctx, connectionID)
+	if err != nil {
+		slog.Warn("TG business connection recovery failed", "err", err)
+		return
+	}
+	slog.Info("TG business connection recovered", "user", c.UserID, "enabled", c.IsEnabled)
+	b.addonTgBusinessConnection(ctx, c)
 }
 
 func (b *Bridge) addonTgBusinessDeleted(ctx context.Context, d *TGBusinessMessagesDeleted) {
