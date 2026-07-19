@@ -30,7 +30,7 @@ func (b *Bridge) tgStartMenu() (string, *InlineKeyboardMarkup) {
 		),
 	)
 	// Дополнительный раздел приходит от расширения.
-	if strings.TrimSpace(b.extraHelp) != "" {
+	if strings.TrimSpace(b.extraHelp) != "" || len(b.extraHelpPages) > 0 {
 		kb.Rows = append(kb.Rows, NewInlineRow(NewInlineButton("✨ Дополнительные возможности", "help:more")))
 	}
 	// Если задана подробная инструкция (HELP_FILE/help.html) — кнопка на полный текст.
@@ -43,6 +43,31 @@ func (b *Bridge) tgStartMenu() (string, *InlineKeyboardMarkup) {
 // helpBackKb — клавиатура с одной кнопкой «назад в меню».
 func helpBackKb() *InlineKeyboardMarkup {
 	return NewInlineKeyboard(NewInlineRow(NewInlineButton("⬅️ Назад", "help:home")))
+}
+
+func (b *Bridge) extraHelpMenu() (string, *InlineKeyboardMarkup) {
+	if len(b.extraHelpPages) == 0 {
+		return strings.TrimSpace(b.extraHelp), helpBackKb()
+	}
+	text := "✨ <b>Дополнительные возможности</b>\n\nВыберите функцию — внутри описание, ограничения и пошаговая настройка."
+	rows := make([][]InlineKeyboardButton, 0, len(b.extraHelpPages)+1)
+	for _, page := range b.extraHelpPages {
+		if page.ID == "" || page.Button == "" || strings.TrimSpace(page.Text) == "" {
+			continue
+		}
+		rows = append(rows, NewInlineRow(NewInlineButton(page.Button, "help:more:"+page.ID)))
+	}
+	rows = append(rows, NewInlineRow(NewInlineButton("⬅️ Назад", "help:home")))
+	return text, NewInlineKeyboard(rows...)
+}
+
+func (b *Bridge) extraHelpPage(id string) (string, bool) {
+	for _, page := range b.extraHelpPages {
+		if page.ID == id && strings.TrimSpace(page.Text) != "" {
+			return page.Text, true
+		}
+	}
+	return "", false
 }
 
 func (b *Bridge) helpGroupsText() string {
@@ -108,7 +133,7 @@ func (b *Bridge) helpFaqText() string {
 		"<b>Что пересылается?</b>\n" +
 		"Текст, фото, видео, голосовые, документы, альбомы, правки.\n\n" +
 		"<b>Нужно ли делать бота админом?</b>\n" +
-		"Да, и в MAX, и в Telegram — иначе бот не видит все сообщения. В каналах — для постинга.\n\n" +
+		"Для обычного двустороннего моста — да, и в MAX, и в Telegram. Для одностороннего зеркала Telegram-группы в MAX Telegram-боту достаточно быть обычным участником; в MAX он должен быть администратором. В каналах права администратора нужны для публикации.\n\n" +
 		"<b>Сообщения не доходят?</b>\n" +
 		"Проверьте, что бот добавлен в нужный чат и является администратором.\n\n" +
 		"💬 Поддержка: https://t.me/+0ucbOj4wBwQzMWNi"
@@ -125,6 +150,15 @@ func (b *Bridge) handleHelpMenuCallback(ctx context.Context, query *TGCallback, 
 
 	var text string
 	var kb *InlineKeyboardMarkup
+	if strings.HasPrefix(data, "help:more:") {
+		if page, ok := b.extraHelpPage(strings.TrimPrefix(data, "help:more:")); ok {
+			text = page
+			kb = NewInlineKeyboard(NewInlineRow(NewInlineButton("⬅️ К возможностям", "help:more")))
+			b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ParseMode: "HTML", ReplyMarkup: kb})
+			b.tg.AnswerCallback(ctx, query.ID, "")
+			return true
+		}
+	}
 	switch data {
 	case "help:home":
 		text, kb = b.tgStartMenu()
@@ -151,8 +185,8 @@ func (b *Bridge) handleHelpMenuCallback(ctx context.Context, query *TGCallback, 
 	case "help:faq":
 		text, kb = b.helpFaqText(), helpBackKb()
 	case "help:more":
-		if h := strings.TrimSpace(b.extraHelp); h != "" {
-			text, kb = h, helpBackKb()
+		if h, menu := b.extraHelpMenu(); h != "" {
+			text, kb = h, menu
 		} else {
 			text, kb = b.tgStartMenu()
 		}

@@ -16,6 +16,23 @@ func TestConvertMsg_Nil(t *testing.T) {
 	}
 }
 
+func TestApplySendMessageOptsRequestsExistingMemberChatWithoutAdmin(t *testing.T) {
+	p := &bot.SendMessageParams{}
+	applySendMessageOpts(p, &SendOpts{RequestChat: &RequestChatSpec{
+		Text:        "Выбрать группу",
+		RequestID:   7302,
+		BotIsMember: true,
+	}})
+	markup, ok := p.ReplyMarkup.(*models.ReplyKeyboardMarkup)
+	if !ok || len(markup.Keyboard) != 1 || len(markup.Keyboard[0]) != 1 {
+		t.Fatalf("reply markup = %#v", p.ReplyMarkup)
+	}
+	req := markup.Keyboard[0][0].RequestChat
+	if req == nil || !req.BotIsMember || req.BotAdministratorRights != nil || req.UserAdministratorRights != nil {
+		t.Fatalf("request chat = %+v", req)
+	}
+}
+
 func TestConvertMsg_Basic(t *testing.T) {
 	m := &models.Message{
 		ID:              42,

@@ -271,10 +271,6 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 
 			if text == "/start" || text == "/help" {
-				if ch := customHelp(); ch != "" {
-					b.tg.SendMessage(ctx, msg.Chat.ID, ch, &SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
-					continue
-				}
 				intro, kb := b.tgStartMenu()
 				b.tg.SendMessage(ctx, msg.Chat.ID, intro,
 					&SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID, ReplyMarkup: kb})

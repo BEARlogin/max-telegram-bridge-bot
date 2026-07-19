@@ -106,8 +106,17 @@ type Bridge struct {
 	extraCommands []BotCommand
 	// extraHelp — доп. блок для /help и /start (заполняет loadAddon). Пусто без аддона.
 	extraHelp string
+	// extraHelpPages — отдельные страницы расширенной справки. Ядро отображает
+	// кнопки и тексты, не зная семантики приватного расширения.
+	extraHelpPages []extraHelpPage
 	// extraDescription — доп. строка к описанию бота (setMyDescription). Пусто без аддона.
 	extraDescription string
+}
+
+type extraHelpPage struct {
+	ID     string
+	Button string
+	Text   string
 }
 
 // NewBridge создаёт экземпляр Bridge.
