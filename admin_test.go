@@ -129,6 +129,22 @@ func TestIsMaxUserAdmin_EmptyList(t *testing.T) {
 	}
 }
 
+func TestIsMaxUserAdminOrOwnerFallsBackToChatOwner(t *testing.T) {
+	admins := []maxschemes.ChatMember{{UserId: 200, IsAdmin: true}}
+	if !isMaxUserAdminOrOwner(admins, 100, 100) {
+		t.Fatal("private chat owner omitted from admins must still be accepted")
+	}
+	if !isMaxUserAdminOrOwner(admins, 100, 200) {
+		t.Fatal("listed admin must be accepted")
+	}
+	if isMaxUserAdminOrOwner(admins, 100, 300) {
+		t.Fatal("ordinary member must not be accepted")
+	}
+	if isMaxUserAdminOrOwner(nil, 0, 0) {
+		t.Fatal("zero user must not be accepted")
+	}
+}
+
 func TestIsTgChannel(t *testing.T) {
 	tests := []struct {
 		chatType string

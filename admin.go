@@ -62,3 +62,9 @@ func isMaxUserAdmin(members []maxschemes.ChatMember, userID int64) bool {
 	}
 	return false
 }
+
+// isMaxUserAdminOrOwner also accepts the authoritative owner_id returned by
+// GetChat. Some private MAX groups omit the owner from GetChatAdmins.
+func isMaxUserAdminOrOwner(members []maxschemes.ChatMember, ownerID, userID int64) bool {
+	return userID != 0 && (isMaxUserAdmin(members, userID) || ownerID == userID)
+}
