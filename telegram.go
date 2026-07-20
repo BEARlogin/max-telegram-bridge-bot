@@ -846,7 +846,14 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 							}
 							b.ingestDiscussionComment(ctx, chCh, chMsg, msg.From, dtext, msg.MessageID, replyToTg)
 						}
-						continue // коммент обсуждения уже в TG — в MAX не зеркалим
+						// Самостоятельные группы обсуждения не дублируем в MAX: комментарий
+						// уже ушёл в commenter. Но явная bridge/thread-bridge связка означает,
+						// что владелец хочет видеть весь чат в MAX, включая комментарии.
+						_, threadLinked := b.repo.GetThreadMaxChat(msg.Chat.ID, msg.MessageThreadID)
+						_, groupLinked := b.repo.GetMaxChat(msg.Chat.ID)
+						if shouldSkipDiscussionRelay(threadLinked, groupLinked) {
+							continue
+						}
 					}
 				}
 			}
@@ -919,6 +926,10 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			go b.forwardTgToMax(ctx, msg, maxChatID, caption, false, false)
 		}
 	}
+}
+
+func shouldSkipDiscussionRelay(threadLinked, groupLinked bool) bool {
+	return !threadLinked && !groupLinked
 }
 
 func tgUserID(msg *TGMessage) int64 {
