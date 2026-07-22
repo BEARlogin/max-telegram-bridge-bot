@@ -15,14 +15,16 @@ const mediaGroupTimeout = 1 * time.Second
 
 // mediaGroupItem хранит данные одного сообщения из альбома TG.
 type mediaGroupItem struct {
-	photoSizes  []PhotoSize
-	videoFileID string // для видео в альбомах
-	caption     string
-	replyToMsg  *TGMessage
-	entities    []Entity
-	msg         *TGMessage
-	maxChatID   int64 // если задан — используется напрямую (crosspost)
-	crosspost   bool  // кросспостинг: без prefix, другой caption формат
+	photoSizes     []PhotoSize
+	videoFileID    string // для видео в альбомах
+	documentFileID string // Telegram объединяет несколько документов в MediaGroupID
+	documentName   string
+	caption        string
+	replyToMsg     *TGMessage
+	entities       []Entity
+	msg            *TGMessage
+	maxChatID      int64 // если задан — используется напрямую (crosspost)
+	crosspost      bool  // кросспостинг: без prefix, другой caption формат
 }
 
 // mediaGroupBuffer накапливает сообщения альбома перед отправкой.
@@ -235,13 +237,31 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) (string, e
 		}
 	}
 
-	totalMedia := photosSent + videosSent
+	filesSent := 0
+	for _, it := range items {
+		if it.documentFileID == "" {
+			continue
+		}
+		name := it.documentName
+		if name == "" {
+			name = "document"
+		}
+		uploaded, err := b.uploadTgMediaToMax(ctx, it.documentFileID, maxschemes.FILE, name)
+		if err != nil {
+			slog.Error("media group: document upload failed", "err", err, "name", name)
+			continue
+		}
+		m.AddFile(uploaded)
+		filesSent++
+	}
+
+	totalMedia := photosSent + videosSent + filesSent
 	if totalMedia == 0 {
-		slog.Warn("media group: no media uploaded, skipping")
+		slog.Warn("media group: no media uploaded, skipping", "items", len(items))
 		return "", fmt.Errorf("media group: no media uploaded")
 	}
 
-	slog.Info("TG→MAX sending media group", "photos", photosSent, "videos", videosSent, "uid", uid, "tgChat", items[0].msg.Chat.ID, "maxChat", maxChatID)
+	slog.Info("TG→MAX sending media group", "photos", photosSent, "videos", videosSent, "files", filesSent, "uid", uid, "tgChat", items[0].msg.Chat.ID, "maxChat", maxChatID)
 
 	// Фото + видео — ОДНИМ сообщением (m содержит и AddPhoto, и AddVideo). MAX принимает микс
 	// вложений в одном посте, поэтому альбом не разваливается на «фото + отдельное видео».
@@ -274,7 +294,7 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) (string, e
 		return "", err
 	}
 	b.cbSuccess(maxChatID)
-	slog.Info("TG→MAX media group sent", "mid", result.Body.Mid, "photos", photosSent, "videos", videosSent)
+	slog.Info("TG→MAX media group sent", "mid", result.Body.Mid, "photos", photosSent, "videos", videosSent, "files", filesSent)
 	for _, it := range items {
 		b.repo.SaveMsg(it.msg.Chat.ID, it.msg.MessageID, maxChatID, result.Body.Mid, it.msg.MessageThreadID)
 	}

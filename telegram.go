@@ -908,13 +908,16 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				if msg.Video != nil {
 					videoID = msg.Video.FileID
 				}
+				documentID, documentName := tgMediaGroupDocument(msg)
 				go b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
-					photoSizes:  msg.Photo,
-					videoFileID: videoID,
-					caption:     caption,
-					replyToMsg:  msg.ReplyToMessage,
-					entities:    msg.CaptionEntities,
-					msg:         msg,
+					photoSizes:     msg.Photo,
+					videoFileID:    videoID,
+					documentFileID: documentID,
+					documentName:   documentName,
+					caption:        caption,
+					replyToMsg:     msg.ReplyToMessage,
+					entities:       msg.CaptionEntities,
+					msg:            msg,
 					// Передаём уже резолвнутый maxChatID (в т.ч. thread-bridge): иначе flush
 					// перерезолвит через GetMaxChat (вся группа) и дропнет альбом для связок,
 					// где связан ТОЛЬКО тред (pairs пуст, есть только thread_pairs).
@@ -1629,15 +1632,18 @@ func (b *Bridge) publishTgCrosspostWithMode(ctx context.Context, msg *TGMessage,
 		if msg.Video != nil {
 			videoID = msg.Video.FileID
 		}
+		documentID, documentName := tgMediaGroupDocument(msg)
 		item := mediaGroupItem{
-			photoSizes:  msg.Photo,
-			videoFileID: videoID,
-			caption:     caption,
-			replyToMsg:  msg.ReplyToMessage,
-			entities:    msg.CaptionEntities,
-			msg:         msg,
-			maxChatID:   maxChatID,
-			crosspost:   true,
+			photoSizes:     msg.Photo,
+			videoFileID:    videoID,
+			documentFileID: documentID,
+			documentName:   documentName,
+			caption:        caption,
+			replyToMsg:     msg.ReplyToMessage,
+			entities:       msg.CaptionEntities,
+			msg:            msg,
+			maxChatID:      maxChatID,
+			crosspost:      true,
 		}
 		if manualAlbumFlush {
 			b.bufferMediaGroupManual(ctx, msg.MediaGroupID, item)
@@ -1648,6 +1654,17 @@ func (b *Bridge) publishTgCrosspostWithMode(ctx context.Context, msg *TGMessage,
 	}
 
 	b.forwardTgToMax(ctx, msg, maxChatID, caption, true, false)
+}
+
+func tgMediaGroupDocument(msg *TGMessage) (fileID, name string) {
+	if msg == nil || msg.Document == nil {
+		return "", ""
+	}
+	name = msg.Document.FileName
+	if name == "" {
+		name = mimeToFilename("document", msg.Document.MimeType)
+	}
+	return msg.Document.FileID, name
 }
 
 // handleTgCallback обрабатывает нажатия inline-кнопок (crosspost management).

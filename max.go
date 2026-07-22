@@ -55,6 +55,11 @@ func parseMaxRawAttachments(raw []json.RawMessage) []interface{} {
 			if err := json.Unmarshal(r, a); err == nil {
 				att = a
 			}
+		case maxschemes.AttachmentShare:
+			a := &maxschemes.ShareAttachment{}
+			if err := json.Unmarshal(r, a); err == nil {
+				att = a
+			}
 		}
 		if att != nil {
 			out = append(out, att)
@@ -1775,6 +1780,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			}
 		}
 	}
+	text = appendMaxShareURLs(text, body.Attachments)
 
 	// Relay-гейт ТОЛЬКО для бридж-ГРУПП (бот постит от своего имени → страйк боту).
 	// Каналы (даже через /bridge) и кросспосты не трогаем — бот там не отправитель.
@@ -2096,4 +2102,22 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		slog.Info("MAX→TG sent", "msgID", sentMsgID, "media", mediaSent, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
 		b.repo.SaveMsg(tgChatID, sentMsgID, chatID, body.Mid, threadID)
 	}
+}
+
+func appendMaxShareURLs(text string, attachments []interface{}) string {
+	for _, att := range attachments {
+		share, ok := att.(*maxschemes.ShareAttachment)
+		if !ok {
+			continue
+		}
+		url := strings.TrimSpace(share.Payload.Url)
+		if url == "" || strings.Contains(text, url) {
+			continue
+		}
+		if text != "" {
+			text += "\n\n"
+		}
+		text += url
+	}
+	return text
 }
