@@ -1120,7 +1120,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		} else {
 			b.cbSuccess(maxChatID)
 			slog.Info("TG→MAX sent", "mid", result.Body.Mid)
-			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid, msg.MessageThreadID)
+			b.repo.SaveMsgOrigin(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid, msg.MessageThreadID, "tg")
 		}
 		return
 	} else if msg.Animation != nil {
@@ -1175,7 +1175,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 						b.notifyTgUser(ctx, msg, maxChatID, uploadErrMsg("Не удалось отправить стикер в MAX", err), isCrosspost)
 					} else {
 						slog.Info("TG→MAX sent", "mid", result.Body.Mid)
-						b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid, msg.MessageThreadID)
+						b.repo.SaveMsgOrigin(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid, msg.MessageThreadID, "tg")
 					}
 					return
 				} else {
@@ -1424,7 +1424,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 	} else {
 		b.cbSuccess(maxChatID)
 		slog.Info("TG→MAX sent", "mid", mid, "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
-		b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid, msg.MessageThreadID)
+		b.repo.SaveMsgOrigin(msg.Chat.ID, msg.MessageID, maxChatID, mid, msg.MessageThreadID, "tg")
 	}
 }
 

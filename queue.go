@@ -221,7 +221,7 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 	if tgMsgID > 0 {
 		// Тред исходного TG-сообщения в очереди не сохраняется — реплаи
 		// на такие сообщения из MAX будут уходить в тред по умолчанию.
-		b.repo.SaveMsg(item.SrcChatID, tgMsgID, item.DstChatID, mid, 0)
+		b.repo.SaveMsgOrigin(item.SrcChatID, tgMsgID, item.DstChatID, mid, 0, "tg")
 		// Кросспост канала (а не зеркало bridge-группы) — уведомляем аддон.
 	}
 	b.repo.DeleteFromQueue(item.ID)
@@ -315,6 +315,6 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 		return
 	}
 	slog.Info("queue retry ok", "id", item.ID, "dir", "max2tg", "msgID", sentMsgID)
-	b.repo.SaveMsg(item.DstChatID, sentMsgID, item.SrcChatID, item.SrcMsgID, threadID)
+	b.repo.SaveMsgOrigin(item.DstChatID, sentMsgID, item.SrcChatID, item.SrcMsgID, threadID, "max")
 	b.repo.DeleteFromQueue(item.ID)
 }

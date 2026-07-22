@@ -296,7 +296,7 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) (string, e
 	b.cbSuccess(maxChatID)
 	slog.Info("TG→MAX media group sent", "mid", result.Body.Mid, "photos", photosSent, "videos", videosSent, "files", filesSent)
 	for _, it := range items {
-		b.repo.SaveMsg(it.msg.Chat.ID, it.msg.MessageID, maxChatID, result.Body.Mid, it.msg.MessageThreadID)
+		b.repo.SaveMsgOrigin(it.msg.Chat.ID, it.msg.MessageID, maxChatID, result.Body.Mid, it.msg.MessageThreadID, "tg")
 	}
 	return result.Body.Mid, nil
 }

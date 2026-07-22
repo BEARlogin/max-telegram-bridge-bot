@@ -233,6 +233,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if !ok {
 					continue
 				}
+				origin, _ := b.repo.LookupTgMsgOrigin(delUpd.MessageId)
+				if !shouldSyncMaxDelete(origin) {
+					slog.Info("MAX delete ignored for non-MAX source", "maxMid", delUpd.MessageId, "maxChat", delUpd.ChatID, "origin", origin)
+					continue
+				}
 				// Delete sync для crosspost: проверяем настройку sync_edits и direction
 				if maxCP, dir, cpOk := b.repo.GetCrosspostMaxChat(tgChatID); cpOk {
 					if !b.repo.GetCrosspostSyncEdits(maxCP) || dir == "tg>max" {
@@ -2100,8 +2105,12 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	} else {
 		b.cbSuccess(tgChatID)
 		slog.Info("MAX→TG sent", "msgID", sentMsgID, "media", mediaSent, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
-		b.repo.SaveMsg(tgChatID, sentMsgID, chatID, body.Mid, threadID)
+		b.repo.SaveMsgOrigin(tgChatID, sentMsgID, chatID, body.Mid, threadID, "max")
 	}
+}
+
+func shouldSyncMaxDelete(origin string) bool {
+	return origin == "max"
 }
 
 func appendMaxShareURLs(text string, attachments []interface{}) string {

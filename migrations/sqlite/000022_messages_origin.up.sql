@@ -1,0 +1,1 @@
+ALTER TABLE messages ADD COLUMN origin TEXT NOT NULL DEFAULT '';

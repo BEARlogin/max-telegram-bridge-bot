@@ -57,8 +57,10 @@ type Repository interface {
 	MigrateTgChat(oldID, newID int64) error
 
 	SaveMsg(tgChatID int64, tgMsgID int, maxChatID int64, maxMsgID string, tgThreadID int)
+	SaveMsgOrigin(tgChatID int64, tgMsgID int, maxChatID int64, maxMsgID string, tgThreadID int, origin string)
 	LookupMaxMsgID(tgChatID int64, tgMsgID int) (string, bool)
 	LookupTgMsgID(maxMsgID string) (tgChatID int64, tgMsgID int, tgThreadID int, ok bool)
+	LookupTgMsgOrigin(maxMsgID string) (origin string, ok bool)
 	// MaxMsgDeliveredTo — было ли это MAX-сообщение уже доставлено именно в этот TG-чат
 	// (пер-чат дедуп: при фан-ауте одного MAX-сообщения в несколько TG-групп нельзя
 	// глушить доставку глобально по mid).

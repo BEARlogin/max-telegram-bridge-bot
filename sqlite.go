@@ -123,8 +123,12 @@ func (r *sqliteRepo) GetTgChats(maxChatID int64) []int64 {
 }
 
 func (r *sqliteRepo) SaveMsg(tgChatID int64, tgMsgID int, maxChatID int64, maxMsgID string, tgThreadID int) {
-	r.db.Exec("INSERT OR REPLACE INTO messages (tg_chat_id, tg_msg_id, max_chat_id, max_msg_id, tg_thread_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		tgChatID, tgMsgID, maxChatID, maxMsgID, tgThreadID, time.Now().Unix())
+	r.SaveMsgOrigin(tgChatID, tgMsgID, maxChatID, maxMsgID, tgThreadID, "")
+}
+
+func (r *sqliteRepo) SaveMsgOrigin(tgChatID int64, tgMsgID int, maxChatID int64, maxMsgID string, tgThreadID int, origin string) {
+	r.db.Exec("INSERT OR REPLACE INTO messages (tg_chat_id, tg_msg_id, max_chat_id, max_msg_id, tg_thread_id, origin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		tgChatID, tgMsgID, maxChatID, maxMsgID, tgThreadID, origin, time.Now().Unix())
 }
 
 func (r *sqliteRepo) LookupMaxMsgID(tgChatID int64, tgMsgID int) (string, bool) {
@@ -138,6 +142,12 @@ func (r *sqliteRepo) LookupTgMsgID(maxMsgID string) (int64, int, int, bool) {
 	var msgID, threadID int
 	err := r.db.QueryRow("SELECT tg_chat_id, tg_msg_id, COALESCE(tg_thread_id, 0) FROM messages WHERE max_msg_id = ?", maxMsgID).Scan(&chatID, &msgID, &threadID)
 	return chatID, msgID, threadID, err == nil
+}
+
+func (r *sqliteRepo) LookupTgMsgOrigin(maxMsgID string) (string, bool) {
+	var origin string
+	err := r.db.QueryRow("SELECT COALESCE(origin, '') FROM messages WHERE max_msg_id = ?", maxMsgID).Scan(&origin)
+	return origin, err == nil
 }
 
 func (r *sqliteRepo) MaxMsgDeliveredTo(maxMsgID string, tgChatID int64) bool {
