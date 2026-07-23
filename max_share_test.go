@@ -31,14 +31,36 @@ func TestAppendMaxShareURLDoesNotDuplicateExistingLink(t *testing.T) {
 }
 
 func TestParseMaxRawShareAttachment(t *testing.T) {
-	raw := []json.RawMessage{json.RawMessage(`{"type":"share","payload":{"url":"https://max.ru/channel/post/42"}}`)}
+	raw := []json.RawMessage{json.RawMessage(`{
+		"type":"share",
+		"payload":{"url":"https://max.ru/channel/post/42","token":"share-token"},
+		"title":"Заголовок",
+		"description":"Описание",
+		"image_url":"https://i.oneme.ru/preview.jpg"
+	}`)}
 
 	got := parseMaxRawAttachments(raw)
 	if len(got) != 1 {
 		t.Fatalf("parseMaxRawAttachments() returned %d attachments", len(got))
 	}
-	share, ok := got[0].(*maxschemes.ShareAttachment)
-	if !ok || share.Payload.Url != "https://max.ru/channel/post/42" {
+	share, ok := got[0].(*maxShareAttachment)
+	if !ok ||
+		share.Payload.Url != "https://max.ru/channel/post/42" ||
+		share.Payload.Token != "share-token" ||
+		share.Title != "Заголовок" ||
+		share.Description != "Описание" ||
+		share.ImageURL != "https://i.oneme.ru/preview.jpg" {
 		t.Fatalf("parsed attachment = %#v", got[0])
+	}
+}
+
+func TestAppendMaxShareURLFromRawAttachment(t *testing.T) {
+	attachments := []interface{}{&maxShareAttachment{
+		Payload:  maxschemes.MediaAttachmentPayload{Url: "https://example.org/post"},
+		ImageURL: "https://i.oneme.ru/preview.jpg",
+	}}
+
+	if got := appendMaxShareURLs("Пост", attachments); got != "Пост\n\nhttps://example.org/post" {
+		t.Fatalf("appendMaxShareURLs() = %q", got)
 	}
 }

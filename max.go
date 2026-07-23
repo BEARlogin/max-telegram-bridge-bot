@@ -17,6 +17,16 @@ import (
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
 
+// maxShareAttachment keeps preview fields that the official SDK currently
+// drops while decoding share attachments.
+type maxShareAttachment struct {
+	maxschemes.Attachment
+	Payload     maxschemes.MediaAttachmentPayload `json:"payload"`
+	Title       string                            `json:"title,omitempty"`
+	Description string                            `json:"description,omitempty"`
+	ImageURL    string                            `json:"image_url,omitempty"`
+}
+
 // parseMaxRawAttachments превращает сырой JSON-массив вложений MAX в концретные
 // типы (PhotoAttachment, VideoAttachment, FileAttachment, и т.д.). Используется
 // для forwarded-сообщений: SDK не парсит Link.Message.RawAttachments если
@@ -56,7 +66,7 @@ func parseMaxRawAttachments(raw []json.RawMessage) []interface{} {
 				att = a
 			}
 		case maxschemes.AttachmentShare:
-			a := &maxschemes.ShareAttachment{}
+			a := &maxShareAttachment{}
 			if err := json.Unmarshal(r, a); err == nil {
 				att = a
 			}
@@ -1731,6 +1741,9 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	body := msgUpd.Message.Body
 	chatID := msgUpd.Message.Recipient.ChatId
 	text := strings.TrimSpace(body.Text)
+	if parsed := parseMaxRawAttachments(body.RawAttachments); len(parsed) > 0 {
+		body.Attachments = parsed
+	}
 
 	// Пауза связки — временно не пересылаем (связку не удаляем). Возобновить: /unpause.
 	if isCrosspost {
@@ -1776,13 +1789,13 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		// body.RawAttachments == nil. У forwarded-сообщений MAX шлёт body.RawAttachments=[]
 		// (пустой массив, не nil) → парсинг пропускается, Link.Message.Attachments пуст.
 		// Поэтому парсим сырые JSON-байты сами.
-		if len(lk.Message.Attachments) > 0 {
-			body.Attachments = append(lk.Message.Attachments, body.Attachments...)
-		} else if len(lk.Message.RawAttachments) > 0 {
+		if len(lk.Message.RawAttachments) > 0 {
 			parsed := parseMaxRawAttachments(lk.Message.RawAttachments)
 			if len(parsed) > 0 {
 				body.Attachments = append(parsed, body.Attachments...)
 			}
+		} else if len(lk.Message.Attachments) > 0 {
+			body.Attachments = append(lk.Message.Attachments, body.Attachments...)
 		}
 	}
 	text = appendMaxShareURLs(text, body.Attachments)
@@ -1938,6 +1951,15 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 					attType string
 					name    string
 				}{a.Payload.Url, "sticker", ""})
+			}
+		case *maxShareAttachment:
+			if a.ImageURL != "" {
+				if len(albumMedia) == 0 {
+					qAttType, qAttURL = "photo", a.ImageURL
+				}
+				p := TGInputMedia{Type: "photo", File: FileArg{URL: a.ImageURL}}
+				albumMedia = append(albumMedia, p)
+				albumItems = append(albumItems, maxAlbumItem{Type: "photo", URL: a.ImageURL})
 			}
 		default:
 			// Неизвестный/необработанный тип вложения (диагностика кружков и пр.).
@@ -2115,11 +2137,16 @@ func shouldSyncMaxDelete(origin string) bool {
 
 func appendMaxShareURLs(text string, attachments []interface{}) string {
 	for _, att := range attachments {
-		share, ok := att.(*maxschemes.ShareAttachment)
-		if !ok {
+		var url string
+		switch share := att.(type) {
+		case *maxschemes.ShareAttachment:
+			url = share.Payload.Url
+		case *maxShareAttachment:
+			url = share.Payload.Url
+		default:
 			continue
 		}
-		url := strings.TrimSpace(share.Payload.Url)
+		url = strings.TrimSpace(url)
 		if url == "" || strings.Contains(text, url) {
 			continue
 		}
