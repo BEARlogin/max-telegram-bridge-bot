@@ -1181,6 +1181,7 @@ async function saveRepl(c) {
                 placeholder="Добро пожаловать, {name}!"
               ></textarea>
             </label>
+            <p class="repl-hint muted">{{ g.standalone ? 'Отправляется новым участникам этой Telegram-группы.' : 'Отправляется новым участникам и в Telegram-, и в MAX-группе.' }}</p>
             <p class="repl-hint muted">Подстановки: <code>{name}</code> — имя, <code>{username}</code> — username, <code>{id}</code> — ID участника.</p>
             <div class="welcome-actions">
               <button type="button" class="btn accent sm" :disabled="gUi(g).busy" @click="saveGroupWelcome(g)">

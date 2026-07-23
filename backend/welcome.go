@@ -31,20 +31,42 @@ type welcomeExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-func writeGroupWelcomeExec(db welcomeExecer, tgChatID, ownerID int64, text string) error {
+func writeGroupWelcomeExec(db welcomeExecer, platform string, chatID, ownerID int64, text string) error {
 	if strings.TrimSpace(text) == "" {
 		text = ""
 		ownerID = 0
 	}
 	_, err := db.Exec(`INSERT INTO antispam_config
 			(platform, chat_id, welcome_text, welcome_by, updated_at)
-		VALUES ('tg', ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(platform, chat_id) DO UPDATE SET
 			welcome_text=excluded.welcome_text,
 			welcome_by=excluded.welcome_by,
 			updated_at=excluded.updated_at`,
-		tgChatID, text, ownerID, time.Now().Unix())
+		platform, chatID, text, ownerID, time.Now().Unix())
 	return err
+}
+
+func writeGroupWelcomes(tgChatID, maxChatID, ownerID int64, text string) error {
+	db, err := openRW(addonDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := writeGroupWelcomeExec(tx, "tg", tgChatID, ownerID, text); err != nil {
+		return err
+	}
+	if maxChatID != 0 {
+		if err := writeGroupWelcomeExec(tx, "max", maxChatID, ownerID, text); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *server) handleSetGroupWelcome(w http.ResponseWriter, r *http.Request) {
@@ -89,17 +111,12 @@ func (s *server) handleSetGroupWelcome(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db"})
 		return
 	}
-	db, err := openRW(addonDBPath)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db"})
-		return
-	}
-	defer db.Close()
-	if err := writeGroupWelcomeExec(db, in.TgChatID, u.ID, text); err != nil {
+	maxChatID := groupMaxChat(in.TgChatID)
+	if err := writeGroupWelcomes(in.TgChatID, maxChatID, u.ID, text); err != nil {
 		log.Printf("group welcome write err uid=%d tg=%d: %v", u.ID, in.TgChatID, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "не удалось сохранить приветствие"})
 		return
 	}
-	log.Printf("group welcome uid=%d tg=%d enabled=%v", u.ID, in.TgChatID, text != "")
+	log.Printf("group welcome uid=%d tg=%d max=%d enabled=%v", u.ID, in.TgChatID, maxChatID, text != "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": text != "", "welcome_text": text})
 }
