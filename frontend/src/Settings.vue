@@ -5,7 +5,7 @@ import { ref, onMounted, reactive, computed } from 'vue'
 import {
   getSettings, subscribePro, cancelPro, resumePro, startTrial, buyPosts,
   deleteCrosspost, setComments, setReplacements, setSyncEdits,
-  setGroupPrefix, unbridgeGroup, setAntispam, setGroupAntispam, linkStart,
+  setGroupPrefix, setGroupWelcome, unbridgeGroup, setAntispam, setGroupAntispam, linkStart,
   setCrosspostPaused, setGroupPaused, setGroupDirection,
   getBlocks, unbanUser, checkBotAdmin, initData,
   addGroupRule, delGroupRule, deleteMirror, buySlots, previewSlots, reduceSlots,
@@ -182,7 +182,36 @@ function toggleGroupCard(g) {
   const willOpen = !u.open
   if (willOpen) closeAll()
   u.open = willOpen
+  if (willOpen && u.welcomeText === undefined) u.welcomeText = g.welcome_text || ''
   if (willOpen) asLastSaved['g' + g.tg_chat_id] = JSON.stringify({ enabled: true, ...gAsOf(g) })
+}
+async function saveGroupWelcome(g) {
+  const u = gUi(g)
+  if (u.busy) return
+  if (!isPro.value) { flash('Приветствие — PRO-функция'); return }
+  const text = String(u.welcomeText || '').trim()
+  if (!text) { flash('Введите текст приветствия'); return }
+  if ([...text].length > 1000) { flash('Приветствие: максимум 1000 символов'); return }
+  u.busy = true
+  try {
+    const r = await setGroupWelcome(g.tg_chat_id, true, text)
+    g.welcome_text = r.welcome_text || ''
+    u.welcomeText = g.welcome_text
+    flash('Приветствие сохранено')
+  } catch (e) { flash(e.message || 'Не удалось сохранить приветствие') }
+  finally { u.busy = false }
+}
+async function disableGroupWelcome(g) {
+  const u = gUi(g)
+  if (u.busy) return
+  u.busy = true
+  try {
+    await setGroupWelcome(g.tg_chat_id, false, '')
+    g.welcome_text = ''
+    u.welcomeText = ''
+    flash('Приветствие выключено')
+  } catch (e) { flash(e.message || 'Не удалось выключить приветствие') }
+  finally { u.busy = false }
 }
 async function toggleGroupPrefix(g) {
   const u = gUi(g)
@@ -1142,6 +1171,24 @@ async function saveRepl(c) {
             </div>
             <p class="repl-hint muted" style="margin-top:0">Односторонний режим (напр. TG → MAX) удобен, когда несколько TG-групп сливаются в одну MAX-группу.</p>
           </div>
+          <div class="as-settings welcome-settings">
+            <div class="repl-dir">👋 Приветствие новичков <span class="muted small" v-if="!isPro">(PRO)</span></div>
+            <label class="as-field as-field-col">Текст приветствия
+              <textarea
+                v-model="gUi(g).welcomeText"
+                rows="4"
+                maxlength="1000"
+                placeholder="Добро пожаловать, {name}!"
+              ></textarea>
+            </label>
+            <p class="repl-hint muted">Подстановки: <code>{name}</code> — имя, <code>{username}</code> — username, <code>{id}</code> — ID участника.</p>
+            <div class="welcome-actions">
+              <button type="button" class="btn accent sm" :disabled="gUi(g).busy" @click="saveGroupWelcome(g)">
+                {{ gUi(g).busy ? 'Сохраняю…' : (g.welcome_text ? 'Сохранить изменения' : 'Включить приветствие') }}
+              </button>
+              <button v-if="g.welcome_text" type="button" class="btn ghost sm" :disabled="gUi(g).busy" @click="disableGroupWelcome(g)">Выключить</button>
+            </div>
+          </div>
           <div class="toggle-row" @click="toggleGroupAntispam(g)">
             <span class="tg-label">🛡 Антиспам <span class="muted small" v-if="!isPro">(PRO)</span>
               <span class="tg-desc muted">Чистит спам в группе: удаление + мут повторных, новички не постят ссылки заданное время. Ловит обфускацию (эмодзи-слова, разрядка, гомоглифы) + LLM на смысл. ⚠️ Бот должен быть <b>администратором</b> группы (с правами удалять сообщения и банить).</span>
@@ -1427,6 +1474,7 @@ h2 { font-size: 15px; margin: 20px 0 8px; }
 .as-field input { width: 96px; min-height: 44px; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); text-align: right; font-size: 16px; }
 .as-field-col { flex-direction: column; align-items: stretch; }
 .as-field-col textarea { width: 100%; min-height: 64px; margin-top: 4px; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; resize: vertical; box-sizing: border-box; text-align: left; }
+.welcome-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .lk-note { font-size: 12px; line-height: 1.45; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
 .lk-note code { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
 .lk-links { display: flex; gap: 8px; margin-top: 6px; }

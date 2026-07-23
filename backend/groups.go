@@ -45,6 +45,7 @@ type groupInfo struct {
 	BlockCats    string       `json:"block_cats"`
 	DelService   bool         `json:"del_service"`
 	Tone         string       `json:"tone"`
+	WelcomeText  string       `json:"welcome_text"`
 	Rules        []asRuleInfo `json:"rules"`
 	BotAdmin     bool         `json:"bot_admin"` // бот админ в группе (для модерации)
 }
@@ -280,7 +281,9 @@ func userGroups(userID, effTg int64) []groupInfo {
 		if adb, err := sql.Open("sqlite", "file:"+addonDBPath+"?mode=ro&_pragma=busy_timeout(3000)"); err == nil {
 			var ids []int64
 			if rows, err := adb.Query(`SELECT chat_id FROM antispam_config
-				WHERE platform='tg' AND chat_id < 0 AND (enabled_by=? OR (?!=0 AND enabled_by=?))`, userID, effTg, effTg); err == nil {
+				WHERE platform='tg' AND chat_id < 0
+					AND (enabled_by=? OR welcome_by=? OR (?!=0 AND (enabled_by=? OR welcome_by=?)))`,
+				userID, userID, effTg, effTg, effTg); err == nil {
 				for rows.Next() {
 					var id int64
 					if rows.Scan(&id) == nil && !seen[id] {
@@ -333,6 +336,7 @@ func userGroups(userID, effTg int64) []groupInfo {
 		pol := antispamPolicy("tg", out[i].TgChatID)
 		out[i].StrikeLimit, out[i].BanAfter, out[i].Action, out[i].MuteMinutes, out[i].Warn, out[i].Notify, out[i].Captcha, out[i].Antiraid, out[i].ProfileGuard, out[i].BlockWords, out[i].BlockCats, out[i].DelService = pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.ProfileGuard, pol.BlockWords, pol.BlockCats, pol.DelService
 		out[i].Tone = pol.Tone
+		out[i].WelcomeText = readGroupWelcome(out[i].TgChatID)
 		out[i].Rules = readAntispamRules("tg", out[i].TgChatID)
 		if out[i].Antispam {
 			out[i].BotAdmin = tgBotIsAdmin(out[i].TgChatID)

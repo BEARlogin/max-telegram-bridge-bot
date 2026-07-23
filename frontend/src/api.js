@@ -104,6 +104,17 @@ export async function setGroupPrefix(tgChatId, enabled) {
   return r.json()
 }
 
+// Приветствие новых участников Telegram-группы (PRO).
+export async function setGroupWelcome(tgChatId, enabled, text = '') {
+  const r = await fetch(`${API}/group/welcome`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ tg_chat_id: tgChatId, enabled, text }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'save failed')
+  return r.json()
+}
+
 // Антиспам bridge-группы (PRO): вкл/выкл + настройки.
 export async function setGroupAntispam(tgChatId, opts) {
   const r = await fetch(`${API}/group/antispam`, {

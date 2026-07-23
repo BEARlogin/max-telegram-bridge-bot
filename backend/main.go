@@ -93,35 +93,36 @@ func main() {
 	mux.HandleFunc("/api/admin/stats", srv.handleAdminStats) // бизнес-показатели (только админ)
 	mux.HandleFunc("/api/billing/trial", srv.handleTrial)
 	mux.HandleFunc("/api/billing/tbank-notify", srv.handleTbankNotify)
-	mux.HandleFunc("/api/internal/comment", srv.handleInternalComment) // приём комментов из TG-обсуждения (бридж)
-	mux.HandleFunc("/api/link/start", srv.handleLinkStart)             // выдать одноразовый код привязки MAX→TG
-	mux.HandleFunc("/api/internal/link", srv.handleLinkComplete)       // бридж: погасить код /link <код>
-	mux.HandleFunc("/api/internal/autolink", srv.handleAutoLink)       // бридж: автопривязка MAX↔TG при паринге
-	mux.HandleFunc("/api/internal/link-start", srv.handleInternalLinkStart) // бридж: выдать код привязки по /link в MAX-боте
+	mux.HandleFunc("/api/internal/comment", srv.handleInternalComment)          // приём комментов из TG-обсуждения (бридж)
+	mux.HandleFunc("/api/link/start", srv.handleLinkStart)                      // выдать одноразовый код привязки MAX→TG
+	mux.HandleFunc("/api/internal/link", srv.handleLinkComplete)                // бридж: погасить код /link <код>
+	mux.HandleFunc("/api/internal/autolink", srv.handleAutoLink)                // бридж: автопривязка MAX↔TG при паринге
+	mux.HandleFunc("/api/internal/link-start", srv.handleInternalLinkStart)     // бридж: выдать код привязки по /link в MAX-боте
 	mux.HandleFunc("/api/internal/mirror-slots", srv.handleInternalMirrorSlots) // бридж: докупка/уменьшение групп зеркала
-	mux.HandleFunc("/api/posts/pay", srv.handlePostsPay)               // покупка постов импорта (T-Bank, из бота)
-	mux.HandleFunc("/api/posts/buy", srv.handleBuyPosts)               // докупка постов из кабинета (initData)
-	mux.HandleFunc("/api/crosspost/delete", srv.handleDeleteCrosspost)         // удалить связку (владелец)
-	mux.HandleFunc("/api/crosspost/comments", srv.handleSetComments)           // вкл/выкл комментарии (PRO)
-	mux.HandleFunc("/api/crosspost/replacements", srv.handleSetReplacements)   // сохранить замены (владелец)
-	mux.HandleFunc("/api/crosspost/sync-edits", srv.handleSyncEdits)           // синк правок (владелец)
-	mux.HandleFunc("/api/crosspost/antispam", srv.handleSetAntispam)           // антиспам связки (PRO)
-	mux.HandleFunc("/api/crosspost/pause", srv.handleSetPaused)               // пауза связки кросспоста (владелец)
-	mux.HandleFunc("/api/group/prefix", srv.handleSetGroupPrefix)             // префикс [TG]/[MAX] (админ группы)
-	mux.HandleFunc("/api/group/pause", srv.handleSetGroupPaused)             // пауза связки группы (админ)
-	mux.HandleFunc("/api/group/direction", srv.handleSetGroupDirection)       // направление пересылки моста (PRO, админ)
-	mux.HandleFunc("/api/group/unbridge", srv.handleUnbridgeGroup)            // разорвать связку группы (админ)
-	mux.HandleFunc("/api/group/antispam", srv.handleSetGroupAntispam)         // антиспам группы (PRO, админ)
-	mux.HandleFunc("/api/group/antispam/rule/add", srv.handleAddGroupRule)    // добавить кастом-правило
-	mux.HandleFunc("/api/group/antispam/rule/del", srv.handleDelGroupRule)    // удалить кастом-правило
-	mux.HandleFunc("/api/antispam/check", srv.handleBotAdminCheck)            // перепроверить права бота в группе
-	mux.HandleFunc("/api/mirror/delete", srv.handleDeleteMirror)              // удалить зеркальную связку (владелец)
-	mux.HandleFunc("/api/slots/preview", srv.handlePreviewSlots)              // расчёт покупки слотов (без платежа)
-	mux.HandleFunc("/api/slots/buy", srv.handleBuySlots)                      // докупка слотов тарифа (T-Bank ссылка)
-	mux.HandleFunc("/api/slots/reduce", srv.handleReduceSlots)                // уменьшение слотов (рекуррент со след. периода)
-	mux.HandleFunc("/api/blocks", srv.handleBlocks)                           // журнал заблокированных антиспамом
-	mux.HandleFunc("/api/block/unban", srv.handleUnban)                       // разбанить (TG-мут/MAX-возврат)
-	mux.HandleFunc("/api/debug", srv.handleDebug)       // временный сбор launch-контекста мини-аппа
+	mux.HandleFunc("/api/posts/pay", srv.handlePostsPay)                        // покупка постов импорта (T-Bank, из бота)
+	mux.HandleFunc("/api/posts/buy", srv.handleBuyPosts)                        // докупка постов из кабинета (initData)
+	mux.HandleFunc("/api/crosspost/delete", srv.handleDeleteCrosspost)          // удалить связку (владелец)
+	mux.HandleFunc("/api/crosspost/comments", srv.handleSetComments)            // вкл/выкл комментарии (PRO)
+	mux.HandleFunc("/api/crosspost/replacements", srv.handleSetReplacements)    // сохранить замены (владелец)
+	mux.HandleFunc("/api/crosspost/sync-edits", srv.handleSyncEdits)            // синк правок (владелец)
+	mux.HandleFunc("/api/crosspost/antispam", srv.handleSetAntispam)            // антиспам связки (PRO)
+	mux.HandleFunc("/api/crosspost/pause", srv.handleSetPaused)                 // пауза связки кросспоста (владелец)
+	mux.HandleFunc("/api/group/prefix", srv.handleSetGroupPrefix)               // префикс [TG]/[MAX] (админ группы)
+	mux.HandleFunc("/api/group/pause", srv.handleSetGroupPaused)                // пауза связки группы (админ)
+	mux.HandleFunc("/api/group/direction", srv.handleSetGroupDirection)         // направление пересылки моста (PRO, админ)
+	mux.HandleFunc("/api/group/unbridge", srv.handleUnbridgeGroup)              // разорвать связку группы (админ)
+	mux.HandleFunc("/api/group/antispam", srv.handleSetGroupAntispam)           // антиспам группы (PRO, админ)
+	mux.HandleFunc("/api/group/welcome", srv.handleSetGroupWelcome)             // приветствие новичков (PRO, админ)
+	mux.HandleFunc("/api/group/antispam/rule/add", srv.handleAddGroupRule)      // добавить кастом-правило
+	mux.HandleFunc("/api/group/antispam/rule/del", srv.handleDelGroupRule)      // удалить кастом-правило
+	mux.HandleFunc("/api/antispam/check", srv.handleBotAdminCheck)              // перепроверить права бота в группе
+	mux.HandleFunc("/api/mirror/delete", srv.handleDeleteMirror)                // удалить зеркальную связку (владелец)
+	mux.HandleFunc("/api/slots/preview", srv.handlePreviewSlots)                // расчёт покупки слотов (без платежа)
+	mux.HandleFunc("/api/slots/buy", srv.handleBuySlots)                        // докупка слотов тарифа (T-Bank ссылка)
+	mux.HandleFunc("/api/slots/reduce", srv.handleReduceSlots)                  // уменьшение слотов (рекуррент со след. периода)
+	mux.HandleFunc("/api/blocks", srv.handleBlocks)                             // журнал заблокированных антиспамом
+	mux.HandleFunc("/api/block/unban", srv.handleUnban)                         // разбанить (TG-мут/MAX-возврат)
+	mux.HandleFunc("/api/debug", srv.handleDebug)                               // временный сбор launch-контекста мини-аппа
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	// Статика мини-аппа (собранный Vue). Кэш: хэшированные ассеты — навсегда (immutable),
 	// index.html — no-cache, иначе вебвью MAX/TG держит старый index с битым JS-хэшем
