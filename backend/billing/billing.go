@@ -119,6 +119,16 @@ func (s *Service) migrate() error {
 	)`); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS billing_attempts (
+		payment_id TEXT PRIMARY KEY,
+		user_id    INTEGER NOT NULL,
+		order_id   TEXT NOT NULL,
+		amount     INTEGER NOT NULL,
+		status     TEXT NOT NULL,
+		at         INTEGER NOT NULL
+	)`); err != nil {
+		return err
+	}
 	// Идемпотентные миграции.
 	_, _ = s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN payment_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN trial_used INTEGER NOT NULL DEFAULT 0`)
@@ -142,9 +152,10 @@ func (s *Service) HasRebill(userID int64) bool {
 }
 
 // Resume возобновляет подписку без отправки на полную оплату, когда это возможно:
-//   "resumed"   — в пределах оплаченного периода: просто включаем автопродление, без денег.
-//   "charging"  — период истёк, но есть карта (rebill): списываем по ней (подтвердит нотификация).
-//   "need_card" — карты нет: нужна полная оплата (фронт зовёт subscribe).
+//
+//	"resumed"   — в пределах оплаченного периода: просто включаем автопродление, без денег.
+//	"charging"  — период истёк, но есть карта (rebill): списываем по ней (подтвердит нотификация).
+//	"need_card" — карты нет: нужна полная оплата (фронт зовёт subscribe).
 func (s *Service) Resume(ctx context.Context, userID int64) (string, error) {
 	_, until := s.SubStatus(userID)
 	now := time.Now().Unix()

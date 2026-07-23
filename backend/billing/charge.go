@@ -51,11 +51,25 @@ func (s *Service) chargeDue(ctx context.Context) {
 	rows.Close()
 
 	for _, d := range list {
-		// Сдвигаем next_charge сразу (защита от двойного списания, если нотификация задержится).
-		s.db.Exec(`UPDATE subscriptions SET next_charge=?, updated_at=? WHERE user_id=?`,
-			time.Now().AddDate(0, 0, 1).Unix(), now, d.userID) // +1 день; нотификация продлит на период
+		// Атомарно помечаем списание выполняющимся. Пока не придёт итоговая нотификация,
+		// этот аккаунт больше не попадёт в выборку и повторного Charge не будет.
+		res, err := s.db.Exec(`UPDATE subscriptions
+			SET status='charging', next_charge=?, updated_at=?
+			WHERE user_id=? AND next_charge>0 AND next_charge<=?
+			  AND (status='active' OR (status='past_due' AND paid_until>?))`,
+			time.Now().AddDate(0, 0, 1).Unix(), now, d.userID, now, now)
+		if err != nil {
+			log.Printf("billing: claim failed user=%d: %v", d.userID, err)
+			continue
+		}
+		claimed, _ := res.RowsAffected()
+		if claimed == 0 {
+			continue
+		}
 		if err := s.charge(ctx, d.userID, d.rebill); err != nil {
 			log.Printf("billing: charge failed user=%d: %v", d.userID, err)
+			s.db.Exec(`UPDATE subscriptions SET status='past_due', updated_at=? WHERE user_id=? AND status='charging'`,
+				time.Now().Unix(), d.userID)
 		}
 	}
 }
@@ -81,11 +95,20 @@ func (s *Service) charge(ctx context.Context, userID int64, rebillID string) err
 	if err != nil {
 		return err
 	}
+	now := time.Now().Unix()
+	_, _ = s.db.Exec(`INSERT OR REPLACE INTO billing_attempts
+		(payment_id,user_id,order_id,amount,status,at) VALUES (?,?,?,?,?,?)`,
+		initResp.PaymentID, userID, orderID, amount, "INIT", now)
 	// привязываем текущий order_id, чтобы нотификация нашла подписку
-	s.db.Exec(`UPDATE subscriptions SET order_id=?, updated_at=? WHERE user_id=?`, orderID, time.Now().Unix(), userID)
+	s.db.Exec(`UPDATE subscriptions SET order_id=?, updated_at=? WHERE user_id=?`, orderID, now, userID)
 	_, err = s.cli.ChargeWithContext(ctx, &tinkoff.ChargeRequest{
 		PaymentID: initResp.PaymentID,
 		RebillID:  rebillID,
 	})
+	status := "CHARGED"
+	if err != nil {
+		status = "ERROR"
+	}
+	_, _ = s.db.Exec(`UPDATE billing_attempts SET status=? WHERE payment_id=?`, status, initResp.PaymentID)
 	return err
 }

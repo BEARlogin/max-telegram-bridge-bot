@@ -10,14 +10,14 @@ func TestProrateSlotsKopecks(t *testing.T) {
 		remaining, period int64
 		want              uint64
 	}{
-		{"full period, 1 slot", 1, period, period, 30000},          // весь период = полная цена
-		{"half period, 1 slot", 1, period / 2, period, 15000},      // половина
-		{"half period, 10 slots", 10, period / 2, period, 150000},  // 10×300×0.5 = 1500₽
-		{"full period, 10 slots", 10, period, period, 300000},      // 3000₽
-		{"tiny remaining floors to 100", 1, 1, period, 100},        // пол 1₽
-		{"zero remaining", 1, 0, period, 0},                        // истёк — 0
-		{"n<=0", 0, period, period, 0},                             // нет слотов
-		{"remaining>period clamps", 5, period * 2, period, 150000}, // клампим до полного
+		{"full period, 1 slot", 1, period, period, 4900},          // весь период = полная цена
+		{"half period, 1 slot", 1, period / 2, period, 2450},      // половина
+		{"half period, 10 slots", 10, period / 2, period, 24500},  // 10×49×0.5 = 245₽
+		{"full period, 10 slots", 10, period, period, 49000},      // 490₽
+		{"tiny remaining floors to 100", 1, 1, period, 100},       // пол 1₽
+		{"zero remaining", 1, 0, period, 0},                       // истёк — 0
+		{"n<=0", 0, period, period, 0},                            // нет слотов
+		{"remaining>period clamps", 5, period * 2, period, 24500}, // клампим до полного
 	}
 	for _, c := range cases {
 		if got := prorateSlotsKopecks(c.n, c.remaining, c.period); got != c.want {
