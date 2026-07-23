@@ -67,11 +67,12 @@ func (s *Service) charge(ctx context.Context, userID int64, rebillID string) err
 	// вместе со слотами; изменение слот применяется со следующего списания автоматически).
 	amount := s.EffectiveAmount(userID)
 	req := &tinkoff.InitRequest{
-		Amount:      amount,
-		OrderID:     orderID,
-		CustomerKey: strconv.FormatInt(userID, 10),
-		Description: "Продление PRO-подписки",
-		Recurrent:   "", // автосписание делает Charge, не Recurrent
+		Amount:          amount,
+		OrderID:         orderID,
+		CustomerKey:     strconv.FormatInt(userID, 10),
+		Description:     "Продление PRO-подписки",
+		NotificationURL: s.cfg.NotifyURL,
+		Recurrent:       "", // автосписание делает Charge, не Recurrent
 	}
 	if s.cfg.ReceiptEmail != "" {
 		req.Receipt = s.receiptFor(amount)
