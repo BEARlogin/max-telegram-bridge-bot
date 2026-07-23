@@ -230,6 +230,21 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
+			// Вступление пользователя в MAX-чат. Событие приходит, когда бот является
+			// администратором; аддон использует его для приветствия новых участников.
+			if add, isAdd := upd.(*maxschemes.UserAddedToChatUpdate); isAdd {
+				key := fmt.Sprintf("join:%d:%d:%d", add.ChatId, add.User.UserId, add.Timestamp)
+				if b.maxDupMid(key) {
+					continue
+				}
+				name := strings.TrimSpace(add.User.Name)
+				if name == "" {
+					name = strings.TrimSpace(add.User.FirstName + " " + add.User.LastName)
+				}
+				b.memberJoined(ctx, "max", add.ChatId, add.User.UserId, name, add.User.Username, add.User.IsBot)
+				continue
+			}
+
 			// Обработка удаления (только bridge, не crosspost)
 			if delUpd, isDel := upd.(*maxschemes.MessageRemovedUpdate); isDel {
 				if b.isSuppressedMaxDelete(delUpd.MessageId) {
