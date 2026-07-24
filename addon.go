@@ -329,6 +329,58 @@ func (b *Bridge) addonTgBusinessDeleted(ctx context.Context, d *TGBusinessMessag
 	}
 }
 
+func (b *Bridge) addonTgVKMessage(ctx context.Context, msg *TGMessage) {
+	if b.addon == nil || msg == nil || msg.MessageID == 0 || msg.IsService || b.isSelfTgBot(msg.From) {
+		return
+	}
+	text := msg.Text
+	if text == "" {
+		text = msg.Caption
+	}
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	if strings.HasPrefix(strings.TrimSpace(text), "VK · id ") {
+		return
+	}
+	if want, ok := b.addon.(interface {
+		WantVKSource(string, int64) bool
+	}); ok && !want.WantVKSource("tg", msg.Chat.ID) {
+		return
+	}
+	replyTo := 0
+	if msg.ReplyToMessage != nil {
+		replyTo = msg.ReplyToMessage.MessageID
+	}
+	h, ok := b.addon.(interface {
+		HandleTgVKMessage(context.Context, int64, int, string, string, int)
+	})
+	if ok {
+		author := msg.Chat.Title
+		if msg.From != nil {
+			author = strings.TrimSpace(msg.From.FirstName + " " + msg.From.LastName)
+			if author == "" {
+				author = msg.From.UserName
+			}
+		}
+		h.HandleTgVKMessage(ctx, msg.Chat.ID, msg.MessageID, author, text, replyTo)
+	}
+}
+
+func (b *Bridge) addonMaxPostV2(ctx context.Context, srcChatID, senderUserID int64, mid, author, text, replyMid string) {
+	if want, ok := b.addon.(interface {
+		WantVKSource(string, int64) bool
+	}); ok && !want.WantVKSource("max", srcChatID) {
+		return
+	}
+	h, ok := b.addon.(interface {
+		HandleMaxPostV2(context.Context, int64, int64, string, string, string, string)
+	})
+	if ok {
+		h.HandleMaxPostV2(ctx, srcChatID, senderUserID, mid, author, text, replyMid)
+	}
+}
+
 func (b *Bridge) sendTgBusinessText(ctx context.Context, connectionID string, chatID int64, text string) error {
 	s, ok := b.tg.(interface {
 		SendBusinessMessage(context.Context, string, int64, string) (int, error)

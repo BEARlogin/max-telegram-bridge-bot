@@ -829,6 +829,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						}
 					}
 				}
+				go b.addonTgVKMessage(ctx, msg)
 				if msg.MessageThreadID != 0 && msg.From != nil && !b.isSelfTgBot(msg.From) && !msg.IsService {
 					chCh, chMsg, ok := b.repo.LookupChannelByDiscussion(msg.Chat.ID, msg.MessageThreadID)
 					slog.Info("discussion reply seen", "discChat", msg.Chat.ID, "thread", msg.MessageThreadID, "mapped", ok, "channelPost", fmt.Sprintf("%d_%d", chCh, chMsg))
@@ -1567,6 +1568,7 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 
 	// Дополнительная обработка поста расширением выполняется асинхронно.
 	if b.addon != nil {
+		go b.addonTgVKMessage(ctx, msg)
 		go b.addon.HandleTgChannelPost(ctx, msg.Chat.ID, msg.MessageID, msg.MediaGroupID)
 	}
 

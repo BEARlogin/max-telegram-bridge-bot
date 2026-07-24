@@ -1027,6 +1027,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			// [TG]/[MAX]-префиксы пропускаем (анти-луп). Аддон сам решает адресатов и шлёт.
 			if b.addon != nil && body.Mid != "" && !b.isSelfMaxBot(msgUpd.Message.Sender.UserId) &&
 				!strings.HasPrefix(text, "[TG]") && !strings.HasPrefix(text, "[MAX]") {
+				replyMid := body.ReplyTo
+				if replyMid == "" && msgUpd.Message.Link != nil && msgUpd.Message.Link.Type == maxschemes.REPLY {
+					replyMid = msgUpd.Message.Link.Message.Mid
+				}
+				go b.addonMaxPostV2(ctx, chatID, msgUpd.Message.Sender.UserId, body.Mid, msgUpd.Message.Sender.Name, text, replyMid)
 				var photoURLs, videoURLs []string
 				for _, att := range body.Attachments {
 					switch a := att.(type) {
