@@ -280,6 +280,13 @@ func (b *Bridge) addonTgBusinessMessage(ctx context.Context, msg *TGMessage, edi
 			mediaURL = b.tg.GetFileDirectURL(path)
 		}
 	}
+	hV2, ok := b.addon.(interface {
+		HandleTgBusinessMessageV2(context.Context, string, int64, int64, int, string, string, string, string, string, string, bool)
+	})
+	if ok {
+		hV2.HandleTgBusinessMessageV2(ctx, msg.BusinessConnectionID, msg.Chat.ID, fromID, msg.MessageID, name, username, text, mediaKind, mediaURL, msg.MediaGroupID, edited)
+		return
+	}
 	h, ok := b.addon.(interface {
 		HandleTgBusinessMessage(context.Context, string, int64, int64, int, string, string, string, string, string, bool)
 	})
