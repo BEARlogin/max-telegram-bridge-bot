@@ -257,16 +257,22 @@ func (b *Bridge) addonTgBusinessMessage(ctx context.Context, msg *TGMessage, edi
 		mediaFileID = msg.Video.FileID
 	case msg.VideoNote != nil:
 		mediaKind = "video_note"
+		mediaFileID = msg.VideoNote.FileID
 	case msg.Voice != nil:
 		mediaKind = "voice"
+		mediaFileID = msg.Voice.FileID
 	case msg.Audio != nil:
 		mediaKind = "audio"
+		mediaFileID = msg.Audio.FileID
 	case msg.Document != nil:
 		mediaKind = "document"
+		mediaFileID = msg.Document.FileID
 	case msg.Animation != nil:
 		mediaKind = "animation"
+		mediaFileID = msg.Animation.FileID
 	case msg.Sticker != nil:
 		mediaKind = "sticker"
+		mediaFileID = msg.Sticker.FileID
 	}
 	mediaURL := ""
 	if mediaFileID != "" {
