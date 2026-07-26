@@ -33,6 +33,22 @@ func TestApplySendMessageOptsRequestsExistingMemberChatWithoutAdmin(t *testing.T
 	}
 }
 
+func TestApplySendMessageOptsRequestsAdminChannel(t *testing.T) {
+	p := &bot.SendMessageParams{}
+	applySendMessageOpts(p, &SendOpts{RequestChat: &RequestChatSpec{
+		Text: "Выбрать канал", RequestID: 7402, ChatIsChannel: true, RequireAdmin: true,
+	}})
+	markup, ok := p.ReplyMarkup.(*models.ReplyKeyboardMarkup)
+	if !ok || len(markup.Keyboard) != 1 || len(markup.Keyboard[0]) != 1 {
+		t.Fatalf("reply markup = %#v", p.ReplyMarkup)
+	}
+	req := markup.Keyboard[0][0].RequestChat
+	if req == nil || !req.ChatIsChannel || req.BotAdministratorRights == nil ||
+		!req.BotAdministratorRights.CanPostMessages || !req.BotAdministratorRights.CanEditMessages {
+		t.Fatalf("request channel = %+v", req)
+	}
+}
+
 func TestConvertMsg_Basic(t *testing.T) {
 	m := &models.Message{
 		ID:              42,

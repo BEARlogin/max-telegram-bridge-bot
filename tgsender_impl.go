@@ -621,6 +621,11 @@ func applySendMessageOpts(p *bot.SendMessageParams, opts *SendOpts) {
 		var userRights, botRights *models.ChatAdministratorRights
 		if opts.RequestChat.RequireAdmin {
 			rights := &models.ChatAdministratorRights{CanDeleteMessages: true, CanRestrictMembers: true}
+			if opts.RequestChat.ChatIsChannel {
+				rights = &models.ChatAdministratorRights{
+					CanPostMessages: true, CanEditMessages: true, CanDeleteMessages: true,
+				}
+			}
 			userRights, botRights = rights, rights
 		}
 		p.ReplyMarkup = &models.ReplyKeyboardMarkup{
@@ -630,7 +635,7 @@ func applySendMessageOpts(p *bot.SendMessageParams, opts *SendOpts) {
 				Text: opts.RequestChat.Text,
 				RequestChat: &models.KeyboardButtonRequestChat{
 					RequestID:               int32(opts.RequestChat.RequestID),
-					ChatIsChannel:           false,
+					ChatIsChannel:           opts.RequestChat.ChatIsChannel,
 					UserAdministratorRights: userRights,
 					BotAdministratorRights:  botRights,
 					BotIsMember:             opts.RequestChat.BotIsMember,
