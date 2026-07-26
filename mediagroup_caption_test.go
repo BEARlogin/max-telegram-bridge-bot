@@ -4,9 +4,36 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
+
+func TestCrosspostMediaGroupBuffersAreIsolatedPerDestination(t *testing.T) {
+	b := &Bridge{mgBuffers: make(map[string]*mediaGroupBuffer)}
+	msg := &TGMessage{Chat: ChatInfo{ID: -1001}}
+
+	b.bufferMediaGroup(context.Background(), "album", mediaGroupItem{
+		msg: msg, crosspost: true, maxChatID: -2001, caption: "первый",
+	})
+	b.bufferMediaGroup(context.Background(), "album", mediaGroupItem{
+		msg: msg, crosspost: true, maxChatID: -2002, caption: "второй",
+	})
+
+	b.mgMu.Lock()
+	defer b.mgMu.Unlock()
+	if len(b.mgBuffers) != 2 {
+		t.Fatalf("crosspost album buffers=%d want 2", len(b.mgBuffers))
+	}
+	for key, buf := range b.mgBuffers {
+		if buf.timer != nil {
+			buf.timer.Stop()
+		}
+		if len(buf.items) != 1 {
+			t.Fatalf("buffer %q items=%d want 1", key, len(buf.items))
+		}
+	}
+}
 
 func TestStaleMediaGroupTimerCannotDetachNewerCaption(t *testing.T) {
 	b := &Bridge{mgBuffers: make(map[string]*mediaGroupBuffer)}
@@ -64,5 +91,31 @@ func TestMaxAlbumCaptionMissing(t *testing.T) {
 				t.Fatalf("maxAlbumCaptionMissing()=%v want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestVerifyCaptionAfterDelaysRepairsCaptionThatDisappearsLater(t *testing.T) {
+	observations := []string{"подпись", ""}
+	fetches := 0
+	repairs := 0
+
+	repaired, err := verifyCaptionAfterDelays(
+		context.Background(),
+		[]time.Duration{0, 0},
+		func(context.Context) (string, error) {
+			text := observations[fetches]
+			fetches++
+			return text, nil
+		},
+		func(context.Context) error {
+			repairs++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repaired || repairs != 1 {
+		t.Fatalf("repaired=%v repairs=%d want true,1", repaired, repairs)
 	}
 }

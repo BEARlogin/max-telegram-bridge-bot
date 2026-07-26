@@ -13,6 +13,8 @@ import (
 
 const mediaGroupTimeout = 1 * time.Second
 
+var mediaGroupCaptionVerifyDelays = []time.Duration{2 * time.Second, 6 * time.Second}
+
 // mediaGroupItem хранит данные одного сообщения из альбома TG.
 type mediaGroupItem struct {
 	photoSizes     []PhotoSize
@@ -49,12 +51,21 @@ func (b *Bridge) bufferMediaGroupManual(ctx context.Context, groupID string, ite
 }
 
 func (b *Bridge) bufferMediaGroupMode(ctx context.Context, groupID string, item mediaGroupItem, manual bool) {
+	// Один Telegram-канал может публиковаться сразу в несколько MAX-каналов.
+	// У всех адресатов элементы одного альбома имеют одинаковый MediaGroupID,
+	// поэтому для живого кросспоста буферы должны быть раздельными per-destination.
+	// Ручной импорт оставляем на исходном ключе: его явно завершает FlushMediaGroup.
+	bufferID := groupID
+	if item.crosspost && !manual && item.msg != nil {
+		bufferID = fmt.Sprintf("crosspost:%d:%d:%s", item.msg.Chat.ID, item.maxChatID, groupID)
+	}
+
 	b.mgMu.Lock()
 	defer b.mgMu.Unlock()
-	buf, ok := b.mgBuffers[groupID]
+	buf, ok := b.mgBuffers[bufferID]
 	if !ok {
 		buf = &mediaGroupBuffer{manualFlush: manual}
-		b.mgBuffers[groupID] = buf
+		b.mgBuffers[bufferID] = buf
 	}
 
 	buf.items = append(buf.items, item)
@@ -72,7 +83,7 @@ func (b *Bridge) bufferMediaGroupMode(ctx context.Context, groupID string, item 
 	}
 	generation := buf.generation
 	buf.timer = time.AfterFunc(mediaGroupTimeout, func() {
-		_, _ = b.flushMediaGroupGeneration(ctx, groupID, generation)
+		_, _ = b.flushMediaGroupGeneration(ctx, bufferID, generation)
 	})
 }
 
@@ -333,6 +344,16 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 					"mid", result.Body.Mid, "captionBytes", len(mdCaption))
 			}
 		}
+
+		// Первый GET иногда возвращает текст из свежего ответа, после чего MAX
+		// заканчивает обработку вложений и сохраняет альбом уже без подписи.
+		// Повторно проверяем объект после стабилизации и при необходимости
+		// редактируем только text/format, не затрагивая attachments.
+		format := ""
+		if isCrosspost || mdCaption != caption {
+			format = "html"
+		}
+		go b.verifyMaxAlbumCaptionEventually(ctx, mc, maxChatID, result.Body.Mid, mdCaption, format)
 	}
 
 	slog.Info("TG→MAX media group sent",
@@ -346,6 +367,80 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 		b.repo.SaveMsgOrigin(it.msg.Chat.ID, it.msg.MessageID, maxChatID, result.Body.Mid, it.msg.MessageThreadID, "tg")
 	}
 	return result.Body.Mid, nil
+}
+
+func (b *Bridge) verifyMaxAlbumCaptionEventually(
+	ctx context.Context,
+	mc *maxbot.Api,
+	maxChatID int64,
+	maxMsgID, caption, format string,
+) {
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+
+	repaired, err := verifyCaptionAfterDelays(
+		verifyCtx,
+		mediaGroupCaptionVerifyDelays,
+		func(fetchCtx context.Context) (string, error) {
+			persisted, fetchErr := mc.Messages.GetMessage(fetchCtx, maxMsgID)
+			if fetchErr != nil {
+				return "", fetchErr
+			}
+			if persisted == nil {
+				return "", fmt.Errorf("MAX returned an empty message")
+			}
+			return persisted.Body.Text, nil
+		},
+		func(repairCtx context.Context) error {
+			return b.editMaxTextOnly(repairCtx, maxChatID, maxMsgID, caption, format)
+		},
+	)
+	if err != nil {
+		slog.Warn("TG→MAX delayed media group caption verification failed",
+			"err", err, "mid", maxMsgID, "captionBytes", len(caption))
+		return
+	}
+	if repaired {
+		slog.Info("TG→MAX delayed media group caption repaired",
+			"mid", maxMsgID, "captionBytes", len(caption))
+	}
+}
+
+func verifyCaptionAfterDelays(
+	ctx context.Context,
+	delays []time.Duration,
+	fetch func(context.Context) (string, error),
+	repair func(context.Context) error,
+) (bool, error) {
+	repaired := false
+	var lastErr error
+	for _, delay := range delays {
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return repaired, ctx.Err()
+		case <-timer.C:
+		}
+
+		text, err := fetch(ctx)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		lastErr = nil
+		if strings.TrimSpace(text) != "" {
+			continue
+		}
+		if err := repair(ctx); err != nil {
+			lastErr = err
+			continue
+		}
+		repaired = true
+	}
+	return repaired, lastErr
 }
 
 func maxAlbumCaptionMissing(expected string, sent, persisted *maxschemes.Message, fetchErr error) bool {
