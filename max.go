@@ -487,6 +487,23 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
+			if text == "/doctor" {
+				if !isDialog || msgUpd.Message.Sender.UserId == 0 {
+					m := maxbot.NewMessage().SetChat(chatID).
+						SetText("Отчёт /doctor доступен только в личном диалоге с ботом.")
+					_ = b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
+				if !b.doctorTakeRate("max", msgUpd.Message.Sender.UserId, time.Now()) {
+					m := maxbot.NewMessage().SetChat(chatID).
+						SetText("Отчёт уже собирался. Повторите через 10 секунд.")
+					_ = b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
+				b.sendDoctorMax(ctx, chatID, msgUpd.Message.Sender.UserId)
+				continue
+			}
+
 			// Проверка прав админа в группах
 			isGroup := isMaxGroup(msgUpd.Message.Recipient.ChatType)
 			isAdmin := false
@@ -949,13 +966,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				b.cpWaitMu.Unlock()
 
 				if waiting && maxChannelID != 0 {
-					// Проверяем, не связан ли уже
-					if _, _, ok := b.repo.GetCrosspostTgChat(maxChannelID); ok {
-						m := maxbot.NewMessage().SetChat(chatID).SetText("Этот MAX-канал уже связан.")
-						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
-						continue
-					}
-
 					// Достаём TG owner ID (кто переслал пост из TG-канала в TG-бот)
 					b.cpTgOwnerMu.Lock()
 					tgOwnerID := b.cpTgOwner[tgChannelID]
@@ -1088,12 +1098,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			if b.isSelfMaxBot(msgUpd.Message.Sender.UserId) {
 				continue
 			}
-			tgChatID, direction, cpLinked := b.repo.GetCrosspostTgChat(chatID)
-			if !cpLinked {
+			links := b.repo.GetCrosspostTgChats(chatID)
+			if len(links) == 0 {
 				continue
-			}
-			if direction == "tg>max" {
-				continue // только TG→MAX, пропускаем
 			}
 
 			// Anti-loop
@@ -1101,24 +1108,32 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
-			caption := formatMaxCrosspostCaption(msgUpd)
+			for _, link := range links {
+				tgChatID, direction := link.TgChatID, link.Direction
+				if direction == "tg>max" {
+					continue // только TG→MAX, пропускаем
+				}
 
-			// Замены MAX→TG — на исходном тексте, схлопывание пробелов — после.
-			repl := b.repo.GetCrosspostReplacements(chatID)
-			if len(repl.MaxToTg) > 0 {
-				caption = applyReplacements(caption, repl.MaxToTg)
-			}
-			caption = collapseWhitespace(caption)
-			// Дополнительный footer расширения.
-			caption += b.crosspostFooter(ctx, chatID, "tg")
+				caption := formatMaxCrosspostCaption(msgUpd)
 
-			// Идемпотентность: этот пост MAX-канала уже кросспостился (повторная доставка /
-			// дубль-строка связки / перекрытие) — атомарный claim по (MAX-канал, mid) в БД.
-			if !b.repo.ClaimCrosspost("max", chatID, body.Mid) {
-				slog.Info("skip duplicate crosspost MAX→TG (already claimed)", "maxChannel", chatID, "mid", body.Mid, "tgChat", tgChatID)
-				continue
+				// Замены MAX→TG — на исходном тексте, схлопывание пробелов — после.
+				repl := b.repo.GetCrosspostReplacements(chatID)
+				if len(repl.MaxToTg) > 0 {
+					caption = applyReplacements(caption, repl.MaxToTg)
+				}
+				caption = collapseWhitespace(caption)
+				// Дополнительный footer расширения для конкретной связки.
+				caption += b.crosspostFooterPair(ctx, tgChatID, chatID, "tg")
+
+				// Идемпотентность per-destination: один MAX-пост можно доставить в несколько
+				// TG-чатов, но нельзя дублировать в тот же адресат при ретрае вебхука.
+				claimKey := body.Mid + ":" + strconv.FormatInt(tgChatID, 10)
+				if !b.repo.ClaimCrosspost("max", chatID, claimKey) {
+					slog.Info("skip duplicate crosspost MAX→TG (already claimed)", "maxChannel", chatID, "mid", body.Mid, "tgChat", tgChatID)
+					continue
+				}
+				go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption, true)
 			}
-			go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption, true)
 		}
 	}
 }
@@ -1176,6 +1191,7 @@ func (b *Bridge) sendMaxStart(ctx context.Context, chatID int64) {
 		"4. Здесь в личке напишите: /crosspost <TG_ID>\n" +
 		"5. Перешлите пост из MAX-канала сюда → готово!\n\n" +
 		"/crosspost — список всех связок с кнопками управления\n" +
+		"/doctor — приватный отчёт по всем вашим подключениям\n" +
 		"Управление: перешлите пост из связанного канала → кнопки\n\n" +
 		"Автозамены в кросспостинге:\n" +
 		"В настройках связки (кнопка 🔄) можно добавить замены текста.\n" +
@@ -1660,6 +1676,73 @@ func maxVideoURLFromAttachments(attachments []interface{}, token string) string 
 	return fallback
 }
 
+func maxMessageAttachments(msg *maxschemes.Message) []interface{} {
+	if msg == nil {
+		return nil
+	}
+	attachments := msg.Body.Attachments
+	if len(msg.Body.RawAttachments) > 0 {
+		attachments = parseMaxRawAttachments(msg.Body.RawAttachments)
+	}
+	if msg.Link != nil && msg.Link.Type == maxschemes.FORWARD {
+		linked := msg.Link.Message.Attachments
+		if len(msg.Link.Message.RawAttachments) > 0 {
+			linked = parseMaxRawAttachments(msg.Link.Message.RawAttachments)
+		}
+		attachments = append(linked, attachments...)
+	}
+	return attachments
+}
+
+// refreshQueuedMaxVideoURL получает новую CDN-ссылку перед повторной отправкой.
+// MAX CDN URL короткоживущие: сохранять URL в очереди можно как фолбэк, но после
+// Telegram 429 он часто уже отдаёт HTML/ошибку вместо видео.
+func (b *Bridge) refreshQueuedMaxVideoURL(ctx context.Context, chatID int64, mid string) (string, error) {
+	if mid == "" {
+		return "", fmt.Errorf("empty MAX message id")
+	}
+	msg, err := b.maxClientFor(ctx, chatID).Messages.GetMessage(ctx, mid)
+	if err != nil {
+		return "", fmt.Errorf("refresh MAX video: %w", err)
+	}
+	if url := maxVideoURLFromAttachments(maxMessageAttachments(msg), ""); url != "" {
+		return url, nil
+	}
+	return "", fmt.Errorf("refresh MAX video: attachment URL is not ready")
+}
+
+func maxAlbumItemsFromAttachments(attachments []interface{}) []maxAlbumItem {
+	items := make([]maxAlbumItem, 0, len(attachments))
+	for _, att := range attachments {
+		switch a := att.(type) {
+		case *maxschemes.PhotoAttachment:
+			if a.Payload.Url != "" {
+				items = append(items, maxAlbumItem{Type: "photo", URL: a.Payload.Url})
+			}
+		case *maxschemes.VideoAttachment:
+			if a.Payload.Url != "" {
+				items = append(items, maxAlbumItem{Type: "video", URL: a.Payload.Url})
+			}
+		}
+	}
+	return items
+}
+
+func (b *Bridge) refreshQueuedMaxAlbumItems(ctx context.Context, chatID int64, mid string) ([]maxAlbumItem, error) {
+	if mid == "" {
+		return nil, fmt.Errorf("empty MAX message id")
+	}
+	msg, err := b.maxClientFor(ctx, chatID).Messages.GetMessage(ctx, mid)
+	if err != nil {
+		return nil, fmt.Errorf("refresh MAX album: %w", err)
+	}
+	items := maxAlbumItemsFromAttachments(maxMessageAttachments(msg))
+	if len(items) == 0 {
+		return nil, fmt.Errorf("refresh MAX album: attachments are not ready")
+	}
+	return items, nil
+}
+
 func (b *Bridge) resolveMaxVideoURL(ctx context.Context, chatID int64, mid string, att *maxschemes.VideoAttachment) string {
 	if att == nil {
 		return ""
@@ -1681,10 +1764,7 @@ func (b *Bridge) resolveMaxVideoURL(ctx context.Context, chatID int64, mid strin
 			slog.Warn("MAX→TG video URL resolve failed", "err", err, "maxChat", chatID, "mid", mid, "attempt", attempt+1)
 			continue
 		}
-		attachments := msg.Body.Attachments
-		if len(attachments) == 0 && len(msg.Body.RawAttachments) > 0 {
-			attachments = parseMaxRawAttachments(msg.Body.RawAttachments)
-		}
+		attachments := maxMessageAttachments(msg)
 		if url := maxVideoURLFromAttachments(attachments, token); url != "" {
 			if attempt > 0 {
 				slog.Info("MAX→TG video URL resolved", "maxChat", chatID, "mid", mid, "attempt", attempt+1)
@@ -1703,6 +1783,13 @@ type maxAlbumItem struct {
 	URL  string `json:"u"`
 }
 
+func splitMaxMediaCaption(caption string) (mediaCaption, overflowCaption string) {
+	if utf8.RuneCountInString(caption) > 1024 {
+		return "", caption
+	}
+	return caption, ""
+}
+
 // sendMaxAlbumToTg качает байты каждого элемента альбома и шлёт media group в TG.
 // Байты (а не URL) — Telegram не фетчит MAX-CDN надёжно; уникальные attach-имена ставит
 // SendMediaGroup (иначе все фото схлопывались в первое). caption/parseMode — на [0].
@@ -1712,13 +1799,7 @@ func (b *Bridge) sendMaxAlbumToTg(ctx context.Context, tgChatID int64, items []m
 	// пост-инструкция с альбомом) НЕ вешаем на альбом (иначе «caption is too long» → фото
 	// уходят без текста), а шлём отдельным сообщением следом. Порог по рунам с запасом: для
 	// HTML-подписи теги завышают счёт — тогда просто отправим текст отдельно, это безопасно.
-	const tgMediaCaptionLimit = 1024
-	albumCaption := caption
-	overflowCaption := ""
-	if utf8.RuneCountInString(caption) > tgMediaCaptionLimit {
-		albumCaption = ""
-		overflowCaption = caption
-	}
+	albumCaption, overflowCaption := splitMaxMediaCaption(caption)
 
 	media := make([]TGInputMedia, 0, len(items))
 	for i, it := range items {
@@ -1744,8 +1825,10 @@ func (b *Bridge) sendMaxAlbumToTg(ctx context.Context, tgChatID int64, items []m
 	}
 	// Длинная подпись — отдельным сообщением (после альбома, в том же треде).
 	if overflowCaption != "" {
-		if _, serr := b.tg.SendMessage(ctx, tgChatID, overflowCaption, &SendOpts{ParseMode: parseMode, ThreadID: threadID}); serr != nil {
+		if overflowID, serr := b.tg.SendMessage(ctx, tgChatID, overflowCaption, &SendOpts{ParseMode: parseMode, ThreadID: threadID}); serr != nil {
 			slog.Warn("MAX→TG album long caption send failed", "tgChat", tgChatID, "err", serr)
+		} else {
+			msgs = append(msgs, overflowID)
 		}
 	}
 	return msgs, nil
@@ -1872,6 +1955,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 
 	// Проверяем вложения
 	var sentMsgID int
+	var sentMsgIDs []int
 	var sendErr error
 	mediaSent := false
 	var qAttType, qAttURL string // для очереди при ошибке
@@ -2012,7 +2096,18 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 
 		if len(albumMedia) == 1 {
 			// Одно вложение — отправляем обычным сообщением (альбом из 1 элемента не имеет reply)
-			sentMsgID, sendErr = b.sendTgMediaFromURL(ctx, tgChatID, qAttURL, qAttType, htmlCaption, pm, replyToID, threadID, b.cfg.maxMaxFileBytes())
+			mediaCaption, overflowCaption := splitMaxMediaCaption(htmlCaption)
+			sentMsgID, sendErr = b.sendTgMediaFromURL(ctx, tgChatID, qAttURL, qAttType, mediaCaption, pm, replyToID, threadID, b.cfg.maxMaxFileBytes())
+			if sendErr == nil && sentMsgID != 0 {
+				sentMsgIDs = append(sentMsgIDs, sentMsgID)
+			}
+			if sendErr == nil && overflowCaption != "" {
+				if overflowID, err := b.tg.SendMessage(ctx, tgChatID, overflowCaption, &SendOpts{ParseMode: pm, ThreadID: threadID}); err != nil {
+					slog.Warn("MAX→TG media long caption send failed", "tgChat", tgChatID, "err", err)
+				} else {
+					sentMsgIDs = append(sentMsgIDs, overflowID)
+				}
+			}
 			var e *ErrFileTooLarge
 			if errors.As(sendErr, &e) {
 				slog.Warn("MAX→TG media too big", "name", e.Name, "size", e.Size)
@@ -2030,6 +2125,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				sendErr = err
 			} else if len(msgIDs) > 0 {
 				sentMsgID = msgIDs[0]
+				sentMsgIDs = append(sentMsgIDs, msgIDs...)
 			}
 		}
 	}
@@ -2039,9 +2135,10 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	firstSolo := true
 	for _, sm := range soloMedia {
 		smCaption := ""
+		overflowCaption := ""
 		smReplyTo := 0
 		if firstSolo && !mediaSent {
-			smCaption = htmlCaption
+			smCaption, overflowCaption = splitMaxMediaCaption(htmlCaption)
 			smReplyTo = replyToID
 		}
 		firstSolo = false
@@ -2063,9 +2160,19 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			if sendErr == nil {
 				sendErr = err
 			}
-		} else if !mediaSent {
-			sentMsgID = s
-			mediaSent = true
+		} else {
+			sentMsgIDs = append(sentMsgIDs, s)
+			if !mediaSent {
+				sentMsgID = s
+				mediaSent = true
+			}
+			if overflowCaption != "" {
+				if overflowID, err := b.tg.SendMessage(ctx, tgChatID, overflowCaption, &SendOpts{ParseMode: pm, ThreadID: threadID}); err != nil {
+					slog.Warn("MAX→TG file long caption send failed", "tgChat", tgChatID, "err", err)
+				} else {
+					sentMsgIDs = append(sentMsgIDs, overflowID)
+				}
+			}
 		}
 	}
 
@@ -2078,6 +2185,9 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			sentMsgID, sendErr = b.tg.SendMessage(ctx, tgChatID, htmlCaption, &SendOpts{ParseMode: "HTML", ReplyToID: replyToID, ThreadID: threadID})
 		} else {
 			sentMsgID, sendErr = b.tg.SendMessage(ctx, tgChatID, caption, &SendOpts{ReplyToID: replyToID, ThreadID: threadID})
+		}
+		if sendErr == nil && sentMsgID != 0 {
+			sentMsgIDs = append(sentMsgIDs, sentMsgID)
 		}
 	}
 
@@ -2147,7 +2257,12 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	} else {
 		b.cbSuccess(tgChatID)
 		slog.Info("MAX→TG sent", "msgID", sentMsgID, "media", mediaSent, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
-		b.repo.SaveMsgOrigin(tgChatID, sentMsgID, chatID, body.Mid, threadID, "max")
+		if len(sentMsgIDs) == 0 && sentMsgID != 0 {
+			sentMsgIDs = append(sentMsgIDs, sentMsgID)
+		}
+		for _, id := range sentMsgIDs {
+			b.repo.SaveMsgOrigin(tgChatID, id, chatID, body.Mid, threadID, "max")
+		}
 	}
 }
 

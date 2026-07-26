@@ -11,11 +11,19 @@ import (
 )
 
 const (
-	queueMaxAttempts = 30             // максимум попыток
-	queueMaxAge      = 24 * time.Hour // дропаем сообщения старше 24 часов
-	queueBatchSize   = 10
-	queueItemTimeout = 45 * time.Second
+	queueMaxAttempts  = 30             // максимум попыток
+	queueMaxAge       = 24 * time.Hour // дропаем сообщения старше 24 часов
+	queueBatchSize    = 10
+	queueItemTimeout  = 45 * time.Second
+	queueMediaTimeout = 5 * time.Minute
 )
+
+func queueTimeout(item QueueItem) time.Duration {
+	if item.AttType != "" {
+		return queueMediaTimeout
+	}
+	return queueItemTimeout
+}
 
 // humanQueueError переводит техническую ошибку доставки в MAX в понятную причину
 // для пользователя.
@@ -162,7 +170,7 @@ func (b *Bridge) processQueue(ctx context.Context) {
 			continue
 		}
 
-		itemCtx, cancel := context.WithTimeout(ctx, queueItemTimeout)
+		itemCtx, cancel := context.WithTimeout(ctx, queueTimeout(item))
 		switch item.Direction {
 		case "tg2max":
 			b.processQueueTg2Max(itemCtx, item, now)
@@ -259,13 +267,17 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 	threadID := b.repo.GetTgThreadID(item.DstChatID)
 
 	if item.AttType == "album" {
-		// Альбом: восстанавливаем список {type,url} и шлём media group целиком.
+		// Альбом: сохранённый JSON нужен для совместимости, но CDN URL в нём
+		// короткоживущие. Перед каждой попыткой перечитываем исходное MAX-сообщение.
 		var items []maxAlbumItem
 		if json.Unmarshal([]byte(item.AttURL), &items) == nil && len(items) > 0 {
-			ids, e := b.sendMaxAlbumToTg(ctx, item.DstChatID, items, item.Text, item.ParseMode, threadID, 0)
-			err = e
-			if e == nil && len(ids) > 0 {
-				sentMsgID = ids[0]
+			items, err = b.refreshQueuedMaxAlbumItems(ctx, item.SrcChatID, item.SrcMsgID)
+			if err == nil {
+				ids, e := b.sendMaxAlbumToTg(ctx, item.DstChatID, items, item.Text, item.ParseMode, threadID, 0)
+				err = e
+				if e == nil && len(ids) > 0 {
+					sentMsgID = ids[0]
+				}
 			}
 		} else {
 			slog.Warn("queue: bad album payload, dropping", "id", item.ID)
@@ -273,18 +285,15 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 			return
 		}
 	} else if item.AttType != "" && item.AttURL != "" {
-		opts := &SendOpts{Caption: item.Text, ParseMode: item.ParseMode, ThreadID: threadID}
-		switch item.AttType {
-		case "photo":
-			sentMsgID, err = b.tg.SendPhoto(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
-		case "video":
-			sentMsgID, err = b.tg.SendVideo(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
-		case "audio":
-			sentMsgID, err = b.tg.SendAudio(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
-		case "file":
-			sentMsgID, err = b.tg.SendDocument(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
-		default:
-			sentMsgID, err = b.tg.SendPhoto(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
+		mediaURL := item.AttURL
+		if item.AttType == "video" {
+			mediaURL, err = b.refreshQueuedMaxVideoURL(ctx, item.SrcChatID, item.SrcMsgID)
+		}
+		if err == nil {
+			// Как и прямая доставка, сначала скачиваем MAX CDN сами и загружаем
+			// байты в Telegram. Telegram ненадёжно забирает MAX CDN URL напрямую.
+			sentMsgID, err = b.sendTgMediaFromURL(ctx, item.DstChatID, mediaURL, item.AttType,
+				item.Text, item.ParseMode, 0, threadID, b.cfg.maxMaxFileBytes())
 		}
 	} else {
 		sentMsgID, err = b.tg.SendMessage(ctx, item.DstChatID, item.Text, &SendOpts{ParseMode: item.ParseMode, ThreadID: threadID})

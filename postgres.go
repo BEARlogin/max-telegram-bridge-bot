@@ -148,6 +148,27 @@ func (r *pgRepo) LookupTgMsgID(maxMsgID string) (int64, int, int, bool) {
 	return chatID, msgID, threadID, err == nil
 }
 
+func (r *pgRepo) ListTgMsgIDs(maxMsgID string, tgChatID int64) []int {
+	rows, err := r.db.Query(`SELECT tg_msg_id FROM messages
+		WHERE max_msg_id=$1 AND tg_chat_id=$2 ORDER BY tg_msg_id`, maxMsgID, tgChatID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func (r *pgRepo) DeleteTgMsgMapping(tgChatID int64, tgMsgID int) {
+	_, _ = r.db.Exec("DELETE FROM messages WHERE tg_chat_id=$1 AND tg_msg_id=$2", tgChatID, tgMsgID)
+}
+
 func (r *pgRepo) LookupTgMsgOrigin(maxMsgID string) (string, bool) {
 	var origin string
 	err := r.db.QueryRow("SELECT COALESCE(origin, '') FROM messages WHERE max_msg_id = $1", maxMsgID).Scan(&origin)
@@ -366,7 +387,12 @@ func (r *pgRepo) PairCrosspost(tgChatID, maxChatID, ownerID, tgOwnerID int64) er
 }
 
 func (r *pgRepo) GetCrosspostOwner(maxChatID int64) (maxOwner, tgOwner int64) {
-	r.db.QueryRow("SELECT owner_id, tg_owner_id FROM crossposts WHERE max_chat_id = $1 AND deleted_at = 0", maxChatID).Scan(&maxOwner, &tgOwner)
+	r.db.QueryRow("SELECT owner_id, tg_owner_id FROM crossposts WHERE max_chat_id = $1 AND deleted_at = 0 ORDER BY created_at, tg_chat_id LIMIT 1", maxChatID).Scan(&maxOwner, &tgOwner)
+	return
+}
+
+func (r *pgRepo) GetCrosspostOwnerPair(tgChatID, maxChatID int64) (maxOwner, tgOwner int64) {
+	r.db.QueryRow("SELECT owner_id, tg_owner_id FROM crossposts WHERE tg_chat_id = $1 AND max_chat_id = $2 AND deleted_at = 0", tgChatID, maxChatID).Scan(&maxOwner, &tgOwner)
 	return
 }
 
@@ -402,6 +428,118 @@ func (r *pgRepo) ListBotChats(platform string, limit int) []BotChatRef {
 	return out
 }
 
+func (r *pgRepo) DoctorConnections(platform string, userID, dayStart int64) ([]DoctorConnection, error) {
+	if userID <= 0 || (platform != "tg" && platform != "max") {
+		return nil, errInvalidDoctorPrincipal
+	}
+
+	pairOwnerClause := "p.tg_owner_id = $1"
+	crosspostOwnerClause := "c.tg_owner_id = $1"
+	if platform == "max" {
+		pairOwnerClause = "p.max_owner_id = $1"
+		crosspostOwnerClause = "c.owner_id = $1"
+	}
+
+	pairRows, err := r.db.Query(`SELECT p.tg_chat_id, p.max_chat_id,
+			COALESCE(t.title,''), COALESCE(m.title,''), COALESCE(p.paused,0), COALESCE(p.created_at,0)
+		FROM pairs p
+		LEFT JOIN bot_chats t ON t.platform='tg' AND t.chat_id=p.tg_chat_id
+		LEFT JOIN bot_chats m ON m.platform='max' AND m.chat_id=p.max_chat_id
+		WHERE `+pairOwnerClause+`
+		ORDER BY p.created_at, p.tg_chat_id, p.max_chat_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var connections []DoctorConnection
+	for pairRows.Next() {
+		var c DoctorConnection
+		var paused int
+		c.Kind = "bridge"
+		c.Direction = "both"
+		if err := pairRows.Scan(&c.TgChatID, &c.MaxChatID, &c.TgTitle, &c.MaxTitle, &paused, &c.CreatedAt); err != nil {
+			pairRows.Close()
+			return nil, err
+		}
+		c.Paused = paused != 0
+		connections = append(connections, c)
+	}
+	if err := pairRows.Err(); err != nil {
+		pairRows.Close()
+		return nil, err
+	}
+	pairRows.Close()
+
+	crosspostRows, err := r.db.Query(`SELECT c.tg_chat_id, c.max_chat_id,
+			COALESCE(t.title,''), COALESCE(m.title,''), COALESCE(c.direction,'both'),
+			COALESCE(c.paused,0), COALESCE(c.created_at,0)
+		FROM crossposts c
+		LEFT JOIN bot_chats t ON t.platform='tg' AND t.chat_id=c.tg_chat_id
+		LEFT JOIN bot_chats m ON m.platform='max' AND m.chat_id=c.max_chat_id
+		WHERE `+crosspostOwnerClause+` AND c.deleted_at=0
+		ORDER BY c.created_at, c.tg_chat_id, c.max_chat_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	for crosspostRows.Next() {
+		var c DoctorConnection
+		var paused int
+		c.Kind = "crosspost"
+		if err := crosspostRows.Scan(&c.TgChatID, &c.MaxChatID, &c.TgTitle, &c.MaxTitle,
+			&c.Direction, &paused, &c.CreatedAt); err != nil {
+			crosspostRows.Close()
+			return nil, err
+		}
+		c.Paused = paused != 0
+		connections = append(connections, c)
+	}
+	if err := crosspostRows.Err(); err != nil {
+		crosspostRows.Close()
+		return nil, err
+	}
+	crosspostRows.Close()
+
+	for i := range connections {
+		if err := r.fillDoctorConnection(&connections[i], dayStart); err != nil {
+			return nil, err
+		}
+	}
+	return connections, nil
+}
+
+func (r *pgRepo) fillDoctorConnection(c *DoctorConnection, dayStart int64) error {
+	var todayTgToMax, todayMaxToTg int64
+	err := r.db.QueryRow(`SELECT
+			COALESCE(MAX(CASE WHEN origin='tg' THEN created_at END),0),
+			COALESCE(MAX(CASE WHEN origin='max' THEN created_at END),0),
+			COUNT(DISTINCT CASE WHEN origin='tg' AND created_at >= $1 THEN max_msg_id END),
+			COUNT(DISTINCT CASE WHEN origin='max' AND created_at >= $1 THEN max_msg_id END)
+		FROM messages WHERE tg_chat_id=$2 AND max_chat_id=$3`,
+		dayStart, c.TgChatID, c.MaxChatID).
+		Scan(&c.LastTgToMax, &c.LastMaxToTg, &todayTgToMax, &todayMaxToTg)
+	if err != nil {
+		return err
+	}
+	c.TodayTgToMax = int(todayTgToMax)
+	c.TodayMaxToTg = int(todayMaxToTg)
+
+	var pendingTgToMax, pendingMaxToTg int64
+	err = r.db.QueryRow(`SELECT
+			COALESCE(SUM(CASE WHEN direction='tg2max' AND src_chat_id=$1 AND dst_chat_id=$2 THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN direction='max2tg' AND src_chat_id=$2 AND dst_chat_id=$1 THEN 1 ELSE 0 END),0),
+			COALESCE(MIN(created_at),0),
+			COALESCE(MAX(attempts),0)
+		FROM send_queue
+		WHERE (src_chat_id=$1 AND dst_chat_id=$2) OR (src_chat_id=$2 AND dst_chat_id=$1)`,
+		c.TgChatID, c.MaxChatID).
+		Scan(&pendingTgToMax, &pendingMaxToTg, &c.OldestPending, &c.MaxAttempts)
+	if err != nil {
+		return err
+	}
+	c.PendingTgToMax = int(pendingTgToMax)
+	c.PendingMaxToTg = int(pendingMaxToTg)
+	return nil
+}
+
 func (r *pgRepo) LookupChannelByDiscussion(discChatID int64, discMsgID int) (int64, int, bool) {
 	var cc int64
 	var cm int
@@ -411,17 +549,51 @@ func (r *pgRepo) LookupChannelByDiscussion(discChatID int64, discMsgID int) (int
 }
 
 func (r *pgRepo) GetCrosspostMaxChat(tgChatID int64) (int64, string, bool) {
-	var id int64
-	var dir string
-	err := r.db.QueryRow("SELECT max_chat_id, direction FROM crossposts WHERE tg_chat_id = $1 AND deleted_at = 0", tgChatID).Scan(&id, &dir)
-	return id, dir, err == nil
+	links := r.GetCrosspostMaxChats(tgChatID)
+	if len(links) == 0 {
+		return 0, "", false
+	}
+	return links[0].MaxChatID, links[0].Direction, true
+}
+
+func (r *pgRepo) GetCrosspostMaxChats(tgChatID int64) []CrosspostLink {
+	rows, err := r.db.Query("SELECT tg_chat_id, max_chat_id, direction FROM crossposts WHERE tg_chat_id = $1 AND deleted_at = 0 ORDER BY created_at, max_chat_id", tgChatID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var links []CrosspostLink
+	for rows.Next() {
+		var l CrosspostLink
+		if rows.Scan(&l.TgChatID, &l.MaxChatID, &l.Direction) == nil {
+			links = append(links, l)
+		}
+	}
+	return links
 }
 
 func (r *pgRepo) GetCrosspostTgChat(maxChatID int64) (int64, string, bool) {
-	var id int64
-	var dir string
-	err := r.db.QueryRow("SELECT tg_chat_id, direction FROM crossposts WHERE max_chat_id = $1 AND deleted_at = 0", maxChatID).Scan(&id, &dir)
-	return id, dir, err == nil
+	links := r.GetCrosspostTgChats(maxChatID)
+	if len(links) == 0 {
+		return 0, "", false
+	}
+	return links[0].TgChatID, links[0].Direction, true
+}
+
+func (r *pgRepo) GetCrosspostTgChats(maxChatID int64) []CrosspostLink {
+	rows, err := r.db.Query("SELECT tg_chat_id, max_chat_id, direction FROM crossposts WHERE max_chat_id = $1 AND deleted_at = 0 ORDER BY created_at, tg_chat_id", maxChatID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var links []CrosspostLink
+	for rows.Next() {
+		var l CrosspostLink
+		if rows.Scan(&l.TgChatID, &l.MaxChatID, &l.Direction) == nil {
+			links = append(links, l)
+		}
+	}
+	return links
 }
 
 func (r *pgRepo) ListCrossposts(ownerID int64) []CrosspostLink {

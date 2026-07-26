@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
@@ -274,6 +275,26 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				intro, kb := b.tgStartMenu()
 				b.tg.SendMessage(ctx, msg.Chat.ID, intro,
 					&SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID, ReplyMarkup: kb})
+				continue
+			}
+
+			if text == "/doctor" {
+				if msg.Chat.Type != "private" || msg.From == nil {
+					b.tg.SendMessage(ctx, msg.Chat.ID,
+						"Отчёт /doctor доступен только в личном диалоге с ботом.",
+						&SendOpts{ThreadID: msg.MessageThreadID})
+					continue
+				}
+				if !b.checkUserAllowed(ctx, msg.Chat.ID, msg.From.ID, msg.MessageThreadID) {
+					continue
+				}
+				if !b.doctorTakeRate("tg", msg.From.ID, time.Now()) {
+					b.tg.SendMessage(ctx, msg.Chat.ID,
+						"Отчёт уже собирался. Повторите через 10 секунд.",
+						&SendOpts{ThreadID: msg.MessageThreadID})
+					continue
+				}
+				b.sendDoctorTG(ctx, msg.Chat.ID, msg.From.ID, msg.MessageThreadID)
 				continue
 			}
 
@@ -1572,20 +1593,6 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		go b.addon.HandleTgChannelPost(ctx, msg.Chat.ID, msg.MessageID, msg.MediaGroupID)
 	}
 
-	// Пересылка crosspost: TG → MAX
-	maxChatID, direction, ok := b.repo.GetCrosspostMaxChat(msg.Chat.ID)
-	if !ok {
-		return
-	}
-	if direction == "max>tg" {
-		return // только MAX→TG, пропускаем
-	}
-
-	// Аддон решает, доставлять ли пост связки (и сам уведомит владельца, если нет).
-	if !b.crosspostDeliverable(ctx, maxChatID) {
-		return
-	}
-
 	// Anti-loop
 	checkText := msg.Text
 	if checkText == "" {
@@ -1595,15 +1602,30 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		return
 	}
 
-	// Идемпотентность: этот пост канала уже кросспостился (повторная доставка вебхука /
-	// дубль-строка связки / перекрытие) — атомарный claim по (канал, msg_id) в БД.
-	// Уже застолблён → не кросспостим повторно. Старые записи чистятся по TTL.
-	if !b.repo.ClaimCrosspost("tg", msg.Chat.ID, strconv.Itoa(msg.MessageID)) {
-		slog.Info("skip duplicate crosspost TG→MAX (already claimed)", "tgChannel", msg.Chat.ID, "tgMsg", msg.MessageID, "maxChat", maxChatID)
+	// Пересылка crosspost: TG → MAX. Один TG-канал может иметь несколько MAX-адресатов,
+	// а несколько TG-каналов могут сходиться в один MAX-чат.
+	links := b.repo.GetCrosspostMaxChats(msg.Chat.ID)
+	if len(links) == 0 {
 		return
 	}
-
-	go b.publishTgCrosspost(ctx, msg, maxChatID, true)
+	for _, link := range links {
+		maxChatID, direction := link.MaxChatID, link.Direction
+		if direction == "max>tg" {
+			continue // только MAX→TG, пропускаем
+		}
+		// Аддон решает, доставлять ли пост конкретной связки (и сам уведомит владельца, если нет).
+		if !b.crosspostDeliverablePair(ctx, msg.Chat.ID, maxChatID) {
+			continue
+		}
+		// Идемпотентность per-destination: один исходный пост можно доставить в несколько
+		// MAX-чатов, но нельзя дублировать в тот же адресат при ретрае вебхука.
+		claimKey := strconv.Itoa(msg.MessageID) + ":" + strconv.FormatInt(maxChatID, 10)
+		if !b.repo.ClaimCrosspost("tg", msg.Chat.ID, claimKey) {
+			slog.Info("skip duplicate crosspost TG→MAX (already claimed)", "tgChannel", msg.Chat.ID, "tgMsg", msg.MessageID, "maxChat", maxChatID)
+			continue
+		}
+		go b.publishTgCrosspost(ctx, msg, maxChatID, true)
+	}
 }
 
 // publishTgCrosspost формирует caption (markdown-разметка + замены TG→MAX) и

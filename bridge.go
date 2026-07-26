@@ -94,6 +94,9 @@ type Bridge struct {
 	// Сбрасывается на первой успешной отправке в MAX.
 	maxBlockedUntil atomic.Int64
 
+	doctorMu   sync.Mutex
+	doctorLast map[string]time.Time
+
 	// Буферизация TG media groups (альбомы)
 	mgMu      sync.Mutex
 	mgBuffers map[string]*mediaGroupBuffer // MediaGroupID → buffer
@@ -143,6 +146,7 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		cpWait:      make(map[int64]int64),
 		cpTgOwner:   make(map[int64]int64),
 		breakers:    make(map[int64]*chatBreaker),
+		doctorLast:  make(map[string]time.Time),
 		mgBuffers:   make(map[string]*mediaGroupBuffer),
 		maxBotCache: make(map[int64]string),
 		maxSeenMid:  make(map[string]int64),
@@ -471,6 +475,7 @@ func (b *Bridge) registerCommands(ctx context.Context) {
 		{Command: "thread_bridge", Description: "Связать тред с отдельным MAX-чатом"},
 		{Command: "thread_unbridge", Description: "Удалить связку треда"},
 		{Command: "crosspost", Description: "Список связок кросспостинга"},
+		{Command: "doctor", Description: "Диагностика всех моих подключений"},
 		{Command: "help", Description: "Инструкция"},
 	}
 	// Команды, добавленные опциональными расширениями (через loadAddon). Бридж не

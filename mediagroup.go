@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
+	"strings"
 	"time"
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
@@ -29,10 +29,10 @@ type mediaGroupItem struct {
 
 // mediaGroupBuffer накапливает сообщения альбома перед отправкой.
 type mediaGroupBuffer struct {
-	mu          sync.Mutex
 	items       []mediaGroupItem
 	timer       *time.Timer
 	manualFlush bool
+	generation  uint64
 }
 
 // bufferMediaGroup добавляет сообщение в буфер альбома.
@@ -50,54 +50,66 @@ func (b *Bridge) bufferMediaGroupManual(ctx context.Context, groupID string, ite
 
 func (b *Bridge) bufferMediaGroupMode(ctx context.Context, groupID string, item mediaGroupItem, manual bool) {
 	b.mgMu.Lock()
-
+	defer b.mgMu.Unlock()
 	buf, ok := b.mgBuffers[groupID]
 	if !ok {
 		buf = &mediaGroupBuffer{manualFlush: manual}
 		b.mgBuffers[groupID] = buf
-		// Добавляем первый item до запуска таймера — исключает гонку
-		buf.items = append(buf.items, item)
-		if !manual {
-			buf.timer = time.AfterFunc(mediaGroupTimeout, func() {
-				_, _ = b.flushMediaGroup(ctx, groupID)
-			})
-		}
-		b.mgMu.Unlock()
+	}
+
+	buf.items = append(buf.items, item)
+	buf.generation++
+	if buf.manualFlush {
 		return
 	}
 
-	b.mgMu.Unlock()
-
-	buf.mu.Lock()
-	buf.items = append(buf.items, item)
-	// Debounce: продлеваем окно сбора на каждый новый элемент. Если части
-	// альбома приходят с задержкой (форвард+загрузка), и фиксированный таймер от
-	// первого элемента флашил бы группу до прихода остальных, разбивая альбом.
+	// Каждый элемент получает новый timer generation. Stop/Reset недостаточно:
+	// callback старого таймера уже может ждать mgMu и после разблокировки успеть
+	// отсоединить буфер до поздней части с caption. Устаревший callback сверяет
+	// generation и ничего не отправляет.
 	if buf.timer != nil {
-		buf.timer.Reset(mediaGroupTimeout)
+		buf.timer.Stop()
 	}
-	buf.mu.Unlock()
+	generation := buf.generation
+	buf.timer = time.AfterFunc(mediaGroupTimeout, func() {
+		_, _ = b.flushMediaGroupGeneration(ctx, groupID, generation)
+	})
 }
 
 // flushMediaGroup отправляет все накопленные фото/видео альбома одним сообщением в MAX.
 func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) (string, error) {
+	return b.flushMediaGroupGeneration(ctx, groupID, 0)
+}
+
+// detachMediaGroup атомарно отсоединяет готовый буфер. expectedGeneration=0
+// означает явный flush; timer flush проходит только для актуального поколения.
+func (b *Bridge) detachMediaGroup(groupID string, expectedGeneration uint64) (*mediaGroupBuffer, bool, error) {
 	b.mgMu.Lock()
+	defer b.mgMu.Unlock()
 	buf, ok := b.mgBuffers[groupID]
 	if !ok {
-		b.mgMu.Unlock()
-		return "", fmt.Errorf("media group %q is not buffered", groupID)
+		return nil, false, fmt.Errorf("media group %q is not buffered", groupID)
+	}
+	if expectedGeneration != 0 && buf.generation != expectedGeneration {
+		return nil, false, nil
 	}
 	delete(b.mgBuffers, groupID)
-	b.mgMu.Unlock()
-
-	buf.mu.Lock()
 	if buf.timer != nil {
 		buf.timer.Stop()
 	}
+	return buf, true, nil
+}
+
+func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, expectedGeneration uint64) (string, error) {
+	buf, detached, err := b.detachMediaGroup(groupID, expectedGeneration)
+	if err != nil {
+		return "", err
+	}
+	if !detached {
+		return "", nil
+	}
 	items := buf.items
 	manualFlush := buf.manualFlush
-	buf.mu.Unlock()
-
 	if len(items) == 0 {
 		return "", fmt.Errorf("media group %q is empty", groupID)
 	}
@@ -294,9 +306,54 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) (string, e
 		return "", err
 	}
 	b.cbSuccess(maxChatID)
-	slog.Info("TG→MAX media group sent", "mid", result.Body.Mid, "photos", photosSent, "videos", videosSent, "files", filesSent)
+
+	// MAX иногда подтверждает создание медиаальбома, но сохраняет его без текста.
+	// Проверяем созданный объект и восстанавливаем только text/format через PUT:
+	// attachments при этом не передаются и уже опубликованное медиа не затирается.
+	captionRepaired := false
+	if strings.TrimSpace(mdCaption) != "" {
+		persisted, getErr := mc.Messages.GetMessage(ctx, result.Body.Mid)
+		if getErr != nil {
+			slog.Warn("TG→MAX media group caption verification failed",
+				"err", getErr, "mid", result.Body.Mid, "captionBytes", len(mdCaption))
+		}
+		if maxAlbumCaptionMissing(mdCaption, result, persisted, getErr) {
+			format := ""
+			if isCrosspost || mdCaption != caption {
+				format = "html"
+			}
+			if editErr := b.editMaxTextOnly(ctx, maxChatID, result.Body.Mid, mdCaption, format); editErr != nil {
+				slog.Error("TG→MAX media group caption repair failed",
+					"err", editErr, "mid", result.Body.Mid, "captionBytes", len(mdCaption))
+				b.notifyTgUser(ctx, items[0].msg, maxChatID,
+					"Альбом отправлен в MAX, но подпись не сохранилась. Повторите отправку текста отдельным сообщением.", isCrosspost)
+			} else {
+				captionRepaired = true
+				slog.Info("TG→MAX media group caption repaired",
+					"mid", result.Body.Mid, "captionBytes", len(mdCaption))
+			}
+		}
+	}
+
+	slog.Info("TG→MAX media group sent",
+		"mid", result.Body.Mid,
+		"photos", photosSent,
+		"videos", videosSent,
+		"files", filesSent,
+		"captionBytes", len(mdCaption),
+		"captionRepaired", captionRepaired)
 	for _, it := range items {
 		b.repo.SaveMsgOrigin(it.msg.Chat.ID, it.msg.MessageID, maxChatID, result.Body.Mid, it.msg.MessageThreadID, "tg")
 	}
 	return result.Body.Mid, nil
+}
+
+func maxAlbumCaptionMissing(expected string, sent, persisted *maxschemes.Message, fetchErr error) bool {
+	if strings.TrimSpace(expected) == "" {
+		return false
+	}
+	if fetchErr == nil && persisted != nil {
+		return strings.TrimSpace(persisted.Body.Text) == ""
+	}
+	return sent == nil || strings.TrimSpace(sent.Body.Text) == ""
 }

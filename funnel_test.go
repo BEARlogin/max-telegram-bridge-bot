@@ -80,6 +80,23 @@ func TestMaxMsgDeliveredTo_PerChat(t *testing.T) {
 	}
 }
 
+func TestListAndDeleteTgMessageMappingsPreserveWholeAlbum(t *testing.T) {
+	repo := testRepo(t)
+	const maxChat, tgChat = int64(-999), int64(-1001)
+	for _, tgMsgID := range []int{41, 42, 43} {
+		repo.SaveMsgOrigin(tgChat, tgMsgID, maxChat, "mid-album", 0, "max")
+	}
+	got := repo.ListTgMsgIDs("mid-album", tgChat)
+	if len(got) != 3 || got[0] != 41 || got[1] != 42 || got[2] != 43 {
+		t.Fatalf("album mappings=%v", got)
+	}
+	repo.DeleteTgMsgMapping(tgChat, 42)
+	got = repo.ListTgMsgIDs("mid-album", tgChat)
+	if len(got) != 2 || got[0] != 41 || got[1] != 43 {
+		t.Fatalf("mappings after delete=%v", got)
+	}
+}
+
 func TestMaxMessageAlreadyMappedSuppressesTgToMaxEcho(t *testing.T) {
 	repo := testRepo(t)
 	b := &Bridge{repo: repo}

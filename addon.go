@@ -471,6 +471,14 @@ func (b *Bridge) crosspostDeliverable(ctx context.Context, maxChatID int64) bool
 	return b.addon.CrosspostDeliverable(ctx, maxOwner, tgOwner, maxChatID)
 }
 
+func (b *Bridge) crosspostDeliverablePair(ctx context.Context, tgChatID, maxChatID int64) bool {
+	if b.addon == nil {
+		return true
+	}
+	maxOwner, tgOwner := b.repo.GetCrosspostOwnerPair(tgChatID, maxChatID)
+	return b.addon.CrosspostDeliverable(ctx, maxOwner, tgOwner, maxChatID)
+}
+
 func normalizePairDirection(direction string) string {
 	switch direction {
 	case "tg>max", "max>tg", "both":
@@ -526,6 +534,18 @@ func (b *Bridge) crosspostFooter(ctx context.Context, maxChatID int64, dst strin
 	return b.addon.CrosspostFooter(ctx, maxOwner, tgOwner, maxChatID, dst, url)
 }
 
+func (b *Bridge) crosspostFooterPair(ctx context.Context, tgChatID, maxChatID int64, dst string) string {
+	if b.addon == nil {
+		return ""
+	}
+	maxOwner, tgOwner := b.repo.GetCrosspostOwnerPair(tgChatID, maxChatID)
+	url := b.cfg.TgBotURL
+	if dst == "max" {
+		url = b.cfg.MaxBotURL
+	}
+	return b.addon.CrosspostFooter(ctx, maxOwner, tgOwner, maxChatID, dst, url)
+}
+
 // crosspostOpenApp спрашивает у аддона inline-кнопку для кросспоста (если подключён)
 // и возвращает спецификацию OPEN_APP-кнопки для прикрепления к MAX-сообщению. nil —
 // кнопки нет (нет аддона / не нужна). Вызывается ПЕРЕД отправкой.
@@ -533,7 +553,7 @@ func (b *Bridge) crosspostOpenApp(ctx context.Context, tgChatID int64, tgMsgID i
 	if b.addon == nil {
 		return nil
 	}
-	_, tgOwner := b.repo.GetCrosspostOwner(maxChatID)
+	_, tgOwner := b.repo.GetCrosspostOwnerPair(tgChatID, maxChatID)
 	appName, text, payload, ok := b.addon.CrosspostButton(ctx, tgOwner, tgChatID, tgMsgID, maxChatID)
 	if !ok || appName == "" {
 		return nil

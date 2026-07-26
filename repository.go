@@ -60,6 +60,8 @@ type Repository interface {
 	SaveMsgOrigin(tgChatID int64, tgMsgID int, maxChatID int64, maxMsgID string, tgThreadID int, origin string)
 	LookupMaxMsgID(tgChatID int64, tgMsgID int) (string, bool)
 	LookupTgMsgID(maxMsgID string) (tgChatID int64, tgMsgID int, tgThreadID int, ok bool)
+	ListTgMsgIDs(maxMsgID string, tgChatID int64) []int
+	DeleteTgMsgMapping(tgChatID int64, tgMsgID int)
 	LookupTgMsgOrigin(maxMsgID string) (origin string, ok bool)
 	// MaxMsgDeliveredTo — было ли это MAX-сообщение уже доставлено именно в этот TG-чат
 	// (пер-чат дедуп: при фан-ауте одного MAX-сообщения в несколько TG-групп нельзя
@@ -97,6 +99,7 @@ type Repository interface {
 	// Crosspost methods
 	PairCrosspost(tgChatID, maxChatID, ownerID, tgOwnerID int64) error
 	GetCrosspostOwner(maxChatID int64) (maxOwner, tgOwner int64)
+	GetCrosspostOwnerPair(tgChatID, maxChatID int64) (maxOwner, tgOwner int64)
 
 	// SaveDiscussionMessage — связь поста канала с авто-форвардом в группе обсуждения.
 	SaveDiscussionMessage(channelChatID int64, channelMsgID int, discChatID int64, discMsgID int) error
@@ -107,8 +110,13 @@ type Repository interface {
 	RecordBotChat(platform string, chatID int64, title, chatType string)
 	// ListBotChats — чаты платформы, где есть бот (новые сверху), для пикера групп.
 	ListBotChats(platform string, limit int) []BotChatRef
+	// DoctorConnections returns delivery metadata for connections explicitly owned
+	// by this platform user. It must not select message bodies or attachment data.
+	DoctorConnections(platform string, userID, dayStart int64) ([]DoctorConnection, error)
 	GetCrosspostMaxChat(tgChatID int64) (maxChatID int64, direction string, ok bool)
+	GetCrosspostMaxChats(tgChatID int64) []CrosspostLink
 	GetCrosspostTgChat(maxChatID int64) (tgChatID int64, direction string, ok bool)
+	GetCrosspostTgChats(maxChatID int64) []CrosspostLink
 	ListCrossposts(ownerID int64) []CrosspostLink
 	// CountCrossposts — число активных связок, принадлежащих юзеру (для аддона).
 	// Легаси-связки без владельца (0,0) не считаем.
