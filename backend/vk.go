@@ -209,6 +209,7 @@ func (s *server) handleVKChats(w http.ResponseWriter, r *http.Request) {
 	}
 	var out struct {
 		Chats             []map[string]any `json:"chats"`
+		Communities       []map[string]any `json:"communities"`
 		FailedCommunities []int64          `json:"failed_communities"`
 	}
 	if json.Unmarshal(body, &out) != nil {
@@ -237,7 +238,8 @@ func (s *server) handleVKChatBind(w http.ResponseWriter, r *http.Request) {
 		PeerID       int64  `json:"peer_id"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil || in.SourceChatID == 0 || in.AccountID <= 0 ||
-		in.PeerID < 2000000000 || (in.Platform != "tg" && in.Platform != "max") {
+		in.PeerID < 2000000000 || in.PeerID > 2999999999 ||
+		(in.Platform != "tg" && in.Platform != "max") {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Некорректные параметры связки"})
 		return
 	}

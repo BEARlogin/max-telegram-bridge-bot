@@ -34,6 +34,7 @@ const blocks = ref([])
 const mirrors = ref([])
 const vkBindings = ref([])
 const vkCommunities = ref([])
+const vkCommunityDetails = ref([])
 const vkSources = ref([])
 const vkBusy = reactive({})
 const vkConfirm = reactive({})
@@ -42,8 +43,8 @@ const vkWizardOpen = ref(false)
 const vkChats = ref([])
 const vkChatsLoading = ref(false)
 const vkChatsLoaded = ref(false)
-const vkChatsFailed = ref([])
 const vkChatLink = ref('')
+const vkSelectedCommunity = ref('')
 const vkSelectedChat = ref('')
 const vkSelectedSource = ref('')
 const vkWizardError = ref('')
@@ -158,6 +159,7 @@ async function load() {
     accLinked.value = s.linked !== false
     error.value = ''
     getBlocks().then(b => { blocks.value = b.blocks || [] }).catch(() => {})
+    if (vkCommunities.value.length) loadVKChats(true)
   } catch (e) {
     if (browserMode && e?.status === 401) noAuth.value = true
     else error.value = 'Не удалось загрузить данные. Проверьте соединение и попробуйте ещё раз.'
@@ -212,10 +214,12 @@ function vkSource(v) {
   return v.source_title || `${v.source_platform.toUpperCase()} ${v.source_chat_id}`
 }
 function vkTarget(v) {
-  if (v.kind === 'community_wall') return `Публикации сообщества VK ${v.community_id}`
+  const community = displayedVKCommunities.value.find(x => Number(x.community_id) === Number(v.community_id))
+  const communityName = community?.name || `Сообщество VK ${v.community_id}`
+  if (v.kind === 'community_wall') return communityName
   if (v.kind === 'profile_wall') return v.title || 'Стена профиля VK'
   if (v.kind === 'board_topic') return v.title || 'Обсуждение VK'
-  return v.title || `Беседа сообщества VK ${v.community_id}`
+  return v.title || `Беседа · ${communityName}`
 }
 function vkDirection(v) {
   const source = v.source_platform.toUpperCase()
@@ -241,6 +245,18 @@ function vkChatKey(chat) {
 function vkSourceKey(source) {
   return `${source.platform}:${source.chat_id}`
 }
+const displayedVKCommunities = computed(() => {
+  const details = vkCommunityDetails.value || []
+  const byID = new Map(details.map(x => [Number(x.community_id), x]))
+  return vkCommunities.value.map(id => byID.get(Number(id)) || {
+    account_id: 0,
+    community_id: Number(id),
+    name: `Сообщество VK ${id}`,
+  })
+})
+const selectedVKCommunity = computed(() =>
+  vkCommunityDetails.value.find(x => String(x.account_id) === vkSelectedCommunity.value) || null
+)
 const selectedVKChat = computed(() => vkChats.value.find(x => vkChatKey(x) === vkSelectedChat.value) || null)
 const selectedVKSource = computed(() => vkSources.value.find(x => vkSourceKey(x) === vkSelectedSource.value) || null)
 function peerFromVKLink(raw) {
@@ -264,27 +280,44 @@ function findVKChatByLink(showError = true) {
     if (showError) vkWizardError.value = 'Вставьте ссылку вида https://vk.ru/im?sel=c160'
     return false
   }
-  const found = vkChats.value.find(x => Number(x.peer_id) === peer)
-  if (!found) {
-    if (showError) vkWizardError.value = 'Эта беседа пока не видна сообществу. Добавьте сообщество в беседу, отправьте там сообщение и обновите список.'
+  const community = selectedVKCommunity.value
+  if (!community) {
+    if (showError) vkWizardError.value = 'Сначала выберите сообщество VK.'
     return false
+  }
+  let found = vkChats.value.find(x =>
+    Number(x.account_id) === Number(community.account_id) && Number(x.peer_id) === peer
+  )
+  if (!found) {
+    const chatID = peer - 2000000000
+    found = {
+      account_id: community.account_id,
+      community_id: community.community_id,
+      community_name: community.name,
+      peer_id: peer,
+      title: `Беседа VK c${chatID}`,
+    }
+    vkChats.value = [found, ...vkChats.value]
   }
   vkSelectedChat.value = vkChatKey(found)
   vkWizardError.value = ''
   return true
 }
-async function loadVKChats() {
+async function loadVKChats(silent = false) {
   if (vkChatsLoading.value) return
   vkChatsLoading.value = true
-  vkWizardError.value = ''
+  if (!silent) vkWizardError.value = ''
   try {
     const result = await getVKChats()
     vkChats.value = result.chats || []
-    vkChatsFailed.value = result.failed_communities || []
+    vkCommunityDetails.value = result.communities || []
+    if (!selectedVKCommunity.value && vkCommunityDetails.value.length) {
+      vkSelectedCommunity.value = String(vkCommunityDetails.value[0].account_id)
+    }
     vkChatsLoaded.value = true
     if (vkChatLink.value) findVKChatByLink(false)
   } catch (e) {
-    vkWizardError.value = e.message || 'Не удалось получить беседы VK'
+    if (!silent) vkWizardError.value = e.message || 'Не удалось получить данные VK'
   } finally {
     vkChatsLoading.value = false
   }
@@ -317,6 +350,7 @@ async function createVKChat() {
       selectedVKSource.value.platform, selectedVKSource.value.chat_id,
     )
     vkWizardOpen.value = false
+    vkChatLink.value = ''
     vkSelectedChat.value = ''
     vkSelectedSource.value = ''
     await load()
@@ -1718,7 +1752,10 @@ async function saveRepl(c) {
         </div>
         <div v-if="vkCommunities.length" class="vk-community-list">
           <span class="muted small">Подключённые сообщества:</span>
-          <span v-for="id in vkCommunities" :key="id" class="vk-community">VK {{ id }}</span>
+          <span v-for="community in displayedVKCommunities" :key="community.community_id" class="vk-community">
+            <b>{{ community.name }}</b>
+            <small>ID {{ community.community_id }}</small>
+          </span>
         </div>
         <section v-if="vkWizardOpen" class="vk-wizard" aria-labelledby="vk-wizard-title">
           <div class="vk-wizard-head">
@@ -1734,27 +1771,42 @@ async function saveRepl(c) {
           <div class="vk-step">
             <span class="vk-step-number">1</span>
             <div class="vk-step-body">
-              <h4>Выберите беседу VK</h4>
+              <h4>Какое сообщество добавить в мост</h4>
+              <p class="muted small">Выберите сообщество, которое уже добавлено участником нужной беседы VK.</p>
+              <div v-if="vkChatsLoading && !vkCommunityDetails.length" class="vk-loading">Получаем названия сообществ…</div>
+              <div v-else class="vk-choice-list">
+                <button v-for="community in vkCommunityDetails" :key="community.account_id" type="button"
+                  class="vk-choice" :class="{ selected: vkSelectedCommunity === String(community.account_id) }"
+                  :aria-pressed="vkSelectedCommunity === String(community.account_id)"
+                  @click="vkSelectedCommunity = String(community.account_id); vkSelectedChat = ''; vkWizardError = ''">
+                  <span class="vk-radio" aria-hidden="true"></span>
+                  <span>
+                    <b>{{ community.name }}</b>
+                    <small>ID {{ community.community_id }}</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="vk-step">
+            <span class="vk-step-number">2</span>
+            <div class="vk-step-body">
+              <h4>Вставьте ссылку на беседу</h4>
               <p class="muted small">
-                Сначала добавьте одно из подключённых сообществ участником беседы и отправьте в беседу любое сообщение.
+                Откройте беседу в браузере и скопируйте адрес вида <code>vk.ru/im?sel=c160</code>.
               </p>
               <label class="vk-field">
                 <span>Ссылка на беседу</span>
                 <div class="vk-link-row">
                   <input v-model.trim="vkChatLink" type="url" inputmode="url"
                     placeholder="https://vk.ru/im?sel=c160" @keyup.enter="findVKChatByLink()" />
-                  <button class="btn ghost" type="button" :disabled="vkChatsLoading" @click="findVKChatByLink()">Найти</button>
+                  <button class="btn ghost" type="button" :disabled="vkChatsLoading || !selectedVKCommunity"
+                    @click="findVKChatByLink()">Добавить</button>
                 </div>
               </label>
-              <div class="vk-list-head">
-                <span class="muted small">Доступные беседы</span>
-                <button class="text-button" type="button" :disabled="vkChatsLoading" @click="loadVKChats">
-                  {{ vkChatsLoading ? 'Обновляем…' : 'Обновить список' }}
-                </button>
-              </div>
-              <div v-if="vkChatsLoading && !vkChatsLoaded" class="vk-loading">Получаем беседы из VK…</div>
-              <div v-else-if="vkChatsLoaded && !vkChats.length" class="vk-empty">
-                Беседы не найдены. Проверьте, что сообщество добавлено в беседу и в ней уже появилось новое сообщение.
+              <div v-if="!vkChats.length" class="vk-empty">
+                Вставьте ссылку выше. VK не даёт боту получить полный список бесед сообщества.
               </div>
               <div v-else class="vk-choice-list">
                 <button v-for="chat in vkChats" :key="vkChatKey(chat)" type="button"
@@ -1764,18 +1816,15 @@ async function saveRepl(c) {
                   <span class="vk-radio" aria-hidden="true"></span>
                   <span>
                     <b>{{ chat.title }}</b>
-                    <small>Сообщество VK {{ chat.community_id }}</small>
+                    <small>{{ chat.community_name || `Сообщество VK ${chat.community_id}` }}</small>
                   </span>
                 </button>
               </div>
-              <p v-if="vkChatsFailed.length" class="vk-warning small">
-                Не удалось прочитать беседы сообществ: {{ vkChatsFailed.join(', ') }}. Переподключите их к VK.
-              </p>
             </div>
           </div>
 
           <div class="vk-step">
-            <span class="vk-step-number">2</span>
+            <span class="vk-step-number">3</span>
             <div class="vk-step-body">
               <h4>Куда передавать сообщения</h4>
               <p class="muted small">Показываются группы, которыми вы управляете. Направление можно изменить после подключения.</p>
@@ -2037,7 +2086,9 @@ code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-si
 .page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .page-action { min-height: 44px; padding: 0 16px; display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap; }
 .vk-community-list { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-.vk-community { padding: 5px 9px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 12px; font-weight: 700; }
+.vk-community { display: inline-flex; align-items: baseline; gap: 6px; padding: 6px 10px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 12px; }
+.vk-community b { font-weight: 800; }
+.vk-community small { color: #6366a0; font-size: 10px; font-weight: 600; }
 .vk-wizard { margin: 14px 0 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); overflow: hidden; }
 .vk-wizard-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 18px; border-bottom: 1px solid var(--border); }
 .vk-wizard-head h3 { margin: 0 0 4px; font-size: 17px; }
