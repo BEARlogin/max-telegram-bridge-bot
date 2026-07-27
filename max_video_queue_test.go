@@ -34,6 +34,18 @@ func TestTgQueueMediaSourceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPhotoNeedsDocumentForGifAndTelegramSizeLimit(t *testing.T) {
+	if !photoNeedsDocument(306457, "image/gif") {
+		t.Fatal("GIF marked as MAX photo must be sent as a Telegram document")
+	}
+	if !photoNeedsDocument(10*1024*1024+1, "image/jpeg") {
+		t.Fatal("photo above Telegram's 10 MiB limit must be sent as a document")
+	}
+	if photoNeedsDocument(1024, "image/jpeg") {
+		t.Fatal("ordinary JPEG unexpectedly forced to document")
+	}
+}
+
 func TestMaxMessageAttachmentsFindsForwardedVideoForQueueRefresh(t *testing.T) {
 	raw, err := json.Marshal(map[string]any{
 		"type": "video",

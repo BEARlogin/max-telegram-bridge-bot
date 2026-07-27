@@ -68,9 +68,22 @@ func (b *Bridge) sendTgMediaFromURL(ctx context.Context, tgChatID int64, mediaUR
 		name = fileName[0]
 	}
 	file := FileArg{Name: name, Bytes: data}
+	detectedType := http.DetectContentType(data)
 
 	switch mediaType {
 	case "photo":
+		// MAX иногда помечает GIF как photo. Telegram sendPhoto такие файлы не
+		// принимает (а локальный Bot API может зависнуть до timeout). Фото свыше
+		// 10 МБ Telegram тоже отвергает — отправляем оба случая документом, чтобы
+		// медиа не блокировало очередь своего чата бесконечными повторами.
+		if photoNeedsDocument(len(data), detectedType) {
+			if detectedType == "image/gif" && !strings.HasSuffix(strings.ToLower(file.Name), ".gif") {
+				file.Name = "animation.gif"
+			}
+			return b.tg.SendDocument(ctx, tgChatID, file, &SendOpts{
+				Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
+			})
+		}
 		return b.tg.SendPhoto(ctx, tgChatID, file, &SendOpts{
 			Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
 		})
@@ -92,6 +105,10 @@ func (b *Bridge) sendTgMediaFromURL(ctx context.Context, tgChatID int64, mediaUR
 			Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
 		})
 	}
+}
+
+func photoNeedsDocument(size int, contentType string) bool {
+	return size > 10*1024*1024 || contentType == "image/gif"
 }
 
 // customUploadToMax — обход бага SDK: CDN возвращает XML вместо JSON
