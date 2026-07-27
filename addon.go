@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 )
 
@@ -337,7 +339,8 @@ func (b *Bridge) addonTgVKMessage(ctx context.Context, msg *TGMessage) {
 	if text == "" {
 		text = msg.Caption
 	}
-	if strings.TrimSpace(text) == "" {
+	hasPhoto := len(msg.Photo) > 0
+	if strings.TrimSpace(text) == "" && !hasPhoto {
 		return
 	}
 	if strings.HasPrefix(strings.TrimSpace(text), "VK · id ") {
@@ -352,19 +355,84 @@ func (b *Bridge) addonTgVKMessage(ctx context.Context, msg *TGMessage) {
 	if msg.ReplyToMessage != nil {
 		replyTo = msg.ReplyToMessage.MessageID
 	}
+	author := msg.Chat.Title
+	if msg.From != nil {
+		author = strings.TrimSpace(msg.From.FirstName + " " + msg.From.LastName)
+		if author == "" {
+			author = msg.From.UserName
+		}
+	}
+	mediaKind := ""
+	var mediaData []byte
+	mediaName := ""
+	if hasPhoto {
+		photo := msg.Photo[len(msg.Photo)-1]
+		data, err := b.downloadTgFileForAddon(ctx, photo.FileID, 20<<20)
+		if err != nil {
+			slog.Warn("TG→VK photo download failed", "tgChat", msg.Chat.ID, "tgMsg", msg.MessageID, "err", err)
+		} else {
+			mediaKind, mediaData, mediaName = "photo", data, "telegram-photo.jpg"
+		}
+	}
+	hV2, ok := b.addon.(interface {
+		HandleTgVKMessageV2(context.Context, int64, int, string, string, int, string, []byte, string, string)
+	})
+	if ok {
+		hV2.HandleTgVKMessageV2(ctx, msg.Chat.ID, msg.MessageID, author, text, replyTo,
+			mediaKind, mediaData, mediaName, msg.MediaGroupID)
+		return
+	}
 	h, ok := b.addon.(interface {
 		HandleTgVKMessage(context.Context, int64, int, string, string, int)
 	})
 	if ok {
-		author := msg.Chat.Title
-		if msg.From != nil {
-			author = strings.TrimSpace(msg.From.FirstName + " " + msg.From.LastName)
-			if author == "" {
-				author = msg.From.UserName
-			}
-		}
 		h.HandleTgVKMessage(ctx, msg.Chat.ID, msg.MessageID, author, text, replyTo)
 	}
+}
+
+// downloadTgFileForAddon resolves a Telegram file and returns only its bytes.
+// The direct Bot API URL can contain the bot token, so it is deliberately not
+// returned to the private addon, persisted in its queue, or written to logs.
+func (b *Bridge) downloadTgFileForAddon(ctx context.Context, fileID string, maxBytes int64) ([]byte, error) {
+	filePath, err := b.tg.GetFile(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	fileURL := b.tg.GetFileDirectURL(filePath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	client := b.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Telegram file download status %d", resp.StatusCode)
+	}
+	if maxBytes > 0 && resp.ContentLength > maxBytes {
+		return nil, fmt.Errorf("Telegram file exceeds %d bytes", maxBytes)
+	}
+	reader := io.Reader(resp.Body)
+	if maxBytes > 0 {
+		reader = io.LimitReader(resp.Body, maxBytes+1)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("Telegram file is empty")
+	}
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("Telegram file exceeds %d bytes", maxBytes)
+	}
+	return data, nil
 }
 
 func (b *Bridge) addonMaxPostV2(ctx context.Context, srcChatID, senderUserID int64, mid, author, text, replyMid string) {

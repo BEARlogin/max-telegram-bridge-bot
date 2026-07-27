@@ -1637,14 +1637,11 @@ func (b *Bridge) dispatchTgCrossposts(ctx context.Context, msg *TGMessage) bool 
 		slog.Info("skip mapped TG crosspost source (MAX echo)", "tgChat", msg.Chat.ID, "tgMsg", msg.MessageID)
 		return true
 	}
-	if b.isSelfTgBot(msg.From) || msg.IsService || !tgHasContent(msg) {
-		return true
-	}
-	checkText := msg.Text
-	if checkText == "" {
-		checkText = msg.Caption
-	}
-	if strings.HasPrefix(checkText, "[MAX]") || strings.HasPrefix(checkText, "[TG]") {
+	// Channel posts legitimately created by our Telegram bot (for example
+	// VK→TG crossposts) must continue through the TG→MAX fan-out. MAX echoes are
+	// filtered above by their persisted origin, so a broad self-bot check here
+	// would only suppress valid multi-platform delivery.
+	if skipTgCrosspostSource(msg) {
 		return true
 	}
 	for _, link := range links {
@@ -1666,6 +1663,17 @@ func (b *Bridge) dispatchTgCrossposts(ctx context.Context, msg *TGMessage) bool 
 		go b.publishTgCrosspost(ctx, msg, maxChatID, true)
 	}
 	return true
+}
+
+func skipTgCrosspostSource(msg *TGMessage) bool {
+	if msg == nil || msg.IsService || !tgHasContent(msg) {
+		return true
+	}
+	checkText := msg.Text
+	if checkText == "" {
+		checkText = msg.Caption
+	}
+	return strings.HasPrefix(checkText, "[MAX]") || strings.HasPrefix(checkText, "[TG]")
 }
 
 func (b *Bridge) tgChannelPostCameFromMax(tgChatID int64, tgMsgID int) bool {

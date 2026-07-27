@@ -93,3 +93,16 @@ func TestDispatchTgCrosspostsRecognizesSupergroupSource(t *testing.T) {
 		t.Fatal("unconfigured Telegram supergroup must remain in the ordinary bridge path")
 	}
 }
+
+func TestTgCrosspostSourceAllowsBotPublishedVKPost(t *testing.T) {
+	msg := &TGMessage{
+		MessageID: 979,
+		Chat:      ChatInfo{ID: -1001509845382, Type: "channel"},
+		From:      &UserInfo{ID: 1, IsBot: true, UserName: "bridge_bot"},
+		Caption:   "Публикация из VK",
+		Photo:     []PhotoSize{{FileID: "vk-photo"}},
+	}
+	if skipTgCrosspostSource(msg) {
+		t.Fatal("bot-published VK post must remain eligible for TG→MAX crosspost")
+	}
+}
