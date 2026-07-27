@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,8 @@ import (
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 )
+
+var internalVKReloadOnce sync.Once
 
 // Config — настройки bridge, читаемые из env.
 type Config struct {
@@ -152,7 +155,34 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		maxSeenMid:  make(map[string]int64),
 	}
 	b.addon = loadAddon(b)
+	internalVKReloadOnce.Do(func() {
+		http.HandleFunc("/internal/vk-reload", b.handleInternalVKReload)
+	})
 	return b
+}
+
+// handleInternalVKReload обновляет только in-memory индекс источников VK после
+// изменения связки из кабинета. Доступ — по тому же внутреннему секрету, что у commenter.
+func (b *Bridge) handleInternalVKReload(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Secret string `json:"secret"`
+	}
+	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&in) != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	secret := os.Getenv("COMMENT_SYNC_SECRET")
+	if secret == "" || in.Secret != secret {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	reloader, ok := b.addon.(interface{ ReloadVKConfig() })
+	if !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	reloader.ReloadVKConfig()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // cbBlocked проверяет, заблокирован ли чат.
