@@ -50,7 +50,7 @@ const vkSelectedChat = ref('')
 const vkSelectedSource = ref('')
 const vkWizardError = ref('')
 const vkCreating = ref(false)
-const slots = ref(null) // { used, base, extra, limit }
+const slots = ref(null) // { used, base, extra, limit, breakdown, items }
 const mirrorBusy = reactive({})
 const slotsBuying = ref(false)
 // Покупка слотов: промежуточный экран (кол-во, прорейт, согласие на рост рекуррента).
@@ -132,6 +132,16 @@ function uiOf(c) {
 }
 function dirLabel(d) {
   return d === 'max>tg' ? 'MAX → TG' : d === 'tg>max' ? 'TG → MAX' : 'TG ↔ MAX'
+}
+function slotIcon(kind) {
+  return {
+    group: '💬',
+    channel: '📣',
+    mirror: '🪞',
+    vk: 'VK',
+    direct_message: '👤',
+    business_inbox: '📥',
+  }[kind] || '🔗'
 }
 
 async function load() {
@@ -1150,6 +1160,23 @@ async function saveRepl(c) {
             <button v-if="isPro" class="btn ghost" @click="openSlotsPanel">{{ slotsOpen ? 'Скрыть' : '+ слот (' + rub(slotPriceKopecks) + '/мес)' }}</button>
           </span>
         </div>
+        <div v-if="slots.items?.length" class="slot-usage">
+          <div class="slot-usage-head">
+            <b>Чем заняты слоты</b>
+            <span>{{ slots.items.length }}</span>
+          </div>
+          <ol>
+            <li v-for="(item, index) in slots.items" :key="item.kind + ':' + index">
+              <span class="slot-usage-icon" :class="{ vk: item.kind === 'vk' }">{{ slotIcon(item.kind) }}</span>
+              <span class="slot-usage-copy">
+                <b>{{ item.label }}</b>
+                <small>{{ item.detail }}</small>
+              </span>
+              <span class="slot-usage-number">{{ index + 1 }}</span>
+            </li>
+          </ol>
+        </div>
+        <div v-else-if="slots.used === 0" class="slot-usage-empty">Все слоты свободны.</div>
         <!-- Уменьшение слотов: без возврата, рекуррент снизится со следующего периода -->
         <div v-if="slotReduceOpen" class="help-body" style="padding:0 12px 12px">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
@@ -2010,6 +2037,18 @@ h2 { font-size: 15px; margin: 20px 0 8px; }
 .help-q { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; background: var(--border); color: var(--text); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .help-title { flex: 1; text-align: left; font-size: 14px; font-weight: 500; }
 .help-body { padding: 0 14px 14px; }
+.slot-usage { margin: 0 12px 12px; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
+.slot-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; font-size: 13px; }
+.slot-usage-head > span { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: var(--border); color: var(--text-muted); font-size: 11px; font-weight: 700; text-align: center; }
+.slot-usage ol { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.slot-usage li { display: grid; grid-template-columns: 32px minmax(0, 1fr) 24px; align-items: center; gap: 9px; min-width: 0; padding: 9px 10px; border-radius: 9px; background: var(--bg); }
+.slot-usage-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 9%, var(--surface)); font-size: 15px; }
+.slot-usage-icon.vk { color: #2787f5; font-size: 11px; font-weight: 900; }
+.slot-usage-copy { display: grid; min-width: 0; gap: 2px; }
+.slot-usage-copy b { font-size: 13px; }
+.slot-usage-copy small { overflow: hidden; color: var(--text-muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.slot-usage-number { color: var(--text-muted); font-size: 11px; font-weight: 700; text-align: right; }
+.slot-usage-empty { margin: 0 12px 12px; color: var(--text-muted); font-size: 12px; }
 .lk-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 1.45; }
 .lk-steps code { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
 .as-settings { margin: 10px 0 16px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }

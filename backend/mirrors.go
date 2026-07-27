@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 // mirrors.go — зеркала (MAX→MAX и TG→TG) и слоты тарифа в кабинете.
@@ -21,6 +23,12 @@ type mirrorLink struct {
 	SrcTitle string `json:"src_title"`
 	DstTitle string `json:"dst_title"`
 	Owned    bool   `json:"owned"` // связка принадлежит юзеру (можно удалить)
+}
+
+type slotUsageItem struct {
+	Kind   string `json:"kind"`
+	Label  string `json:"label"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // userIDs — все id юзера: свой + привязанный (MAX↔TG), для владения связками на обеих платформах.
@@ -96,34 +104,217 @@ func (s *server) listMirrors(u user) []mirrorLink {
 	return out
 }
 
-// slotsInfo — слоты тарифа юзера: занято (мосты + зеркала + каналы) / лимит (база + докупка).
+// slotOwnerIDs повторяет канонизацию groupSlotsUsed из аддона. После привязки
+// MAX↔TG владельцем единого счёта всегда считается TG-id; linked нужен только
+// Telegram Business-инбоксу, который может хранить владельца MAX-группы.
+func (s *server) slotOwnerIDs(u user) (ownerID, linkedID int64) {
+	ownerID = u.ID
+	switch u.Platform {
+	case "max":
+		if tgID := s.store.LinkedTg(u.ID); tgID != 0 {
+			return tgID, u.ID
+		}
+	case "tg":
+		if maxID := s.store.LinkedMax(u.ID); maxID != 0 {
+			linkedID = maxID
+		}
+	}
+	return ownerID, linkedID
+}
+
+func slotChatName(db *sql.DB, platform string, chatID int64) string {
+	if db != nil {
+		var title string
+		if db.QueryRow(`SELECT title FROM bot_chats WHERE platform=? AND chat_id=?`, platform, chatID).Scan(&title) == nil && title != "" {
+			return title
+		}
+	}
+	if platform == "tg" {
+		return "Telegram " + strconv.FormatInt(chatID, 10)
+	}
+	return "MAX " + strconv.FormatInt(chatID, 10)
+}
+
+// slotsInfo — тот же состав слотов, что groupSlotsUsed в аддоне:
+// группы + каналы + зеркала + VK + личные контакты + Telegram Business-инбоксы.
+// items нужны кабинету, чтобы пользователь видел назначение каждого занятого слота.
 func (s *server) slotsInfo(u user) map[string]any {
-	ids := s.userIDs(u)
-	used := 0
+	ownerID, linkedID := s.slotOwnerIDs(u)
+	items := make([]slotUsageItem, 0)
+	breakdown := map[string]int{
+		"groups": 0, "channels": 0, "mirrors": 0,
+		"vk": 0, "direct_messages": 0, "business_inboxes": 0,
+	}
+
+	var bridgeDB *sql.DB
+	if bridgeDBPath != "" {
+		if db, err := sql.Open("sqlite", "file:"+bridgeDBPath+"?mode=ro&_pragma=busy_timeout(3000)"); err == nil {
+			bridgeDB = db
+			defer bridgeDB.Close()
+		}
+	}
+
+	if bridgeDB != nil {
+		rows, err := bridgeDB.Query(`SELECT p.tg_chat_id,p.max_chat_id,
+			COALESCE(t.title,''),COALESCE(m.title,'')
+			FROM pairs p
+			LEFT JOIN bot_chats t ON t.platform='tg' AND t.chat_id=p.tg_chat_id
+			LEFT JOIN bot_chats m ON m.platform='max' AND m.chat_id=p.max_chat_id
+			WHERE (p.tg_owner_id=? AND p.tg_owner_id!=0)
+				OR (p.max_owner_id=? AND p.max_owner_id!=0)
+			ORDER BY p.tg_chat_id,p.max_chat_id`, ownerID, ownerID)
+		if err == nil {
+			for rows.Next() {
+				var tgChatID, maxChatID int64
+				var tgTitle, maxTitle string
+				if rows.Scan(&tgChatID, &maxChatID, &tgTitle, &maxTitle) != nil {
+					continue
+				}
+				if tgTitle == "" {
+					tgTitle = slotChatName(bridgeDB, "tg", tgChatID)
+				}
+				if maxTitle == "" {
+					maxTitle = slotChatName(bridgeDB, "max", maxChatID)
+				}
+				items = append(items, slotUsageItem{
+					Kind: "group", Label: "Группа Telegram ↔ MAX",
+					Detail: tgTitle + " ↔ " + maxTitle,
+				})
+				breakdown["groups"]++
+			}
+			rows.Close()
+		}
+
+		rows, err = bridgeDB.Query(`SELECT c.tg_chat_id,c.max_chat_id,
+			COALESCE(t.title,''),COALESCE(m.title,'')
+			FROM crossposts c
+			LEFT JOIN bot_chats t ON t.platform='tg' AND t.chat_id=c.tg_chat_id
+			LEFT JOIN bot_chats m ON m.platform='max' AND m.chat_id=c.max_chat_id
+			WHERE c.deleted_at=0
+				AND ((c.owner_id=? AND c.owner_id!=0)
+					OR (c.tg_owner_id=? AND c.tg_owner_id!=0))
+			ORDER BY c.tg_chat_id,c.max_chat_id`, ownerID, ownerID)
+		if err == nil {
+			for rows.Next() {
+				var tgChatID, maxChatID int64
+				var tgTitle, maxTitle string
+				if rows.Scan(&tgChatID, &maxChatID, &tgTitle, &maxTitle) != nil {
+					continue
+				}
+				if tgTitle == "" {
+					tgTitle = slotChatName(bridgeDB, "tg", tgChatID)
+				}
+				if maxTitle == "" {
+					maxTitle = slotChatName(bridgeDB, "max", maxChatID)
+				}
+				items = append(items, slotUsageItem{
+					Kind: "channel", Label: "Канал Telegram ↔ MAX",
+					Detail: tgTitle + " ↔ " + maxTitle,
+				})
+				breakdown["channels"]++
+			}
+			rows.Close()
+		}
+	}
 
 	if addonDBPath != "" {
 		if db, err := sql.Open("sqlite", "file:"+addonDBPath+"?mode=ro&_pragma=busy_timeout(3000)"); err == nil {
-			in, args := sqlIn(ids)
-			var n int
-			if db.QueryRow(`SELECT (SELECT COUNT(*) FROM max_mirror WHERE owner_id IN (`+in+`)) + (SELECT COUNT(*) FROM tg_mirror WHERE owner_id IN (`+in+`))`,
-				append(append([]any{}, args...), args...)...).Scan(&n) == nil {
-				used += n
+			for _, mirror := range []struct {
+				platform string
+				table    string
+			}{
+				{platform: "max", table: "max_mirror"},
+				{platform: "tg", table: "tg_mirror"},
+			} {
+				rows, queryErr := db.Query(`SELECT src_chat,dst_chat FROM `+mirror.table+`
+					WHERE owner_id=? ORDER BY src_chat,dst_chat`, ownerID)
+				if queryErr != nil {
+					continue
+				}
+				for rows.Next() {
+					var srcChatID, dstChatID int64
+					if rows.Scan(&srcChatID, &dstChatID) != nil {
+						continue
+					}
+					platformLabel := "MAX"
+					if mirror.platform == "tg" {
+						platformLabel = "Telegram"
+					}
+					items = append(items, slotUsageItem{
+						Kind: "mirror", Label: "Зеркало " + platformLabel,
+						Detail: slotChatName(bridgeDB, mirror.platform, srcChatID) + " → " +
+							slotChatName(bridgeDB, mirror.platform, dstChatID),
+					})
+					breakdown["mirrors"]++
+				}
+				rows.Close()
 			}
-			n = 0
-			if db.QueryRow(`SELECT COUNT(*) FROM vk_bindings WHERE owner_id IN (`+in+`)`, args...).Scan(&n) == nil {
-				used += n
+
+			rows, queryErr := db.Query(`SELECT b.source_platform,b.source_chat_id,
+				e.kind,e.title,a.community_id
+				FROM vk_bindings b
+				JOIN vk_endpoints e ON e.id=b.endpoint_id
+				JOIN vk_accounts a ON a.id=e.account_id
+				WHERE b.owner_id=? ORDER BY b.id`, ownerID)
+			if queryErr == nil {
+				for rows.Next() {
+					var sourcePlatform, endpointKind, endpointTitle string
+					var sourceChatID, communityID int64
+					if rows.Scan(&sourcePlatform, &sourceChatID, &endpointKind, &endpointTitle, &communityID) != nil {
+						continue
+					}
+					if endpointTitle == "" {
+						endpointTitle = "сообщество VK " + strconv.FormatInt(communityID, 10)
+						if endpointKind == "chat" {
+							endpointTitle = "беседа " + endpointTitle
+						}
+					}
+					items = append(items, slotUsageItem{
+						Kind: "vk", Label: "VK-связка",
+						Detail: slotChatName(bridgeDB, sourcePlatform, sourceChatID) + " ↔ " + endpointTitle,
+					})
+					breakdown["vk"]++
+				}
+				rows.Close()
 			}
-			db.Close()
-		}
-	}
-	if bridgeDBPath != "" {
-		if db, err := sql.Open("sqlite", "file:"+bridgeDBPath+"?mode=ro&_pragma=busy_timeout(3000)"); err == nil {
-			in, args := sqlIn(ids)
-			var n int
-			if db.QueryRow(`SELECT (SELECT COUNT(*) FROM pairs WHERE tg_owner_id IN (`+in+`) OR max_owner_id IN (`+in+`)) +
-				(SELECT COUNT(*) FROM crossposts WHERE deleted_at=0 AND (owner_id IN (`+in+`) OR tg_owner_id IN (`+in+`)))`,
-				append(append(append(append([]any{}, args...), args...), args...), args...)...).Scan(&n) == nil {
-				used += n
+
+			rows, queryErr = db.Query(`SELECT a_platform,a_user_id,b_platform,b_user_id
+				FROM dm_contacts WHERE owner_id=? ORDER BY id`, ownerID)
+			if queryErr == nil {
+				for rows.Next() {
+					var aPlatform, bPlatform string
+					var aUserID, bUserID int64
+					if rows.Scan(&aPlatform, &aUserID, &bPlatform, &bUserID) != nil {
+						continue
+					}
+					items = append(items, slotUsageItem{
+						Kind: "direct_message", Label: "Личный мост",
+						Detail: strings.ToUpper(aPlatform) + " " + strconv.FormatInt(aUserID, 10) +
+							" ↔ " + strings.ToUpper(bPlatform) + " " + strconv.FormatInt(bUserID, 10),
+					})
+					breakdown["direct_messages"]++
+				}
+				rows.Close()
+			}
+
+			rows, queryErr = db.Query(`SELECT tg_user_id,max_chat_id
+				FROM tg_business_inboxes
+				WHERE tg_user_id IN (?,?) OR max_owner_id IN (?,?)
+				ORDER BY tg_user_id`, ownerID, linkedID, ownerID, linkedID)
+			if queryErr == nil {
+				for rows.Next() {
+					var tgUserID, maxChatID int64
+					if rows.Scan(&tgUserID, &maxChatID) != nil {
+						continue
+					}
+					items = append(items, slotUsageItem{
+						Kind: "business_inbox", Label: "Telegram Business-инбокс",
+						Detail: "Telegram " + strconv.FormatInt(tgUserID, 10) + " → " +
+							slotChatName(bridgeDB, "max", maxChatID),
+					})
+					breakdown["business_inboxes"]++
+				}
+				rows.Close()
 			}
 			db.Close()
 		}
@@ -134,10 +325,12 @@ func (s *server) slotsInfo(u user) map[string]any {
 		extra = s.billing.MirrorSlots(s.billing.BillingID(u.ID))
 	}
 	return map[string]any{
-		"used":  used,
-		"base":  slotsBase,
-		"extra": extra,
-		"limit": slotsBase + extra,
+		"used":      len(items),
+		"base":      slotsBase,
+		"extra":     extra,
+		"limit":     slotsBase + extra,
+		"breakdown": breakdown,
+		"items":     items,
 	}
 }
 
