@@ -12,6 +12,7 @@ import {
   logoutCabinet, startVKConnect, setVKDirection, setVKPaused, deleteVKBinding,
   getVKChats, createVKChatBinding,
 } from './api.js'
+import { peerFromVKLink } from './vkLinks.js'
 
 const loading = ref(true)
 const error = ref('')
@@ -259,25 +260,10 @@ const selectedVKCommunity = computed(() =>
 )
 const selectedVKChat = computed(() => vkChats.value.find(x => vkChatKey(x) === vkSelectedChat.value) || null)
 const selectedVKSource = computed(() => vkSources.value.find(x => vkSourceKey(x) === vkSelectedSource.value) || null)
-function peerFromVKLink(raw) {
-  const value = String(raw || '').trim()
-  if (!value) return 0
-  try {
-    const url = new URL(value.includes('://') ? value : `https://${value}`)
-    if (!['vk.com', 'vk.ru', 'www.vk.com', 'www.vk.ru'].includes(url.hostname.toLowerCase())) return 0
-    const sel = url.searchParams.get('sel') || ''
-    const match = sel.match(/^c(\d+)$/i)
-    if (!match) return 0
-    return 2000000000 + Number(match[1])
-  } catch {
-    const match = value.match(/^c(\d+)$/i)
-    return match ? 2000000000 + Number(match[1]) : 0
-  }
-}
 function findVKChatByLink(showError = true) {
   const peer = peerFromVKLink(vkChatLink.value)
   if (!peer) {
-    if (showError) vkWizardError.value = 'Вставьте ссылку вида https://vk.ru/im?sel=c160'
+    if (showError) vkWizardError.value = 'Скопируйте ссылку из адресной строки беседы VK.'
     return false
   }
   const community = selectedVKCommunity.value
@@ -1794,13 +1780,14 @@ async function saveRepl(c) {
             <div class="vk-step-body">
               <h4>Вставьте ссылку на беседу</h4>
               <p class="muted small">
-                Откройте беседу в браузере и скопируйте адрес вида <code>vk.ru/im?sel=c160</code>.
+                Откройте беседу в браузере и скопируйте адрес. Поддерживаются новый формат
+                <code>vk.ru/im/convo/2000000160</code> и старый <code>vk.ru/im?sel=c160</code>.
               </p>
               <label class="vk-field">
                 <span>Ссылка на беседу</span>
                 <div class="vk-link-row">
                   <input v-model.trim="vkChatLink" type="url" inputmode="url"
-                    placeholder="https://vk.ru/im?sel=c160" @keyup.enter="findVKChatByLink()" />
+                    placeholder="https://vk.ru/im/convo/2000000160" @keyup.enter="findVKChatByLink()" />
                   <button class="btn ghost" type="button" :disabled="vkChatsLoading || !selectedVKCommunity"
                     @click="findVKChatByLink()">Добавить</button>
                 </div>
