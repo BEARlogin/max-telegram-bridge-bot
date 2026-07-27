@@ -13,16 +13,17 @@ import (
 )
 
 const (
-	queueMaxAttempts        = 30             // максимум попыток
-	queueMaxAge             = 24 * time.Hour // дропаем сообщения старше 24 часов
-	queueBatchSize          = 256
-	queueMaxInFlight        = 12
-	queueMaxMediaInFlight   = 4 // оставляем не менее 8 слотов для обычных сообщений
-	queueItemTimeout        = 45 * time.Second
-	queueMediaTimeout       = 5 * time.Minute
-	queueMediaFallbackAfter = 10
-	queueVideoRefreshAfter  = 2
-	queueVideoFallbackAfter = 4
+	queueMaxAttempts              = 30             // максимум попыток
+	queueMaxAge                   = 24 * time.Hour // дропаем сообщения старше 24 часов
+	queueBatchSize                = 256
+	queueMaxInFlight              = 12
+	queueMaxMediaInFlight         = 4 // оставляем не менее 8 слотов для обычных сообщений
+	queueItemTimeout              = 45 * time.Second
+	queueMediaTimeout             = 5 * time.Minute
+	queueMediaFallbackAfter       = 10
+	queueVideoRefreshAfter        = 2
+	queueVideoFallbackAfter       = 4
+	queueLegacyVideoFallbackAfter = 10
 )
 
 func queueTimeout(item QueueItem) time.Duration {
@@ -324,6 +325,12 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 	// очереди сохраняем Telegram file_id и после двух неудач выдаём MAX новый upload
 	// token. Старые элементы без file_id безопасно деградируют до текста/подписи,
 	// только если MAX снова подтвердил именно ошибку обработки вложения.
+	if item.AttType == "video" && item.Attempts >= queueLegacyVideoFallbackAfter {
+		if _, recoverable := decodeTgQueueMediaSource(item.AttURL); !recoverable {
+			b.deliverTg2MaxTextFallback(ctx, item, "старое видео не принято MAX; повторная загрузка для этой записи недоступна")
+			return
+		}
+	}
 	if item.AttType == "video" && item.Attempts >= queueVideoRefreshAfter {
 		if source, ok := decodeTgQueueMediaSource(item.AttURL); ok {
 			uploaded, uploadErr := b.uploadTgMediaToMax(
