@@ -39,3 +39,21 @@ func TestMaxDeleteSyncOnlyForMaxOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestTGChannelPostFromMaxIsNotCrosspostedBack(t *testing.T) {
+	repo := testRepo(t)
+	bridge := &Bridge{repo: repo}
+
+	repo.SaveMsgOrigin(-1001, 21, -2001, "from-max", 0, "max")
+	repo.SaveMsgOrigin(-1001, 22, -2001, "from-tg", 0, "tg")
+
+	if !bridge.tgChannelPostCameFromMax(-1001, 21) {
+		t.Fatal("MAX-origin channel post must be treated as an echo")
+	}
+	if bridge.tgChannelPostCameFromMax(-1001, 22) {
+		t.Fatal("TG-origin channel post must remain deliverable")
+	}
+	if bridge.tgChannelPostCameFromMax(-1001, 23) {
+		t.Fatal("unmapped channel post must remain deliverable")
+	}
+}

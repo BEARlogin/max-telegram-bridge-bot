@@ -1590,6 +1590,15 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		return
 	}
 
+	// MAX→TG crosspost creates a normal Telegram channel_post update. Without
+	// checking the persisted origin here, a bidirectional channel link sends
+	// that bot-created post straight back to MAX and starts an endless loop.
+	// This must run before addon fan-out too, otherwise the echo can leak to VK.
+	if b.tgChannelPostCameFromMax(msg.Chat.ID, msg.MessageID) {
+		slog.Info("skip mapped TG channel post (MAX echo)", "tgChannel", msg.Chat.ID, "tgMsg", msg.MessageID)
+		return
+	}
+
 	// Дополнительная обработка поста расширением выполняется асинхронно.
 	if b.addon != nil {
 		go b.addonTgVKMessage(ctx, msg)
@@ -1629,6 +1638,15 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		}
 		go b.publishTgCrosspost(ctx, msg, maxChatID, true)
 	}
+}
+
+func (b *Bridge) tgChannelPostCameFromMax(tgChatID int64, tgMsgID int) bool {
+	maxMsgID, ok := b.repo.LookupMaxMsgID(tgChatID, tgMsgID)
+	if !ok {
+		return false
+	}
+	origin, ok := b.repo.LookupTgMsgOrigin(maxMsgID)
+	return ok && origin == "max"
 }
 
 // publishTgCrosspost формирует caption (markdown-разметка + замены TG→MAX) и
