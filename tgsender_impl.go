@@ -33,7 +33,11 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 	}
 
 	opts := []bot.Option{
-		bot.WithHTTPClient(25*time.Second, &http.Client{Timeout: 30 * time.Second}),
+		// Загрузка фото/видео через отдельный Telegram Bot API server под
+		// нагрузкой регулярно занимает больше 30 секунд. Очередь сама задаёт
+		// короткий контекст для текста и длинный для медиа, поэтому транспортный
+		// timeout должен позволять тяжёлому запросу завершиться.
+		bot.WithHTTPClient(25*time.Second, &http.Client{Timeout: 2 * time.Minute}),
 		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			tgu := convertUpdate(update)
 			select {

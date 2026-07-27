@@ -94,6 +94,27 @@ func retryDelay(attempt int) time.Duration {
 	}
 }
 
+func telegramRetryAfter(errStr string) (time.Duration, bool) {
+	const marker = "retry_after "
+	pos := strings.LastIndex(strings.ToLower(errStr), marker)
+	if pos < 0 {
+		return 0, false
+	}
+	value := errStr[pos+len(marker):]
+	end := 0
+	for end < len(value) && value[end] >= '0' && value[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	seconds, err := strconv.Atoi(value[:end])
+	if err != nil || seconds <= 0 {
+		return 0, false
+	}
+	return time.Duration(seconds)*time.Second + time.Second, true
+}
+
 // hasPendingForChat возвращает true если в очереди уже есть сообщения для данного dst-чата.
 // В этом случае новое сообщение тоже нужно ставить в очередь, чтобы не нарушить порядок.
 func (b *Bridge) hasPendingForChat(direction string, dstChatID int64) bool {
@@ -450,6 +471,11 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 
 	if err != nil {
 		errStr := err.Error()
+		if delay, ok := telegramRetryAfter(errStr); ok {
+			slog.Warn("queue Telegram rate limited", "id", item.ID, "retryIn", delay)
+			b.repo.IncrementAttempt(item.ID, now.Add(delay).Unix())
+			return
+		}
 		// Топики выключены — сбрасываем и повторяем без thread_id
 		if threadID != 0 && (strings.Contains(errStr, "message thread not found") ||
 			strings.Contains(errStr, "TOPIC_NOT_FOUND") ||
@@ -463,7 +489,9 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 			strings.Contains(errStr, "can't parse entities") ||
 			strings.Contains(errStr, "caption is too long") ||
 			strings.Contains(errStr, "message is too long") ||
-			strings.Contains(errStr, "MESSAGE_TOO_LONG") {
+			strings.Contains(errStr, "MESSAGE_TOO_LONG") ||
+			strings.Contains(errStr, "message text is empty") ||
+			strings.Contains(errStr, "refresh MAX video: API error 404") {
 			slog.Warn("queue item dropped (permanent error)", "id", item.ID, "dir", "max2tg", "err", errStr)
 			b.repo.DeleteFromQueue(item.ID)
 			return

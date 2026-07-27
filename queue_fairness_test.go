@@ -96,3 +96,13 @@ func TestQueueReservesWorkersForTextWhenMediaAreSlow(t *testing.T) {
 		t.Fatal("text item was blocked by slow media")
 	}
 }
+
+func TestTelegramRetryAfterUsesServerDelay(t *testing.T) {
+	got, ok := telegramRetryAfter("Too Many Requests: retry after 22: retry_after 22 (429)")
+	if !ok || got != 23*time.Second {
+		t.Fatalf("delay=%s ok=%v, want 23s", got, ok)
+	}
+	if _, ok := telegramRetryAfter("temporary timeout"); ok {
+		t.Fatal("ordinary error unexpectedly parsed as rate limit")
+	}
+}
