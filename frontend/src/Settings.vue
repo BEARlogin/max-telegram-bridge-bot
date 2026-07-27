@@ -49,6 +49,9 @@ const vkSelectedCommunity = ref('')
 const vkSelectedChat = ref('')
 const vkSelectedSource = ref('')
 const vkWizardError = ref('')
+const vkCommunityError = ref('')
+const vkLinkError = ref('')
+const vkSourceError = ref('')
 const vkCreating = ref(false)
 const slots = ref(null) // { used, base, extra, limit, breakdown, items }
 const mirrorBusy = reactive({})
@@ -270,15 +273,23 @@ const selectedVKCommunity = computed(() =>
 )
 const selectedVKChat = computed(() => vkChats.value.find(x => vkChatKey(x) === vkSelectedChat.value) || null)
 const selectedVKSource = computed(() => vkSources.value.find(x => vkSourceKey(x) === vkSelectedSource.value) || null)
+function clearVKWizardErrors() {
+  vkWizardError.value = ''
+  vkCommunityError.value = ''
+  vkLinkError.value = ''
+  vkSourceError.value = ''
+}
 function findVKChatByLink(showError = true) {
+  vkLinkError.value = ''
+  vkWizardError.value = ''
   const peer = peerFromVKLink(vkChatLink.value)
   if (!peer) {
-    if (showError) vkWizardError.value = 'Скопируйте ссылку из адресной строки беседы VK.'
+    if (showError) vkLinkError.value = 'Скопируйте ссылку из адресной строки беседы VK.'
     return false
   }
   const community = selectedVKCommunity.value
   if (!community) {
-    if (showError) vkWizardError.value = 'Сначала выберите сообщество VK.'
+    if (showError) vkLinkError.value = 'Сначала выберите сообщество VK в шаге 1.'
     return false
   }
   let found = vkChats.value.find(x =>
@@ -296,13 +307,13 @@ function findVKChatByLink(showError = true) {
     vkChats.value = [found, ...vkChats.value]
   }
   vkSelectedChat.value = vkChatKey(found)
-  vkWizardError.value = ''
+  vkLinkError.value = ''
   return true
 }
 async function loadVKChats(silent = false) {
   if (vkChatsLoading.value) return
   vkChatsLoading.value = true
-  if (!silent) vkWizardError.value = ''
+  if (!silent) clearVKWizardErrors()
   try {
     const result = await getVKChats()
     vkChats.value = result.chats || []
@@ -313,33 +324,33 @@ async function loadVKChats(silent = false) {
     vkChatsLoaded.value = true
     if (vkChatLink.value) findVKChatByLink(false)
   } catch (e) {
-    if (!silent) vkWizardError.value = e.message || 'Не удалось получить данные VK'
+    if (!silent) vkCommunityError.value = e.message || 'Не удалось получить данные VK'
   } finally {
     vkChatsLoading.value = false
   }
 }
 async function openVKWizard() {
   vkWizardOpen.value = true
-  vkWizardError.value = ''
+  clearVKWizardErrors()
   if (!vkChatsLoaded.value) await loadVKChats()
 }
 function closeVKWizard() {
   if (vkCreating.value) return
   vkWizardOpen.value = false
-  vkWizardError.value = ''
+  clearVKWizardErrors()
 }
 async function createVKChat() {
   if (vkCreating.value) return
   if (!selectedVKChat.value) {
-    vkWizardError.value = 'Выберите беседу VK.'
+    vkLinkError.value = 'Добавьте и выберите беседу VK.'
     return
   }
   if (!selectedVKSource.value) {
-    vkWizardError.value = 'Выберите группу Telegram или MAX.'
+    vkSourceError.value = 'Выберите группу Telegram или MAX.'
     return
   }
   vkCreating.value = true
-  vkWizardError.value = ''
+  clearVKWizardErrors()
   try {
     await createVKChatBinding(
       selectedVKChat.value.account_id, selectedVKChat.value.peer_id,
@@ -1791,7 +1802,7 @@ async function saveRepl(c) {
                 <button v-for="community in vkCommunityDetails" :key="community.account_id" type="button"
                   class="vk-choice" :class="{ selected: vkSelectedCommunity === String(community.account_id) }"
                   :aria-pressed="vkSelectedCommunity === String(community.account_id)"
-                  @click="vkSelectedCommunity = String(community.account_id); vkSelectedChat = ''; vkWizardError = ''">
+                  @click="vkSelectedCommunity = String(community.account_id); vkSelectedChat = ''; clearVKWizardErrors()">
                   <span class="vk-radio" aria-hidden="true"></span>
                   <span>
                     <b>{{ community.name }}</b>
@@ -1799,6 +1810,7 @@ async function saveRepl(c) {
                   </span>
                 </button>
               </div>
+              <p v-if="vkCommunityError" class="vk-inline-error" role="alert">{{ vkCommunityError }}</p>
             </div>
           </div>
 
@@ -1814,10 +1826,13 @@ async function saveRepl(c) {
                 <span>Ссылка на беседу</span>
                 <div class="vk-link-row">
                   <input v-model.trim="vkChatLink" type="url" inputmode="url"
-                    placeholder="https://vk.ru/im/convo/2000000160" @keyup.enter="findVKChatByLink()" />
+                    placeholder="https://vk.ru/im/convo/2000000160"
+                    :aria-invalid="!!vkLinkError" :aria-describedby="vkLinkError ? 'vk-link-error' : undefined"
+                    @input="vkLinkError = ''; vkWizardError = ''" @keyup.enter="findVKChatByLink()" />
                   <button class="btn ghost" type="button" :disabled="vkChatsLoading || !selectedVKCommunity"
                     @click="findVKChatByLink()">Добавить</button>
                 </div>
+                <span v-if="vkLinkError" id="vk-link-error" class="vk-inline-error" role="alert">{{ vkLinkError }}</span>
               </label>
               <div v-if="!vkChats.length" class="vk-empty">
                 Вставьте ссылку выше. VK не даёт боту получить полный список бесед сообщества.
@@ -1826,7 +1841,7 @@ async function saveRepl(c) {
                 <button v-for="chat in vkChats" :key="vkChatKey(chat)" type="button"
                   class="vk-choice" :class="{ selected: vkSelectedChat === vkChatKey(chat) }"
                   :aria-pressed="vkSelectedChat === vkChatKey(chat)"
-                  @click="vkSelectedChat = vkChatKey(chat); vkWizardError = ''">
+                  @click="vkSelectedChat = vkChatKey(chat); vkLinkError = ''; vkWizardError = ''">
                   <span class="vk-radio" aria-hidden="true"></span>
                   <span>
                     <b>{{ chat.title }}</b>
@@ -1849,7 +1864,7 @@ async function saveRepl(c) {
                 <button v-for="source in vkSources" :key="vkSourceKey(source)" type="button"
                   class="vk-choice" :class="{ selected: vkSelectedSource === vkSourceKey(source) }"
                   :aria-pressed="vkSelectedSource === vkSourceKey(source)"
-                  @click="vkSelectedSource = vkSourceKey(source); vkWizardError = ''">
+                  @click="vkSelectedSource = vkSourceKey(source); vkSourceError = ''; vkWizardError = ''">
                   <span class="vk-radio" aria-hidden="true"></span>
                   <span>
                     <b>{{ source.title }}</b>
@@ -1857,16 +1872,19 @@ async function saveRepl(c) {
                   </span>
                 </button>
               </div>
+              <p v-if="vkSourceError" class="vk-inline-error" role="alert">{{ vkSourceError }}</p>
             </div>
           </div>
 
-          <p v-if="vkWizardError" class="vk-form-error" role="alert">{{ vkWizardError }}</p>
           <div class="vk-wizard-footer">
             <span class="muted small">Связка занимает 1 слот PRO.</span>
-            <button class="btn accent" type="button"
-              :disabled="vkCreating || !selectedVKChat || !selectedVKSource" @click="createVKChat">
-              {{ vkCreating ? 'Подключаем…' : 'Связать в обе стороны' }}
-            </button>
+            <div class="vk-submit">
+              <p v-if="vkWizardError" class="vk-form-error" role="alert">{{ vkWizardError }}</p>
+              <button class="btn accent" type="button"
+                :disabled="vkCreating || !selectedVKChat || !selectedVKSource" @click="createVKChat">
+                {{ vkCreating ? 'Подключаем…' : 'Связать в обе стороны' }}
+              </button>
+            </div>
           </div>
         </section>
         <div v-if="!vkCommunities.length" class="empty-card">
@@ -2131,6 +2149,8 @@ code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-si
 .vk-link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .vk-link-row input { width: 100%; min-height: 44px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 11px; padding: 0 12px; background: var(--bg); color: var(--text); font: inherit; }
 .vk-link-row input:focus { border-color: var(--accent); outline: 3px solid rgba(80, 110, 255, .18); }
+.vk-link-row input[aria-invalid="true"] { border-color: var(--danger); }
+.vk-inline-error { display: block; margin: 8px 0 0; padding: 9px 10px; border-radius: 9px; background: color-mix(in srgb, var(--danger) 9%, var(--bg)); color: var(--danger); font-size: 12px; font-weight: 600; line-height: 1.4; }
 .vk-list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 14px 0 7px; }
 .text-button { min-height: 44px; border: 0; padding: 0 6px; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
 .text-button:disabled { cursor: default; opacity: .55; }
@@ -2144,9 +2164,10 @@ code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-si
 .vk-choice.selected .vk-radio { border-color: var(--accent); background: var(--accent); }
 .vk-empty, .vk-loading { padding: 13px; border: 1px dashed var(--border); border-radius: 11px; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
 .vk-warning { margin: 10px 0 0; color: #9a6700; }
-.vk-form-error { margin: 14px 18px 0; padding: 11px 12px; border-radius: 11px; background: rgba(205, 64, 64, .1); color: #b43c3c; font-size: 13px; line-height: 1.4; }
+.vk-form-error { margin: 0; padding: 9px 10px; border-radius: 9px; background: color-mix(in srgb, var(--danger) 9%, var(--bg)); color: var(--danger); font-size: 12px; font-weight: 600; line-height: 1.4; }
 .vk-wizard-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; }
 .vk-wizard-footer .btn { min-height: 44px; }
+.vk-submit { display: grid; justify-items: end; gap: 8px; max-width: min(520px, 70%); }
 .empty-card { padding: 20px; border: 1px dashed var(--border); border-radius: 14px; background: var(--bg); }
 .empty-card h3 { margin: 0 0 6px; font-size: 16px; }
 .empty-card .btn { min-height: 44px; margin-top: 10px; padding: 0 16px; display: inline-flex; align-items: center; text-decoration: none; }
@@ -2210,6 +2231,7 @@ code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-si
   .vk-link-row { grid-template-columns: 1fr; }
   .vk-link-row .btn { width: 100%; min-height: 44px; justify-content: center; }
   .vk-wizard-footer { align-items: stretch; flex-direction: column; }
+  .vk-submit { width: 100%; max-width: none; justify-items: stretch; }
   .vk-wizard-footer .btn { width: 100%; justify-content: center; }
 }
 </style>
