@@ -8,15 +8,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
 
 const (
-	queueMaxAttempts  = 30             // максимум попыток
-	queueMaxAge       = 24 * time.Hour // дропаем сообщения старше 24 часов
-	queueBatchSize    = 256
-	queueMaxInFlight  = 12
-	queueItemTimeout  = 45 * time.Second
-	queueMediaTimeout = 5 * time.Minute
+	queueMaxAttempts        = 30             // максимум попыток
+	queueMaxAge             = 24 * time.Hour // дропаем сообщения старше 24 часов
+	queueBatchSize          = 256
+	queueMaxInFlight        = 12
+	queueMaxMediaInFlight   = 4 // оставляем не менее 8 слотов для обычных сообщений
+	queueItemTimeout        = 45 * time.Second
+	queueMediaTimeout       = 5 * time.Minute
+	queueVideoRefreshAfter  = 2
+	queueVideoFallbackAfter = 4
 )
 
 func queueTimeout(item QueueItem) time.Duration {
@@ -96,7 +101,35 @@ func (b *Bridge) hasPendingForChat(direction string, dstChatID int64) bool {
 }
 
 // enqueueTg2Max ставит сообщение TG→MAX в очередь.
-func (b *Bridge) enqueueTg2Max(tgChatID int64, tgMsgID int, maxChatID int64, text, attType, attToken, replyTo, format string) {
+type tgQueueMediaSource struct {
+	FileID     string `json:"file_id"`
+	FileName   string `json:"file_name"`
+	UploadType string `json:"upload_type"`
+}
+
+func encodeTgQueueMediaSource(fileID, fileName string, uploadType maxschemes.UploadType) string {
+	if fileID == "" || uploadType == "" {
+		return ""
+	}
+	data, err := json.Marshal(tgQueueMediaSource{
+		FileID: fileID, FileName: fileName, UploadType: string(uploadType),
+	})
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func decodeTgQueueMediaSource(raw string) (tgQueueMediaSource, bool) {
+	var source tgQueueMediaSource
+	if raw == "" || json.Unmarshal([]byte(raw), &source) != nil ||
+		source.FileID == "" || source.UploadType == "" {
+		return tgQueueMediaSource{}, false
+	}
+	return source, true
+}
+
+func (b *Bridge) enqueueTg2Max(tgChatID int64, tgMsgID int, maxChatID int64, text, attType, attToken, attSource, replyTo, format string) {
 	now := time.Now().Unix()
 	item := &QueueItem{
 		Direction: "tg2max",
@@ -106,6 +139,7 @@ func (b *Bridge) enqueueTg2Max(tgChatID int64, tgMsgID int, maxChatID int64, tex
 		Text:      text,
 		AttType:   attType,
 		AttToken:  attToken,
+		AttURL:    attSource,
 		ReplyTo:   replyTo,
 		Format:    format,
 		CreatedAt: now,
@@ -165,7 +199,13 @@ func (b *Bridge) claimQueueItem(item QueueItem) bool {
 	if b.queueDestInFlight == nil {
 		b.queueDestInFlight = make(map[string]struct{})
 	}
+	if b.queueMediaInFlight == nil {
+		b.queueMediaInFlight = make(map[int64]struct{})
+	}
 	if len(b.queueInFlight) >= queueMaxInFlight {
+		return false
+	}
+	if item.AttType != "" && len(b.queueMediaInFlight) >= queueMaxMediaInFlight {
 		return false
 	}
 	if _, exists := b.queueInFlight[item.ID]; exists {
@@ -176,6 +216,9 @@ func (b *Bridge) claimQueueItem(item QueueItem) bool {
 	}
 	b.queueInFlight[item.ID] = struct{}{}
 	b.queueDestInFlight[key] = struct{}{}
+	if item.AttType != "" {
+		b.queueMediaInFlight[item.ID] = struct{}{}
+	}
 	return true
 }
 
@@ -184,6 +227,7 @@ func (b *Bridge) releaseQueueItem(item QueueItem) {
 	b.queueMu.Lock()
 	delete(b.queueInFlight, item.ID)
 	delete(b.queueDestInFlight, key)
+	delete(b.queueMediaInFlight, item.ID)
 	b.queueMu.Unlock()
 }
 
@@ -253,9 +297,42 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 		b.repo.DeleteFromQueue(item.ID)
 		return
 	}
+
+	// Видео MAX иногда навсегда остаётся attachment.not.ready. Для новых элементов
+	// очереди сохраняем Telegram file_id и после двух неудач выдаём MAX новый upload
+	// token. Старые элементы без file_id безопасно деградируют до текста/подписи,
+	// только если MAX снова подтвердил именно ошибку обработки вложения.
+	if item.AttType == "video" && item.Attempts >= queueVideoRefreshAfter {
+		if source, ok := decodeTgQueueMediaSource(item.AttURL); ok {
+			uploaded, uploadErr := b.uploadTgMediaToMax(
+				ctx,
+				source.FileID,
+				maxschemes.UploadType(source.UploadType),
+				source.FileName,
+			)
+			if uploadErr != nil {
+				slog.Warn("queue video refresh failed", "id", item.ID, "attempt", item.Attempts+1, "err", uploadErr)
+				b.repo.IncrementAttempt(item.ID, now.Add(retryDelay(item.Attempts+1)).Unix())
+				return
+			}
+			item.AttToken = uploaded.Token
+			slog.Info("queue video token refreshed", "id", item.ID, "attempt", item.Attempts+1)
+		}
+	}
+
 	mid, err := b.sendMaxDirectFormatted(ctx, item.DstChatID, item.Text, item.AttType, item.AttToken, item.ReplyTo, item.Format)
 	if err != nil {
 		errStr := err.Error()
+		if item.AttType == "video" && strings.Contains(errStr, "attachment not ready after") {
+			if _, recoverable := decodeTgQueueMediaSource(item.AttURL); recoverable &&
+				item.Attempts+1 < queueVideoFallbackAfter {
+				slog.Warn("queue video not ready; retrying with fresh upload", "id", item.ID, "attempt", item.Attempts+1)
+				b.repo.IncrementAttempt(item.ID, now.Add(retryDelay(item.Attempts+1)).Unix())
+			} else {
+				b.deliverTg2MaxTextFallback(ctx, item, "MAX не смог обработать видео")
+			}
+			return
+		}
 		// Permanent errors — дропаем сразу (бессмысленно ретраить) и объясняем владельцу
 		// причину с номером поста, чтобы было понятно что и почему не перенеслось.
 		if strings.Contains(errStr, "403") || strings.Contains(errStr, "404") ||
@@ -282,6 +359,29 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 		// Кросспост канала (а не зеркало bridge-группы) — уведомляем аддон.
 	}
 	b.repo.DeleteFromQueue(item.ID)
+}
+
+// deliverTg2MaxTextFallback не даёт сломанному видео навсегда остановить свой чат.
+// Подпись/текст доставляются без изменения, а владелец получает отдельное уведомление.
+func (b *Bridge) deliverTg2MaxTextFallback(ctx context.Context, item QueueItem, reason string) {
+	if item.Text == "" {
+		b.repo.DeleteFromQueue(item.ID)
+		b.notifyTg2MaxFailure(ctx, item, reason)
+		return
+	}
+	mid, err := b.sendMaxDirectFormatted(ctx, item.DstChatID, item.Text, "", "", item.ReplyTo, item.Format)
+	if err != nil {
+		slog.Warn("queue video text fallback failed", "id", item.ID, "err", err)
+		b.repo.IncrementAttempt(item.ID, time.Now().Add(retryDelay(item.Attempts+1)).Unix())
+		return
+	}
+	tgMsgID, _ := strconv.Atoi(item.SrcMsgID)
+	if tgMsgID > 0 {
+		b.repo.SaveMsgOrigin(item.SrcChatID, tgMsgID, item.DstChatID, mid, 0, "tg")
+	}
+	b.repo.DeleteFromQueue(item.ID)
+	b.notifyTg2MaxFailure(ctx, item, reason+"; текст сообщения доставлен без видео")
+	slog.Info("queue video degraded to text", "id", item.ID, "mid", mid)
 }
 
 func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now time.Time) {

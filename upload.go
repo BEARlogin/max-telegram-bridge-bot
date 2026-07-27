@@ -590,7 +590,8 @@ func (b *Bridge) sendMaxChunk(ctx context.Context, chatID int64, text string, me
 	flipped := false  // только что переключили бота — повторяем без задержки
 
 	// Retry при attachment.not.ready (файл ещё обрабатывается)
-	for attempt := 0; attempt < 20; attempt++ {
+	const attachmentReadyAttempts = 8
+	for attempt := 0; attempt < attachmentReadyAttempts; attempt++ {
 		if attempt > 0 && !flipped {
 			delay := time.Duration(3+attempt*2) * time.Second
 			select {
@@ -598,7 +599,7 @@ func (b *Bridge) sendMaxChunk(ctx context.Context, chatID int64, text string, me
 				return "", ctx.Err()
 			case <-time.After(delay):
 			}
-			slog.Warn("MAX retry", "attempt", attempt+1, "maxAttempts", 20)
+			slog.Warn("MAX retry", "attempt", attempt+1, "maxAttempts", attachmentReadyAttempts)
 		}
 		flipped = false
 
@@ -654,7 +655,7 @@ func (b *Bridge) sendMaxChunk(ctx context.Context, chatID int64, text string, me
 
 		return "", fmt.Errorf("MAX API %d: %s", resp.StatusCode, bodyStr)
 	}
-	return "", fmt.Errorf("MAX attachment not ready after 10 retries")
+	return "", fmt.Errorf("MAX attachment not ready after %d retries", attachmentReadyAttempts)
 }
 
 // formatFileSize formats file size in human-readable form.

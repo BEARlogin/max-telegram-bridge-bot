@@ -104,9 +104,10 @@ type Bridge struct {
 	// Очередь обрабатывается параллельно между разными чатами, но строго по одному
 	// сообщению на чат. Медленное видео одного пользователя не должно останавливать
 	// доставку всех остальных.
-	queueMu           sync.Mutex
-	queueInFlight     map[int64]struct{}
-	queueDestInFlight map[string]struct{}
+	queueMu            sync.Mutex
+	queueInFlight      map[int64]struct{}
+	queueDestInFlight  map[string]struct{}
+	queueMediaInFlight map[int64]struct{}
 
 	// Буферизация TG media groups (альбомы)
 	mgMu      sync.Mutex
@@ -153,16 +154,17 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		apiClient: &http.Client{
 			Timeout: 15 * time.Second, // для коротких API-запросов
 		},
-		whSecret:          secret,
-		cpWait:            make(map[int64]int64),
-		cpTgOwner:         make(map[int64]int64),
-		breakers:          make(map[int64]*chatBreaker),
-		doctorLast:        make(map[string]time.Time),
-		queueInFlight:     make(map[int64]struct{}),
-		queueDestInFlight: make(map[string]struct{}),
-		mgBuffers:         make(map[string]*mediaGroupBuffer),
-		maxBotCache:       make(map[int64]string),
-		maxSeenMid:        make(map[string]int64),
+		whSecret:           secret,
+		cpWait:             make(map[int64]int64),
+		cpTgOwner:          make(map[int64]int64),
+		breakers:           make(map[int64]*chatBreaker),
+		doctorLast:         make(map[string]time.Time),
+		queueInFlight:      make(map[int64]struct{}),
+		queueDestInFlight:  make(map[string]struct{}),
+		queueMediaInFlight: make(map[int64]struct{}),
+		mgBuffers:          make(map[string]*mediaGroupBuffer),
+		maxBotCache:        make(map[int64]string),
+		maxSeenMid:         make(map[string]int64),
 	}
 	b.addon = loadAddon(b)
 	internalVKHandlersOnce.Do(func() {

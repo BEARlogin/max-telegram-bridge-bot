@@ -52,8 +52,9 @@ func TestPeekQueueReturnsOnlyDueHeadPerDestination(t *testing.T) {
 
 func TestQueueClaimsOneItemPerDestination(t *testing.T) {
 	b := &Bridge{
-		queueInFlight:     make(map[int64]struct{}),
-		queueDestInFlight: make(map[string]struct{}),
+		queueInFlight:      make(map[int64]struct{}),
+		queueDestInFlight:  make(map[string]struct{}),
+		queueMediaInFlight: make(map[int64]struct{}),
 	}
 	first := QueueItem{ID: 1, Direction: "max2tg", DstChatID: -101}
 	sameDestination := QueueItem{ID: 2, Direction: "max2tg", DstChatID: -101}
@@ -75,4 +76,23 @@ func TestQueueClaimsOneItemPerDestination(t *testing.T) {
 	}
 	b.releaseQueueItem(sameDestination)
 	b.releaseQueueItem(otherDestination)
+}
+
+func TestQueueReservesWorkersForTextWhenMediaAreSlow(t *testing.T) {
+	b := &Bridge{
+		queueInFlight:      make(map[int64]struct{}),
+		queueDestInFlight:  make(map[string]struct{}),
+		queueMediaInFlight: make(map[int64]struct{}),
+	}
+	for i := int64(1); i <= queueMaxMediaInFlight; i++ {
+		if !b.claimQueueItem(QueueItem{ID: i, Direction: "tg2max", DstChatID: -100 - i, AttType: "video"}) {
+			t.Fatalf("media item %d was not claimed", i)
+		}
+	}
+	if b.claimQueueItem(QueueItem{ID: 100, Direction: "tg2max", DstChatID: -999, AttType: "video"}) {
+		t.Fatal("media exceeded its worker limit")
+	}
+	if !b.claimQueueItem(QueueItem{ID: 101, Direction: "max2tg", DstChatID: -1000}) {
+		t.Fatal("text item was blocked by slow media")
+	}
 }

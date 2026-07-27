@@ -1094,6 +1094,8 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 	// Определяем медиа
 	var mediaToken string
 	var mediaAttType string // "video", "file", "audio"
+	var mediaFileID, mediaFileName string
+	var mediaUploadType maxschemes.UploadType
 
 	if msg.Photo != nil {
 		photo := msg.Photo[len(msg.Photo)-1]
@@ -1186,6 +1188,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Animation.FileID, maxschemes.VIDEO, name); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
+			mediaFileID, mediaFileName, mediaUploadType = msg.Animation.FileID, name, maxschemes.VIDEO
 		} else {
 			slog.Error("TG→MAX gif upload failed", "err", err)
 			b.notifyTgUser(ctx, msg, maxChatID, uploadErrMsg(fmt.Sprintf("Не удалось отправить GIF \"%s\" в MAX", name), err), isCrosspost)
@@ -1200,6 +1203,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 			if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Sticker.FileID, maxschemes.FILE, "sticker.webm"); err == nil {
 				mediaToken = uploaded.Token
 				mediaAttType = "video"
+				mediaFileID, mediaFileName, mediaUploadType = msg.Sticker.FileID, "sticker.webm", maxschemes.FILE
 			} else {
 				slog.Error("TG→MAX sticker upload failed", "err", err)
 				b.notifyTgUser(ctx, msg, maxChatID, uploadErrMsg("Не удалось отправить стикер в MAX", err), isCrosspost)
@@ -1252,6 +1256,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Video.FileID, maxschemes.VIDEO, name); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
+			mediaFileID, mediaFileName, mediaUploadType = msg.Video.FileID, name, maxschemes.VIDEO
 		} else {
 			slog.Error("TG→MAX video upload failed", "err", err, "fileSizeBytes", msg.Video.FileSize, "fileSizeMB", msg.Video.FileSize/1048576, "name", name)
 			b.notifyTgUser(ctx, msg, maxChatID, uploadErrMsg(fmt.Sprintf("Не удалось отправить видео \"%s\" в MAX", name), err), isCrosspost)
@@ -1264,6 +1269,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.VideoNote.FileID, maxschemes.VIDEO, "circle.mp4"); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
+			mediaFileID, mediaFileName, mediaUploadType = msg.VideoNote.FileID, "circle.mp4", maxschemes.VIDEO
 		} else {
 			slog.Error("TG→MAX video note upload failed", "err", err)
 			b.notifyTgUser(ctx, msg, maxChatID, uploadErrMsg("Не удалось отправить кружок в MAX", err), isCrosspost)
@@ -1298,6 +1304,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Document.FileID, uploadType, name); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = attType
+			mediaFileID, mediaFileName, mediaUploadType = msg.Document.FileID, name, uploadType
 		} else {
 			var e *ErrForbiddenExtension
 			if errors.As(err, &e) {
@@ -1316,6 +1323,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Voice.FileID, maxschemes.AUDIO, "voice.ogg"); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "audio"
+			mediaFileID, mediaFileName, mediaUploadType = msg.Voice.FileID, "voice.ogg", maxschemes.AUDIO
 		} else {
 			var e *ErrForbiddenExtension
 			if errors.As(err, &e) {
@@ -1345,6 +1353,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Audio.FileID, maxschemes.FILE, name); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "file"
+			mediaFileID, mediaFileName, mediaUploadType = msg.Audio.FileID, name, maxschemes.FILE
 		} else {
 			var e *ErrForbiddenExtension
 			if errors.As(err, &e) {
@@ -1436,10 +1445,11 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 	// Caption для crosspost уже содержит markdown (formatTgCrosspostCaption),
 	// так что формат одинаков для обоих режимов.
 	format := "html"
+	mediaQueueSource := encodeTgQueueMediaSource(mediaFileID, mediaFileName, mediaUploadType)
 
 	if b.hasPendingForChat("tg2max", maxChatID) {
 		slog.Info("TG→MAX queued (pending exists)", "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
-		b.enqueueTg2Max(msg.Chat.ID, msg.MessageID, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
+		b.enqueueTg2Max(msg.Chat.ID, msg.MessageID, maxChatID, mdCaption, mediaAttType, mediaToken, mediaQueueSource, replyTo, format)
 		return
 	}
 
@@ -1463,7 +1473,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		notInChat := strings.Contains(errStr, "chat.not.found") || strings.Contains(errStr, "chat.denied")
 		// 403/404 — permanent error, не ретраим
 		if !strings.Contains(errStr, "403") && !strings.Contains(errStr, "404") && !strings.Contains(errStr, "chat.denied") {
-			b.enqueueTg2Max(msg.Chat.ID, msg.MessageID, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
+			b.enqueueTg2Max(msg.Chat.ID, msg.MessageID, maxChatID, mdCaption, mediaAttType, mediaToken, mediaQueueSource, replyTo, format)
 		}
 		if notInChat {
 			// Бот недоступен в MAX-чате (удалён/не админ) — ставим связку на паузу

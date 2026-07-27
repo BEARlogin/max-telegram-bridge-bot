@@ -20,6 +20,20 @@ func TestQueueTimeoutAllowsMediaTransfer(t *testing.T) {
 	}
 }
 
+func TestTgQueueMediaSourceRoundTrip(t *testing.T) {
+	raw := encodeTgQueueMediaSource("tg-file-id", "video.mp4", maxschemes.VIDEO)
+	got, ok := decodeTgQueueMediaSource(raw)
+	if !ok {
+		t.Fatal("encoded source did not decode")
+	}
+	if got.FileID != "tg-file-id" || got.FileName != "video.mp4" || got.UploadType != "video" {
+		t.Fatalf("source=%+v", got)
+	}
+	if _, ok := decodeTgQueueMediaSource("https://legacy.example/video.mp4"); ok {
+		t.Fatal("legacy URL unexpectedly decoded as TG source")
+	}
+}
+
 func TestMaxMessageAttachmentsFindsForwardedVideoForQueueRefresh(t *testing.T) {
 	raw, err := json.Marshal(map[string]any{
 		"type": "video",
