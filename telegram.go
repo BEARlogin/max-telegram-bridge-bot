@@ -2128,8 +2128,11 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *TGMessag
 		return
 	}
 
-	m := maxbot.NewMessage().SetChat(maxChatID).SetText(text)
-	if err := b.maxClientFor(ctx, maxChatID).Messages.EditMessage(ctx, maxMsgID, m); err != nil {
+	// MAX трактует SDK EditMessage без явно добавленных вложений как полную замену
+	// сообщения и удаляет уже опубликованные фото/видео. При правке подписи в
+	// Telegram сами медиа не меняются, поэтому отправляем прямой PUT только с
+	// полями text/format: отсутствие attachments в JSON сохраняет вложения MAX.
+	if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, text, ""); err != nil {
 		slog.Error("TG→MAX crosspost edit failed", "err", err)
 	} else {
 		slog.Info("TG→MAX crosspost edited", "mid", maxMsgID)
