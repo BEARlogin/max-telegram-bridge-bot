@@ -11,8 +11,11 @@ import (
 	"github.com/nikita-vanyasin/tinkoff"
 )
 
-// slotPriceKopecks — цена одного доп-слота тарифа за период (49 ₽).
-const slotPriceKopecks uint64 = 4900
+const (
+	legacyBaseAmountKopecks uint64 = 29900
+	legacySlotPriceKopecks  uint64 = 4900
+	newSlotPriceKopecks     uint64 = 9900
+)
 
 // mirrorOrderPrefix — префикс OrderID для покупки слотов зеркала (прорейт-платёж).
 const mirrorOrderPrefix = "mslot-"
@@ -57,19 +60,19 @@ func (s *Service) MirrorSlots(userID int64) int {
 // EffectiveAmount — сумма рекуррентного списания: база + слоты×цена. По ней продлеваем (A1:
 // докупка увеличивает рекуррент, уменьшение — снижает со следующего периода).
 func (s *Service) EffectiveAmount(userID int64) uint64 {
-	return s.cfg.AmountKopecks + uint64(s.MirrorSlots(userID))*slotPriceKopecks
+	return s.BaseAmount(userID) + uint64(s.MirrorSlots(userID))*s.SlotPrice(userID)
 }
 
 // prorateSlotsKopecks — прорейт-стоимость n слотов за ОСТАТОК периода: n×цена × remaining/period.
 // Округляем вверх (в пользу сервиса), пол — 100 коп (мин. сумма T-Bank). Чистая функция — тест.
-func prorateSlotsKopecks(n int, remaining, periodSec int64) uint64 {
+func prorateSlotsAtPrice(n int, remaining, periodSec int64, slotPrice uint64) uint64 {
 	if n <= 0 || remaining <= 0 || periodSec <= 0 {
 		return 0
 	}
 	if remaining > periodSec {
 		remaining = periodSec
 	}
-	full := float64(n) * float64(slotPriceKopecks)
+	full := float64(n) * float64(slotPrice)
 	amount := uint64(math.Ceil(full * float64(remaining) / float64(periodSec)))
 	if amount < 100 {
 		amount = 100
@@ -77,8 +80,17 @@ func prorateSlotsKopecks(n int, remaining, periodSec int64) uint64 {
 	return amount
 }
 
-// SlotPrice — цена одного доп-слота за полный период (коп), для витрины кабинета.
-func (s *Service) SlotPrice() uint64 { return slotPriceKopecks }
+func prorateSlotsKopecks(n int, remaining, periodSec int64) uint64 {
+	return prorateSlotsAtPrice(n, remaining, periodSec, legacySlotPriceKopecks)
+}
+
+// SlotPrice сохраняет 49 ₽ старой платной когорте и применяет 99 ₽ к новой.
+func (s *Service) SlotPrice(userID int64) uint64 {
+	if s.BaseAmount(userID) <= legacyBaseAmountKopecks {
+		return legacySlotPriceKopecks
+	}
+	return newSlotPriceKopecks
+}
 
 // PreviewMirrorSlots — расчёт покупки n слотов БЕЗ создания платежа: прорейт-сумма за
 // остаток периода + конец оплаченного периода. Для промежуточного экрана в кабинете.
@@ -97,7 +109,7 @@ func (s *Service) PreviewMirrorSlots(userID int64, n int) (amount uint64, paidUn
 		return 0, 0, fmt.Errorf("subscription not active")
 	}
 	periodSec := int64(s.cfg.PeriodDays) * 86400
-	return prorateSlotsKopecks(n, paidUntil-now, periodSec), paidUntil, nil
+	return prorateSlotsAtPrice(n, paidUntil-now, periodSec, s.SlotPrice(userID)), paidUntil, nil
 }
 
 // BuyMirrorSlots создаёт РАЗОВЫЙ платёж (ссылку) на докупку n слотов зеркала: прорейт за остаток
@@ -119,7 +131,7 @@ func (s *Service) BuyMirrorSlots(ctx context.Context, userID int64, n int) (payU
 		return "", 0, fmt.Errorf("subscription not active")
 	}
 	periodSec := int64(s.cfg.PeriodDays) * 86400
-	amount = prorateSlotsKopecks(n, paidUntil-now, periodSec)
+	amount = prorateSlotsAtPrice(n, paidUntil-now, periodSec, s.SlotPrice(userID))
 
 	orderID := fmt.Sprintf("%s%d-%d-%d", mirrorOrderPrefix, userID, time.Now().UnixNano(), n)
 	initReq := &tinkoff.InitRequest{

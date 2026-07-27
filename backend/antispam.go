@@ -47,6 +47,7 @@ func tgChannelOfCrosspost(maxChatID int64) (int64, bool) {
 // writeAntispamConfig пишет antispam_config для чата (addon.db) на указанной платформе.
 // asPolicy — политика наказания антиспама (значения уже санитайзнуты sanitizeAntispamPolicy).
 type asPolicy struct {
+	AllowLinks   bool   // не считать сам факт ссылки от новичка спам-сигналом
 	StrikeLimit  int    // мут после N нарушений (1 = сразу)
 	BanAfter     int    // для mute_then_ban: бан после M нарушений (M > StrikeLimit)
 	Action       string // mute | ban | mute_then_ban
@@ -103,18 +104,22 @@ func writeAntispamConfigExec(db antispamExecer, platform string, chatID, ownerID
 	if p.DelService {
 		delService = 1
 	}
+	allowLinks := 0
+	if p.AllowLinks {
+		allowLinks = 1
+	}
 	tone := p.Tone
 	if tone != "friendly" {
 		tone = "strict"
 	}
-	_, err := db.Exec(`INSERT INTO antispam_config (platform, chat_id, enabled, enabled_by, mode, link_delay_h, trust_msgs, strike_limit, ban_after, action, mute_minutes, warn, notify, captcha, antiraid, profile_guard, block_words, block_cats, del_service, tone, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))
+	_, err := db.Exec(`INSERT INTO antispam_config (platform, chat_id, enabled, enabled_by, mode, link_delay_h, trust_msgs, links_allowed, strike_limit, ban_after, action, mute_minutes, warn, notify, captcha, antiraid, profile_guard, block_words, block_cats, del_service, tone, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))
 		ON CONFLICT(platform, chat_id) DO UPDATE SET enabled=excluded.enabled, enabled_by=excluded.enabled_by,
-			mode=excluded.mode, link_delay_h=excluded.link_delay_h, trust_msgs=excluded.trust_msgs,
+			mode=excluded.mode, link_delay_h=excluded.link_delay_h, trust_msgs=excluded.trust_msgs, links_allowed=excluded.links_allowed,
 			strike_limit=excluded.strike_limit, ban_after=excluded.ban_after, action=excluded.action,
 			mute_minutes=excluded.mute_minutes, warn=excluded.warn, notify=excluded.notify, captcha=excluded.captcha, antiraid=excluded.antiraid, profile_guard=excluded.profile_guard,
 			block_words=excluded.block_words, block_cats=excluded.block_cats, del_service=excluded.del_service, tone=excluded.tone, updated_at=excluded.updated_at`,
-		platform, chatID, v, ownerID, mode, linkDelayH, trustMsgs, p.StrikeLimit, p.BanAfter, p.Action, p.MuteMinutes, warn, p.Notify, captcha, antiraid, profileGuard, p.BlockWords, p.BlockCats, delService, tone)
+		platform, chatID, v, ownerID, mode, linkDelayH, trustMsgs, allowLinks, p.StrikeLimit, p.BanAfter, p.Action, p.MuteMinutes, warn, p.Notify, captcha, antiraid, profileGuard, p.BlockWords, p.BlockCats, delService, tone)
 	return err
 }
 
@@ -206,10 +211,11 @@ func antispamPolicy(platform string, chatID int64) asPolicy {
 		return p
 	}
 	defer db.Close()
-	var sl, ba, mm, wn, cap, ar, pg, ds int
+	var al, sl, ba, mm, wn, cap, ar, pg, ds int
 	var act, ntf, tn string
-	if db.QueryRow(`SELECT COALESCE(strike_limit,2), COALESCE(ban_after,3), COALESCE(action,'mute'), COALESCE(mute_minutes,60), COALESCE(warn,0), COALESCE(notify,'ban'), COALESCE(captcha,0), COALESCE(antiraid,0), COALESCE(profile_guard,0), COALESCE(block_words,''), COALESCE(block_cats,''), COALESCE(del_service,0), COALESCE(tone,'strict')
-		FROM antispam_config WHERE platform=? AND chat_id=?`, platform, chatID).Scan(&sl, &ba, &act, &mm, &wn, &ntf, &cap, &ar, &pg, &p.BlockWords, &p.BlockCats, &ds, &tn) == nil {
+	if db.QueryRow(`SELECT COALESCE(links_allowed,0), COALESCE(strike_limit,2), COALESCE(ban_after,3), COALESCE(action,'mute'), COALESCE(mute_minutes,60), COALESCE(warn,0), COALESCE(notify,'ban'), COALESCE(captcha,0), COALESCE(antiraid,0), COALESCE(profile_guard,0), COALESCE(block_words,''), COALESCE(block_cats,''), COALESCE(del_service,0), COALESCE(tone,'strict')
+		FROM antispam_config WHERE platform=? AND chat_id=?`, platform, chatID).Scan(&al, &sl, &ba, &act, &mm, &wn, &ntf, &cap, &ar, &pg, &p.BlockWords, &p.BlockCats, &ds, &tn) == nil {
+		p.AllowLinks = al != 0
 		if tn == "friendly" || tn == "strict" {
 			p.Tone = tn
 		}
@@ -375,6 +381,7 @@ func (s *server) handleSetGroupAntispam(w http.ResponseWriter, r *http.Request) 
 		Mode         string `json:"mode"`
 		LinkDelayH   int    `json:"link_delay_h"`
 		TrustMsgs    int    `json:"trust_msgs"`
+		AllowLinks   bool   `json:"allow_links"`
 		StrikeLimit  int    `json:"strike_limit"`
 		BanAfter     int    `json:"ban_after"`
 		Action       string `json:"action"`
@@ -414,7 +421,7 @@ func (s *server) handleSetGroupAntispam(w http.ResponseWriter, r *http.Request) 
 	if in.ProfileGuard != nil {
 		profileGuard = *in.ProfileGuard
 	}
-	pol := sanitizeAntispamPolicy(asPolicy{StrikeLimit: in.StrikeLimit, BanAfter: in.BanAfter, Action: in.Action, MuteMinutes: in.MuteMinutes, Warn: in.Warn, Notify: in.Notify, Captcha: in.Captcha, Antiraid: in.Antiraid, ProfileGuard: profileGuard, BlockWords: in.BlockWords, BlockCats: in.BlockCats, DelService: in.DelService, Tone: in.Tone})
+	pol := sanitizeAntispamPolicy(asPolicy{AllowLinks: in.AllowLinks, StrikeLimit: in.StrikeLimit, BanAfter: in.BanAfter, Action: in.Action, MuteMinutes: in.MuteMinutes, Warn: in.Warn, Notify: in.Notify, Captcha: in.Captcha, Antiraid: in.Antiraid, ProfileGuard: profileGuard, BlockWords: in.BlockWords, BlockCats: in.BlockCats, DelService: in.DelService, Tone: in.Tone})
 	// TG-сторона + MAX-сторона связки (бридж модерит обе).
 	if err := writeGroupAntispamConfigs(in.TgChatID, groupMaxChat(in.TgChatID), u.ID, in.Enabled, in.Mode, in.LinkDelayH, in.TrustMsgs, pol); err != nil {
 		log.Printf("group antispam write err uid=%d tg=%d: %v", u.ID, in.TgChatID, err)
@@ -454,6 +461,7 @@ func (s *server) handleSetAntispam(w http.ResponseWriter, r *http.Request) {
 		Mode         string `json:"mode"`          // enforce | observe | debug
 		LinkDelayH   int    `json:"link_delay_h"`  // часов «новичок не постит ссылки»
 		TrustMsgs    int    `json:"trust_msgs"`    // сообщений до «доверенного»
+		AllowLinks   bool   `json:"allow_links"`   // не считать ссылку отдельным спам-сигналом
 		StrikeLimit  int    `json:"strike_limit"`  // мут после N нарушений (1 = сразу)
 		BanAfter     int    `json:"ban_after"`     // mute_then_ban: бан после M нарушений
 		Action       string `json:"action"`        // mute | ban | mute_then_ban
@@ -494,7 +502,7 @@ func (s *server) handleSetAntispam(w http.ResponseWriter, r *http.Request) {
 	if in.ProfileGuard != nil {
 		profileGuard = *in.ProfileGuard
 	}
-	pol := sanitizeAntispamPolicy(asPolicy{StrikeLimit: in.StrikeLimit, BanAfter: in.BanAfter, Action: in.Action, MuteMinutes: in.MuteMinutes, Warn: in.Warn, Notify: in.Notify, Captcha: in.Captcha, Antiraid: in.Antiraid, ProfileGuard: profileGuard, BlockWords: in.BlockWords, BlockCats: in.BlockCats, DelService: in.DelService, Tone: in.Tone})
+	pol := sanitizeAntispamPolicy(asPolicy{AllowLinks: in.AllowLinks, StrikeLimit: in.StrikeLimit, BanAfter: in.BanAfter, Action: in.Action, MuteMinutes: in.MuteMinutes, Warn: in.Warn, Notify: in.Notify, Captcha: in.Captcha, Antiraid: in.Antiraid, ProfileGuard: profileGuard, BlockWords: in.BlockWords, BlockCats: in.BlockCats, DelService: in.DelService, Tone: in.Tone})
 
 	tgChan, ok := tgChannelOfCrosspost(in.MaxChatID)
 	if !ok {

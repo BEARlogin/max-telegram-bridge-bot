@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -47,7 +48,7 @@ func main() {
 			NotifyURL:     os.Getenv("TBANK_NOTIFY_URL"),
 			SuccessURL:    os.Getenv("TBANK_SUCCESS_URL"),
 			FailURL:       os.Getenv("TBANK_FAIL_URL"),
-			AmountKopecks: parseUint(os.Getenv("TBANK_AMOUNT"), 29900),
+			AmountKopecks: parseUint(os.Getenv("TBANK_AMOUNT"), 99000),
 			ReceiptEmail:  os.Getenv("TBANK_RECEIPT_EMAIL"),
 		}
 		if bcfg.TerminalKey != "" {
@@ -69,7 +70,7 @@ func main() {
 				NotifyURL:     os.Getenv("TBANK_NOTIFY_URL"),
 				SuccessURL:    os.Getenv("TBANK_SUCCESS_URL"),
 				FailURL:       os.Getenv("TBANK_FAIL_URL"),
-				AmountKopecks: parseUint(os.Getenv("TBANK_AMOUNT"), 29900),
+				AmountKopecks: parseUint(os.Getenv("TBANK_AMOUNT"), 99000),
 				ReceiptEmail:  os.Getenv("TBANK_RECEIPT_EMAIL"),
 				Taxation:      os.Getenv("TBANK_TAXATION"),
 			}
@@ -98,6 +99,9 @@ func main() {
 	mux.HandleFunc("/api/internal/link", srv.handleLinkComplete)                // бридж: погасить код /link <код>
 	mux.HandleFunc("/api/internal/autolink", srv.handleAutoLink)                // бридж: автопривязка MAX↔TG при паринге
 	mux.HandleFunc("/api/internal/link-start", srv.handleInternalLinkStart)     // бридж: выдать код привязки по /link в MAX-боте
+	mux.HandleFunc("/api/internal/cabinet-link", srv.handleInternalCabinetLink) // бридж: одноразовая ссылка входа по /cabinet
+	mux.HandleFunc("/api/cabinet/login", srv.handleCabinetLogin)                // погасить magic link и установить cookie
+	mux.HandleFunc("/api/cabinet/logout", srv.handleCabinetLogout)              // завершить браузерную сессию
 	mux.HandleFunc("/api/internal/mirror-slots", srv.handleInternalMirrorSlots) // бридж: докупка/уменьшение групп зеркала
 	mux.HandleFunc("/api/posts/pay", srv.handlePostsPay)                        // покупка постов импорта (T-Bank, из бота)
 	mux.HandleFunc("/api/posts/buy", srv.handleBuyPosts)                        // докупка постов из кабинета (initData)
@@ -117,6 +121,12 @@ func main() {
 	mux.HandleFunc("/api/group/antispam/rule/del", srv.handleDelGroupRule)      // удалить кастом-правило
 	mux.HandleFunc("/api/antispam/check", srv.handleBotAdminCheck)              // перепроверить права бота в группе
 	mux.HandleFunc("/api/mirror/delete", srv.handleDeleteMirror)                // удалить зеркальную связку (владелец)
+	mux.HandleFunc("/api/vk/direction", srv.handleVKDirection)                  // направление VK-связки
+	mux.HandleFunc("/api/vk/pause", srv.handleVKPause)                          // пауза VK-связки
+	mux.HandleFunc("/api/vk/delete", srv.handleVKDelete)                        // удалить VK-связку
+	mux.HandleFunc("/api/vk/connect", srv.handleVKConnect)                      // начать VK OAuth из кабинета
+	mux.HandleFunc("/api/vk/chats", srv.handleVKChats)                          // доступные беседы подключённых сообществ
+	mux.HandleFunc("/api/vk/chat-bind", srv.handleVKChatBind)                   // связать беседу VK с группой TG/MAX
 	mux.HandleFunc("/api/slots/preview", srv.handlePreviewSlots)                // расчёт покупки слотов (без платежа)
 	mux.HandleFunc("/api/slots/buy", srv.handleBuySlots)                        // докупка слотов тарифа (T-Bank ссылка)
 	mux.HandleFunc("/api/slots/reduce", srv.handleReduceSlots)                  // уменьшение слотов (рекуррент со след. периода)
@@ -127,12 +137,32 @@ func main() {
 	// Статика мини-аппа (собранный Vue). Кэш: хэшированные ассеты — навсегда (immutable),
 	// index.html — no-cache, иначе вебвью MAX/TG держит старый index с битым JS-хэшем
 	// (после редеплоя dist старые хэши удаляются → 404 → вечная загрузка).
-	mux.Handle("/", cacheHeaders(http.FileServer(http.Dir(*staticDir))))
+	mux.Handle("/", cacheHeaders(spaFileServer(*staticDir)))
 
 	log.Printf("commenter listening on %s (static: %s)", *addr, *staticDir)
-	if err := http.ListenAndServe(*addr, withCORS(mux)); err != nil {
+	if err := http.ListenAndServe(*addr, withCORS(withBrowserCSRF(mux))); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// spaFileServer отдаёт index.html для человекочитаемых маршрутов кабинета
+// (/channels, /groups, ...). API и реальные файлы по-прежнему обрабатываются обычно.
+func spaFileServer(staticDir string) http.Handler {
+	files := http.FileServer(http.Dir(staticDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			!strings.HasPrefix(r.URL.Path, "/api/") &&
+			filepath.Ext(strings.TrimSuffix(r.URL.Path, "/")) == "" &&
+			r.URL.Path != "/" {
+			clone := r.Clone(r.Context())
+			u := *r.URL
+			u.Path = "/"
+			clone.URL = &u
+			files.ServeHTTP(w, clone)
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
 }
 
 func envOr(k, def string) string {

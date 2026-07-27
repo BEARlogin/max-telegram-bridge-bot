@@ -43,6 +43,7 @@ type crosspost struct {
 	CommentsEnabled bool    `json:"comments_enabled"`
 	Antispam        bool    `json:"antispam"`
 	AntispamMode    string  `json:"antispam_mode"`
+	AllowLinks      bool    `json:"allow_links"`
 	StrikeLimit     int     `json:"strike_limit"`
 	BanAfter        int     `json:"ban_after"`
 	Action          string  `json:"action"`
@@ -134,10 +135,13 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		resp["card_pan"] = s.billing.CardPAN(bid)     // маскированная карта ("" если нет)
 		resp["has_rebill"] = s.billing.HasRebill(bid) // можно возобновить без новой оплаты
 		resp["mirror_slots"] = s.billing.MirrorSlots(bid)
+		resp["pro_price_kopecks"] = s.billing.BaseAmount(bid)
+		resp["slot_price_kopecks"] = s.billing.SlotPrice(bid)
 	}
 	// Слоты тарифа (мосты + зеркала + каналы) и зеркальные связки юзера.
 	resp["slots"] = s.slotsInfo(u)
 	resp["mirrors"] = s.listMirrors(u)
+	resp["post_packages"] = postPackages
 
 	var cps []crosspost
 	if bridgeDBPath != "" {
@@ -168,7 +172,7 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				cps[i].Antispam, cps[i].AntispamMode = s.store.GetAntispam(cps[i].TgChatID)
 				if disc := tgLinkedChat(cps[i].TgChatID); disc != 0 {
 					pol := antispamPolicy("tg", disc)
-					cps[i].StrikeLimit, cps[i].BanAfter, cps[i].Action, cps[i].MuteMinutes, cps[i].Warn, cps[i].Notify, cps[i].Captcha, cps[i].Antiraid, cps[i].ProfileGuard, cps[i].BlockWords, cps[i].BlockCats, cps[i].DelService = pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.ProfileGuard, pol.BlockWords, pol.BlockCats, pol.DelService
+					cps[i].AllowLinks, cps[i].StrikeLimit, cps[i].BanAfter, cps[i].Action, cps[i].MuteMinutes, cps[i].Warn, cps[i].Notify, cps[i].Captcha, cps[i].Antiraid, cps[i].ProfileGuard, cps[i].BlockWords, cps[i].BlockCats, cps[i].DelService = pol.AllowLinks, pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.ProfileGuard, pol.BlockWords, pol.BlockCats, pol.DelService
 					if cps[i].Antispam { // проверяем права бота только если антиспам включён
 						cps[i].BotAdmin = tgBotIsAdmin(disc)
 					}
@@ -198,7 +202,10 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp["crossposts"] = cps
-	resp["groups"] = userGroups(u.ID, s.effectiveTgID(u))
+	userGroupList := userGroups(tgKey, tgKey)
+	resp["groups"] = userGroupList
+	resp["vk_bindings"], resp["vk_communities"] = s.vkCabinetInfo(u)
+	resp["vk_sources"] = s.vkSourceCandidates(u, userGroupList)
 
 	writeJSON(w, http.StatusOK, resp)
 }

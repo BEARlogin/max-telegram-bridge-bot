@@ -19,6 +19,21 @@ export function initData() {
 // База API = база мини-аппа (Vite BASE_URL = '/commenter/') + 'api'.
 const API = `${import.meta.env.BASE_URL}api`
 
+// Обычный браузер авторизуется HttpOnly-cookie, мини-апп — X-Init-Data.
+// credentials явно оставляем включёнными, чтобы один API обслуживал оба режима.
+function request(url, options = {}) {
+  const headers = new Headers(options.headers || {})
+  const init = initData()
+  if (init) headers.set('X-Init-Data', init)
+  return fetch(url, { ...options, headers, credentials: 'same-origin' })
+}
+
+export async function logoutCabinet() {
+  const r = await request(`${API}/cabinet/logout`, { method: 'POST' })
+  if (!r.ok) throw new Error('logout failed')
+  return r.json()
+}
+
 export async function subscribePro() {
   const r = await fetch(`${API}/billing/subscribe`, { method: 'POST', headers: { 'X-Init-Data': initData() } })
   if (!r.ok) throw new Error('subscribe failed')
@@ -48,14 +63,22 @@ export async function resumePro() {
 }
 
 export async function getSettings() {
-  const r = await fetch(`${API}/settings`, { headers: { 'X-Init-Data': initData() } })
-  if (!r.ok) throw new Error('settings failed')
+  const r = await request(`${API}/settings`)
+  if (!r.ok) {
+    const e = new Error('settings failed')
+    e.status = r.status
+    throw e
+  }
   return r.json()
 }
 
 // Докупка пакета постов импорта (T-Bank). Возвращает { url } для перехода на оплату.
-export async function buyPosts() {
-  const r = await fetch(`${API}/posts/buy`, { method: 'POST', headers: { 'X-Init-Data': initData() } })
+export async function buyPosts(posts) {
+  const r = await fetch(`${API}/posts/buy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ posts }),
+  })
   if (!r.ok) throw new Error('buy failed')
   return r.json()
 }
@@ -254,6 +277,57 @@ export async function deleteMirror(platform, srcChat, dstChat) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
     body: JSON.stringify({ platform, src_chat: srcChat, dst_chat: dstChat }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'delete failed')
+  return r.json()
+}
+
+export async function setVKDirection(id, direction) {
+  const r = await request(`${API}/vk/direction`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, direction }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'save failed')
+  return r.json()
+}
+
+export async function startVKConnect() {
+  const r = await request(`${API}/vk/connect`, { method: 'POST' })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Не удалось подключить VK')
+  return r.json()
+}
+
+export async function getVKChats() {
+  const r = await request(`${API}/vk/chats`, { method: 'POST' })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Не удалось получить беседы VK')
+  return r.json()
+}
+
+export async function createVKChatBinding(accountId, peerId, platform, sourceChatId) {
+  const r = await request(`${API}/vk/chat-bind`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      account_id: accountId, peer_id: peerId,
+      platform, source_chat_id: sourceChatId,
+    }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Не удалось создать связку')
+  return r.json()
+}
+
+export async function setVKPaused(id, paused) {
+  const r = await request(`${API}/vk/pause`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, paused }),
+  })
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'save failed')
+  return r.json()
+}
+
+export async function deleteVKBinding(id) {
+  const r = await request(`${API}/vk/delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
   })
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'delete failed')
   return r.json()

@@ -109,6 +109,10 @@ func (s *server) slotsInfo(u user) map[string]any {
 				append(append([]any{}, args...), args...)...).Scan(&n) == nil {
 				used += n
 			}
+			n = 0
+			if db.QueryRow(`SELECT COUNT(*) FROM vk_bindings WHERE owner_id IN (`+in+`)`, args...).Scan(&n) == nil {
+				used += n
+			}
 			db.Close()
 		}
 	}
@@ -214,10 +218,10 @@ func (s *server) handlePreviewSlots(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                     true,
-		"amount_kopecks":         amount,                 // разовый прорейт-платёж сейчас
-		"paid_until":             paidUntil,              // конец оплаченного периода (unix)
-		"slot_price_kopecks":     s.billing.SlotPrice(),  // цена слота за полный период
-		"next_recurrent_kopecks": s.billing.EffectiveAmount(bid) + uint64(in.Groups)*s.billing.SlotPrice(), // рекуррент после покупки
+		"amount_kopecks":         amount,                                                                      // разовый прорейт-платёж сейчас
+		"paid_until":             paidUntil,                                                                   // конец оплаченного периода (unix)
+		"slot_price_kopecks":     s.billing.SlotPrice(bid),                                                    // цена слота за полный период
+		"next_recurrent_kopecks": s.billing.EffectiveAmount(bid) + uint64(in.Groups)*s.billing.SlotPrice(bid), // рекуррент после покупки
 	})
 }
 

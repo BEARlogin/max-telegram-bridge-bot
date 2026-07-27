@@ -86,8 +86,19 @@ func (s *server) handleBuyPosts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
+	var in struct {
+		Posts int `json:"posts"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		in.Posts = 0
+	}
+	amount, ok := postPackage(in.Posts)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid posts package"})
+		return
+	}
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
-	url, pid, err := s.billing.PayPosts(u.ID, postsAmount(), postsPerPurchase(), suffix)
+	url, pid, err := s.billing.PayPosts(u.ID, amount, in.Posts, suffix)
 	if err != nil {
 		log.Printf("kabinet buy posts failed uid=%d: %v", u.ID, err)
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})

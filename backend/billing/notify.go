@@ -12,18 +12,22 @@ import (
 // ClassifyNotification разбирает нотификацию и определяет, относится ли она к покупке
 // постов (OrderId "posts-<uid>-…"). ok=false — нотификация не от этого терминала
 // (подпись/ключ не совпали) → вызывающий пусть пробует другой клиент.
-func (s *Service) ClassifyNotification(body []byte) (isPosts bool, uid int64, paymentID string, confirmed, ok bool) {
+func (s *Service) ClassifyNotification(body []byte) (isPosts bool, uid int64, posts int, amount uint64, paymentID string, confirmed, ok bool) {
 	n, err := s.Parse(body)
 	if err != nil {
-		return false, 0, "", false, false
+		return false, 0, 0, 0, "", false, false
 	}
 	ok = true
+	amount = n.Amount
 	paymentID = strconv.FormatUint(n.PaymentID, 10)
 	confirmed = n.Status == tinkoff.StatusConfirmed
 	if strings.HasPrefix(n.OrderID, "posts-") {
 		isPosts = true
 		if parts := strings.Split(n.OrderID, "-"); len(parts) >= 2 {
 			uid, _ = strconv.ParseInt(parts[1], 10, 64)
+			if len(parts) >= 3 {
+				posts, _ = strconv.Atoi(parts[2])
+			}
 		}
 	}
 	return

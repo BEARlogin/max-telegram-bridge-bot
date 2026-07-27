@@ -98,9 +98,9 @@ func (s *server) handleTbankNotify(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	log.Printf("tbank notify: %s", body)
 	// Покупка постов импорта (OrderId "posts-…") — начисляем посты, а не подписку.
-	if isPosts, uid, pid, confirmed, ok := s.billing.ClassifyNotification(body); ok && isPosts {
+	if isPosts, uid, posts, amount, pid, confirmed, ok := s.billing.ClassifyNotification(body); ok && isPosts {
 		if confirmed {
-			s.grantPosts(uid, pid)
+			s.grantPosts(uid, pid, posts, amount)
 		}
 		w.Write([]byte(s.billing.NotifyOK()))
 		return

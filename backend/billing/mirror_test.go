@@ -1,6 +1,11 @@
 package billing
 
-import "testing"
+import (
+	"database/sql"
+	"testing"
+
+	_ "modernc.org/sqlite"
+)
 
 func TestProrateSlotsKopecks(t *testing.T) {
 	const period = int64(30 * 86400) // 30 дней
@@ -23,6 +28,46 @@ func TestProrateSlotsKopecks(t *testing.T) {
 		if got := prorateSlotsKopecks(c.n, c.remaining, c.period); got != c.want {
 			t.Errorf("%s: prorate(%d,%d,%d)=%d want %d", c.name, c.n, c.remaining, c.period, got, c.want)
 		}
+	}
+}
+
+func TestPriceCohortsPreserveLegacySubscription(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s, err := New(db, Config{AmountKopecks: 99000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BaseAmount(10); got != 99000 {
+		t.Fatalf("new user base=%d want 99000", got)
+	}
+	if got := s.SlotPrice(10); got != 9900 {
+		t.Fatalf("new user slot=%d want 9900", got)
+	}
+	_, err = db.Exec(`INSERT INTO subscriptions(user_id,status,amount,created_at,updated_at)
+		VALUES(20,'canceled',29900,1,1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BaseAmount(20); got != 99000 {
+		t.Fatalf("unpaid subscription row base=%d want 99000", got)
+	}
+	if got := s.SlotPrice(20); got != 9900 {
+		t.Fatalf("unpaid subscription row slot=%d want 9900", got)
+	}
+	_, err = db.Exec(`INSERT INTO payments(payment_id,user_id,order_id,amount,status,kind,at)
+		VALUES('legacy-payment',20,'sub-20-old',29900,'AUTHORIZED','sub',1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BaseAmount(20); got != 29900 {
+		t.Fatalf("legacy base=%d want 29900", got)
+	}
+	if got := s.SlotPrice(20); got != 4900 {
+		t.Fatalf("legacy slot=%d want 4900", got)
 	}
 }
 

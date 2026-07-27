@@ -58,7 +58,7 @@ type Config struct {
 	NotifyURL     string // куда T-Bank шлёт нотификации
 	SuccessURL    string
 	FailURL       string
-	AmountKopecks uint64 // 29900 = 299 ₽
+	AmountKopecks uint64 // цена для новой ценовой когорты; старую сохраняем в subscriptions.amount
 	PeriodDays    int    // 30 — период подписки
 	ReceiptEmail  string
 	Taxation      string // система налогообложения для чека (по умолчанию usn_income)
@@ -149,6 +149,20 @@ func (s *Service) HasRebill(userID int64) bool {
 	var r string
 	s.db.QueryRow(`SELECT COALESCE(rebill_id,'') FROM subscriptions WHERE user_id=?`, userID).Scan(&r)
 	return r != ""
+}
+
+// BaseAmount возвращает базовую цену пользователя. Legacy-цена сохраняется только
+// за теми, у кого в истории есть фактически успешная оплата подписки. Наличие
+// trial/pending-записи или ранее показанной платёжной формы скидку не фиксирует.
+func (s *Service) BaseAmount(userID int64) uint64 {
+	var amount uint64
+	_ = s.db.QueryRow(`SELECT amount FROM payments
+		WHERE user_id=? AND kind='sub' AND status IN ('AUTHORIZED','CONFIRMED') AND amount>0
+		ORDER BY at ASC LIMIT 1`, userID).Scan(&amount)
+	if amount > 0 {
+		return amount
+	}
+	return s.cfg.AmountKopecks
 }
 
 // Resume возобновляет подписку без отправки на полную оплату, когда это возможно:
@@ -244,7 +258,7 @@ func (s *Service) PayPosts(userID int64, amount uint64, posts int, orderSuffix s
 	itemName := fmt.Sprintf("%d постов для импорта канала в MAX", posts)
 	req := &tinkoff.InitRequest{
 		Amount:          amount,
-		OrderID:         fmt.Sprintf("posts-%d-%s", userID, orderSuffix),
+		OrderID:         fmt.Sprintf("posts-%d-%d-%s", userID, posts, orderSuffix),
 		Description:     itemName,
 		NotificationURL: s.cfg.NotifyURL,
 		SuccessURL:      s.cfg.SuccessURL,
@@ -314,8 +328,9 @@ func (s *Service) LastPaymentID(userID int64) string {
 // Subscribe создаёт первый платёж с регистрацией автоплатежа. Возвращает URL оплаты.
 func (s *Service) Subscribe(ctx context.Context, userID int64, name string) (string, error) {
 	orderID := fmt.Sprintf("sub-%d-%d", userID, time.Now().UnixNano())
+	amount := s.BaseAmount(userID)
 	req := &tinkoff.InitRequest{
-		Amount:          s.cfg.AmountKopecks,
+		Amount:          amount,
 		OrderID:         orderID,
 		CustomerKey:     strconv.FormatInt(userID, 10),
 		Description:     "PRO-подписка MaxTelegramBridgeBot",
@@ -326,7 +341,7 @@ func (s *Service) Subscribe(ctx context.Context, userID int64, name string) (str
 		Data:            map[string]string{"user_id": strconv.FormatInt(userID, 10)},
 	}
 	if s.cfg.ReceiptEmail != "" {
-		req.Receipt = s.receiptFor(s.cfg.AmountKopecks)
+		req.Receipt = s.receiptFor(amount)
 	}
 	resp, err := s.cli.InitWithContext(ctx, req)
 	if err != nil {
@@ -343,7 +358,7 @@ func (s *Service) Subscribe(ctx context.Context, userID int64, name string) (str
 			status=CASE WHEN subscriptions.status IN ('active','canceled','trial') AND subscriptions.paid_until > excluded.updated_at
 				THEN subscriptions.status ELSE 'pending' END,
 			amount=excluded.amount, updated_at=excluded.updated_at`,
-		userID, orderID, resp.PaymentID, s.cfg.AmountKopecks, now, now)
+		userID, orderID, resp.PaymentID, amount, now, now)
 	if err != nil {
 		return "", err
 	}

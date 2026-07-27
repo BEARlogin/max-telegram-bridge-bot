@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,9 +17,25 @@ import (
 // T-Bank клиент), а посты начисляются в addon.db (его владеет бридж-аддон).
 // Кнопка покупки в аддоне ведёт сюда с подписанным uid.
 
-func postsAmount() uint64    { return parseUint(os.Getenv("POSTS_AMOUNT"), 25000) }   // 250 ₽
-func postsPerPurchase() int  { return int(parseUint(os.Getenv("POSTS_PER_PURCHASE"), 1000)) }
 func postsSignSecret() string { return os.Getenv("POSTS_SIGN_SECRET") }
+
+var postPackages = []struct {
+	Posts  int
+	Amount uint64
+}{
+	{Posts: 100, Amount: 99000},
+	{Posts: 500, Amount: 299000},
+	{Posts: 1000, Amount: 499000},
+}
+
+func postPackage(posts int) (uint64, bool) {
+	for _, p := range postPackages {
+		if p.Posts == posts {
+			return p.Amount, true
+		}
+	}
+	return 0, false
+}
 
 // postsSig — HMAC-SHA256(secret, uid), первые 16 hex. Должна совпадать с подписью в glue бриджа.
 func postsSig(uid int64) string {
@@ -43,8 +60,31 @@ func (s *server) handlePostsPay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad signature", http.StatusForbidden)
 		return
 	}
+	posts, _ := strconv.Atoi(r.URL.Query().Get("p"))
+	amount, ok := postPackage(posts)
+	if !ok {
+		var b strings.Builder
+		b.WriteString("<!doctype html><html lang=ru><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Пакеты импорта</title><body style='font-family:Arial,sans-serif;max-width:560px;margin:48px auto;padding:0 20px'><h1>Пакеты импорта</h1><p>Выберите количество постов для переноса истории канала в MAX.</p>")
+		for _, p := range postPackages {
+			b.WriteString("<p><a style='display:block;padding:16px;border:1px solid #ddd;border-radius:12px;text-decoration:none;color:#111' href='?u=")
+			b.WriteString(strconv.FormatInt(uid, 10))
+			b.WriteString("&s=")
+			b.WriteString(postsSig(uid))
+			b.WriteString("&p=")
+			b.WriteString(strconv.Itoa(p.Posts))
+			b.WriteString("'><b>")
+			b.WriteString(strconv.Itoa(p.Posts))
+			b.WriteString(" постов</b> — ")
+			b.WriteString(strconv.FormatUint(p.Amount/100, 10))
+			b.WriteString(" ₽</a></p>")
+		}
+		b.WriteString("</body></html>")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(b.String()))
+		return
+	}
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
-	url, pid, err := s.billing.PayPosts(uid, postsAmount(), postsPerPurchase(), suffix)
+	url, pid, err := s.billing.PayPosts(uid, amount, posts, suffix)
 	if err != nil {
 		log.Printf("posts pay failed uid=%d: %v", uid, err)
 		http.Error(w, "payment init failed", http.StatusBadGateway)
@@ -55,8 +95,11 @@ func (s *server) handlePostsPay(w http.ResponseWriter, r *http.Request) {
 }
 
 // grantPosts начисляет посты пользователю в addon.db (идемпотентно по payment_id).
-func (s *server) grantPosts(uid int64, paymentID string) {
-	posts := postsPerPurchase()
+func (s *server) grantPosts(uid int64, paymentID string, posts int, amount uint64) {
+	if _, ok := postPackage(posts); !ok {
+		log.Printf("posts grant rejected invalid package uid=%d posts=%d pid=%s", uid, posts, paymentID)
+		return
+	}
 	// Дедуп в нашей БД: одну и ту же оплату T-Bank нотифицирует несколько раз.
 	if st, ok := s.store.(*sqliteStore); ok {
 		st.db.Exec(`CREATE TABLE IF NOT EXISTS posts_grants (
@@ -95,7 +138,7 @@ func (s *server) grantPosts(uid int64, paymentID string) {
 	if st, ok := s.store.(*sqliteStore); ok {
 		st.db.Exec(`INSERT OR IGNORE INTO payments (payment_id, user_id, order_id, amount, status, kind, at)
 			VALUES (?, ?, '', ?, 'CONFIRMED', 'posts', strftime('%s','now'))`,
-			paymentID, uid, postsAmount())
+			paymentID, uid, amount)
 	}
 	log.Printf("posts granted uid=%d posts=%d pid=%s", uid, posts, paymentID)
 }

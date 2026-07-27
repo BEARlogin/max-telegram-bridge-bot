@@ -19,6 +19,7 @@ func TestWriteGroupAntispamConfigsRollsBackBothSides(t *testing.T) {
 	_, err = db.Exec(`CREATE TABLE antispam_config (
 		platform TEXT NOT NULL CHECK(platform='tg'), chat_id INTEGER NOT NULL,
 		enabled INTEGER, enabled_by INTEGER, mode TEXT, link_delay_h INTEGER, trust_msgs INTEGER,
+		links_allowed INTEGER,
 		strike_limit INTEGER, ban_after INTEGER, action TEXT, mute_minutes INTEGER, warn INTEGER,
 		notify TEXT, captcha INTEGER, antiraid INTEGER, profile_guard INTEGER, block_words TEXT,
 		block_cats TEXT, del_service INTEGER, tone TEXT, updated_at INTEGER,

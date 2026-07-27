@@ -32,6 +32,7 @@ type groupInfo struct {
 	Direction    string       `json:"direction"` // both | tg>max | max>tg (PRO), пусто у standalone
 	Antispam     bool         `json:"antispam"`
 	AntispamMode string       `json:"antispam_mode"`
+	AllowLinks   bool         `json:"allow_links"`
 	StrikeLimit  int          `json:"strike_limit"`
 	BanAfter     int          `json:"ban_after"`
 	Action       string       `json:"action"`
@@ -334,7 +335,7 @@ func userGroups(userID, effTg int64) []groupInfo {
 		}
 		out[i].Antispam, out[i].AntispamMode = antispamStatus("tg", out[i].TgChatID)
 		pol := antispamPolicy("tg", out[i].TgChatID)
-		out[i].StrikeLimit, out[i].BanAfter, out[i].Action, out[i].MuteMinutes, out[i].Warn, out[i].Notify, out[i].Captcha, out[i].Antiraid, out[i].ProfileGuard, out[i].BlockWords, out[i].BlockCats, out[i].DelService = pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.ProfileGuard, pol.BlockWords, pol.BlockCats, pol.DelService
+		out[i].AllowLinks, out[i].StrikeLimit, out[i].BanAfter, out[i].Action, out[i].MuteMinutes, out[i].Warn, out[i].Notify, out[i].Captcha, out[i].Antiraid, out[i].ProfileGuard, out[i].BlockWords, out[i].BlockCats, out[i].DelService = pol.AllowLinks, pol.StrikeLimit, pol.BanAfter, pol.Action, pol.MuteMinutes, pol.Warn, pol.Notify, pol.Captcha, pol.Antiraid, pol.ProfileGuard, pol.BlockWords, pol.BlockCats, pol.DelService
 		out[i].Tone = pol.Tone
 		out[i].WelcomeText = readGroupWelcome(out[i].TgChatID)
 		out[i].Rules = readAntispamRules("tg", out[i].TgChatID)

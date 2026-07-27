@@ -37,6 +37,31 @@ CREATE TABLE IF NOT EXISTS account_links (
 	code_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_links_code ON account_links(code);
+
+-- Одноразовый вход в полноценный браузерный кабинет. Секреты храним только
+-- в виде SHA-256: утечка БД не превращает незаконченные входы и сессии в ключи.
+CREATE TABLE IF NOT EXISTS cabinet_login_tokens (
+	token_hash TEXT PRIMARY KEY,
+	user_id    INTEGER NOT NULL,
+	platform   TEXT NOT NULL,
+	name       TEXT NOT NULL DEFAULT '',
+	expires_at INTEGER NOT NULL,
+	used_at    INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cabinet_login_expiry ON cabinet_login_tokens(expires_at);
+
+CREATE TABLE IF NOT EXISTS cabinet_sessions (
+	session_hash TEXT PRIMARY KEY,
+	user_id      INTEGER NOT NULL,
+	platform     TEXT NOT NULL,
+	name         TEXT NOT NULL DEFAULT '',
+	expires_at   INTEGER NOT NULL,
+	created_at   INTEGER NOT NULL,
+	last_seen_at INTEGER NOT NULL,
+	revoked_at   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_cabinet_session_expiry ON cabinet_sessions(expires_at);
 `
 
 type sqliteStore struct {
@@ -59,6 +84,7 @@ func newSQLiteStore(path string) (*sqliteStore, error) {
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_comments_tgmsg ON comments(post_id, tg_msg_id)`)
 	// Доливка mode для cp_antispam, созданной до колонки (идемпотентно).
 	_, _ = db.Exec(`ALTER TABLE cp_antispam ADD COLUMN mode TEXT NOT NULL DEFAULT 'enforce'`)
+	browserAuthDB = db
 	return &sqliteStore{db: db}, nil
 }
 

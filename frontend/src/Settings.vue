@@ -1,7 +1,7 @@
 <script setup>
 // Кабинет мини-аппа: управление связками (комменты, синк правок, замены, удаление),
 // баланс импорта/докупка, PRO. Авторизация — по подписи initData.
-import { ref, onMounted, reactive, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, reactive, computed } from 'vue'
 import {
   getSettings, subscribePro, cancelPro, resumePro, startTrial, buyPosts,
   deleteCrosspost, setComments, setReplacements, setSyncEdits,
@@ -9,6 +9,8 @@ import {
   setCrosspostPaused, setGroupPaused, setGroupDirection,
   getBlocks, unbanUser, checkBotAdmin, initData,
   addGroupRule, delGroupRule, deleteMirror, buySlots, previewSlots, reduceSlots,
+  logoutCabinet, startVKConnect, setVKDirection, setVKPaused, deleteVKBinding,
+  getVKChats, createVKChatBinding,
 } from './api.js'
 
 const loading = ref(true)
@@ -30,6 +32,22 @@ const crossposts = ref([])
 const groups = ref([])
 const blocks = ref([])
 const mirrors = ref([])
+const vkBindings = ref([])
+const vkCommunities = ref([])
+const vkSources = ref([])
+const vkBusy = reactive({})
+const vkConfirm = reactive({})
+const vkConnecting = ref(false)
+const vkWizardOpen = ref(false)
+const vkChats = ref([])
+const vkChatsLoading = ref(false)
+const vkChatsLoaded = ref(false)
+const vkChatsFailed = ref([])
+const vkChatLink = ref('')
+const vkSelectedChat = ref('')
+const vkSelectedSource = ref('')
+const vkWizardError = ref('')
+const vkCreating = ref(false)
 const slots = ref(null) // { used, base, extra, limit }
 const mirrorBusy = reactive({})
 const slotsBuying = ref(false)
@@ -46,6 +64,9 @@ const slotReducing = ref(false)
 const blockBusy = reactive({})
 const groupUi = reactive({}) // { [tg_chat_id]: { busy, confirm } }
 const importBalance = ref(0)
+const proPriceKopecks = ref(99000)
+const slotPriceKopecks = ref(9900)
+const postPackages = ref([])
 const subscribing = ref(false)
 const buying = ref(false)
 const toast = ref('')
@@ -58,9 +79,36 @@ const accLinked = ref(true)
 const accCode = ref('')
 const accBusy = ref(false)
 const tgBotUrl = 'https://t.me/MaxTelegramBridgeBot'
-const maxBotUrl = 'https://max.ru/id710708943262_bot'
+const maxBotUrl = 'https://max.ru/id710708943262_4_bot'
 // Транзиентное состояние карточек (open/busy/confirm/edit) — вне объектов API.
 const ui = reactive({})
+const browserMode = !initData()
+const loggingOut = ref(false)
+const cabinetSections = [
+  { id: 'overview', path: '', label: 'Обзор' },
+  { id: 'channels', path: 'channels', label: 'Каналы' },
+  { id: 'groups', path: 'groups', label: 'Группы' },
+  { id: 'mirrors', path: 'mirrors', label: 'Зеркала' },
+  { id: 'vk', path: 'vk', label: 'VK' },
+  { id: 'moderation', path: 'moderation', label: 'Модерация' },
+  { id: 'billing', path: 'billing', label: 'Тариф и слоты' },
+  { id: 'import', path: 'import', label: 'Импорт истории' },
+]
+function sectionFromLocation() {
+  if (!browserMode) return 'overview'
+  const prefix = '/cabinet/'
+  const path = location.pathname === '/cabinet' ? '' :
+    (location.pathname.startsWith(prefix) ? location.pathname.slice(prefix.length).split('/')[0] : '')
+  return cabinetSections.find(x => x.path === path)?.id || 'overview'
+}
+const currentSection = ref(sectionFromLocation())
+const currentSectionLabel = computed(() => cabinetSections.find(x => x.id === currentSection.value)?.label || 'Обзор')
+const totalConnections = computed(() => crossposts.value.length + groups.value.length + mirrors.value.length + vkBindings.value.length)
+const pausedConnections = computed(() =>
+  crossposts.value.filter(x => x.paused).length + groups.value.filter(x => x.paused).length +
+  vkBindings.value.filter(x => x.paused).length)
+const freeSlots = computed(() => slots.value ? Math.max(0, slots.value.limit - slots.value.used) : 0)
+const attentionCount = computed(() => pausedConnections.value + blocks.value.length + (!accLinked.value ? 1 : 0))
 
 const platform = (() => {
   const h = new URLSearchParams((location.hash || '').replace(/^#/, ''))
@@ -98,23 +146,217 @@ async function load() {
     crossposts.value = s.crossposts || []
     groups.value = s.groups || []
     mirrors.value = s.mirrors || []
+    vkBindings.value = s.vk_bindings || []
+    vkCommunities.value = s.vk_communities || []
+    vkSources.value = s.vk_sources || []
     slots.value = s.slots || null
     importBalance.value = s.import_balance || 0
+    proPriceKopecks.value = s.pro_price_kopecks || 99000
+    slotPriceKopecks.value = s.slot_price_kopecks || 9900
+    postPackages.value = s.post_packages || []
     acctPlat.value = s.platform || ''
     accLinked.value = s.linked !== false
     error.value = ''
     getBlocks().then(b => { blocks.value = b.blocks || [] }).catch(() => {})
-  } catch {
-    error.value = 'Не удалось загрузить данные (авторизация не прошла?)'
+  } catch (e) {
+    if (browserMode && e?.status === 401) noAuth.value = true
+    else error.value = 'Не удалось загрузить данные. Проверьте соединение и попробуйте ещё раз.'
   } finally {
     loading.value = false
   }
 }
 
+function onCabinetPopState() {
+  currentSection.value = sectionFromLocation()
+  closeAll()
+}
+
 onMounted(() => {
-  if (!initData()) { noAuth.value = true; loading.value = false; return }
+  if (browserMode) window.addEventListener('popstate', onCabinetPopState)
   load()
 })
+onBeforeUnmount(() => window.removeEventListener('popstate', onCabinetPopState))
+
+function navigate(section) {
+  const target = cabinetSections.find(x => x.id === section) || cabinetSections[0]
+  currentSection.value = target.id
+  closeAll()
+  if (browserMode) {
+    const next = `/cabinet/${target.path ? target.path : ''}`
+    if (location.pathname !== next) history.pushState({}, '', next)
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  } else if (['channels', 'groups', 'mirrors', 'blocks'].includes(section)) {
+    tab.value = section
+  }
+}
+
+function onMobileSection(event) {
+  navigate(event.target.value)
+}
+
+async function logout() {
+  if (loggingOut.value) return
+  loggingOut.value = true
+  try {
+    await logoutCabinet()
+    noAuth.value = true
+    me.value = null
+  } catch {
+    flash('Не удалось выйти')
+  } finally {
+    loggingOut.value = false
+  }
+}
+
+function vkSource(v) {
+  return v.source_title || `${v.source_platform.toUpperCase()} ${v.source_chat_id}`
+}
+function vkTarget(v) {
+  if (v.kind === 'community_wall') return `Публикации сообщества VK ${v.community_id}`
+  if (v.kind === 'profile_wall') return v.title || 'Стена профиля VK'
+  if (v.kind === 'board_topic') return v.title || 'Обсуждение VK'
+  return v.title || `Беседа сообщества VK ${v.community_id}`
+}
+function vkDirection(v) {
+  const source = v.source_platform.toUpperCase()
+  if (v.direction === 'source>vk') return `${source} → VK`
+  if (v.direction === 'vk>source') return `VK → ${source}`
+  return `${source} ↔ VK`
+}
+async function connectVK() {
+  if (vkConnecting.value) return
+  vkConnecting.value = true
+  try {
+    const result = await startVKConnect()
+    if (!result.url) throw new Error('VK не вернул ссылку авторизации')
+    location.assign(result.url)
+  } catch (e) {
+    flash(e.message || 'Не удалось начать подключение VK')
+    vkConnecting.value = false
+  }
+}
+function vkChatKey(chat) {
+  return `${chat.account_id}:${chat.peer_id}`
+}
+function vkSourceKey(source) {
+  return `${source.platform}:${source.chat_id}`
+}
+const selectedVKChat = computed(() => vkChats.value.find(x => vkChatKey(x) === vkSelectedChat.value) || null)
+const selectedVKSource = computed(() => vkSources.value.find(x => vkSourceKey(x) === vkSelectedSource.value) || null)
+function peerFromVKLink(raw) {
+  const value = String(raw || '').trim()
+  if (!value) return 0
+  try {
+    const url = new URL(value.includes('://') ? value : `https://${value}`)
+    if (!['vk.com', 'vk.ru', 'www.vk.com', 'www.vk.ru'].includes(url.hostname.toLowerCase())) return 0
+    const sel = url.searchParams.get('sel') || ''
+    const match = sel.match(/^c(\d+)$/i)
+    if (!match) return 0
+    return 2000000000 + Number(match[1])
+  } catch {
+    const match = value.match(/^c(\d+)$/i)
+    return match ? 2000000000 + Number(match[1]) : 0
+  }
+}
+function findVKChatByLink(showError = true) {
+  const peer = peerFromVKLink(vkChatLink.value)
+  if (!peer) {
+    if (showError) vkWizardError.value = 'Вставьте ссылку вида https://vk.ru/im?sel=c160'
+    return false
+  }
+  const found = vkChats.value.find(x => Number(x.peer_id) === peer)
+  if (!found) {
+    if (showError) vkWizardError.value = 'Эта беседа пока не видна сообществу. Добавьте сообщество в беседу, отправьте там сообщение и обновите список.'
+    return false
+  }
+  vkSelectedChat.value = vkChatKey(found)
+  vkWizardError.value = ''
+  return true
+}
+async function loadVKChats() {
+  if (vkChatsLoading.value) return
+  vkChatsLoading.value = true
+  vkWizardError.value = ''
+  try {
+    const result = await getVKChats()
+    vkChats.value = result.chats || []
+    vkChatsFailed.value = result.failed_communities || []
+    vkChatsLoaded.value = true
+    if (vkChatLink.value) findVKChatByLink(false)
+  } catch (e) {
+    vkWizardError.value = e.message || 'Не удалось получить беседы VK'
+  } finally {
+    vkChatsLoading.value = false
+  }
+}
+async function openVKWizard() {
+  vkWizardOpen.value = true
+  vkWizardError.value = ''
+  if (!vkChatsLoaded.value) await loadVKChats()
+}
+function closeVKWizard() {
+  if (vkCreating.value) return
+  vkWizardOpen.value = false
+  vkWizardError.value = ''
+}
+async function createVKChat() {
+  if (vkCreating.value) return
+  if (!selectedVKChat.value) {
+    vkWizardError.value = 'Выберите беседу VK.'
+    return
+  }
+  if (!selectedVKSource.value) {
+    vkWizardError.value = 'Выберите группу Telegram или MAX.'
+    return
+  }
+  vkCreating.value = true
+  vkWizardError.value = ''
+  try {
+    await createVKChatBinding(
+      selectedVKChat.value.account_id, selectedVKChat.value.peer_id,
+      selectedVKSource.value.platform, selectedVKSource.value.chat_id,
+    )
+    vkWizardOpen.value = false
+    vkSelectedChat.value = ''
+    vkSelectedSource.value = ''
+    await load()
+    flash('Беседа VK связана. Направление: в обе стороны')
+  } catch (e) {
+    vkWizardError.value = e.message || 'Не удалось создать связку'
+  } finally {
+    vkCreating.value = false
+  }
+}
+async function changeVKDirection(v, direction) {
+  if (vkBusy[v.id]) return
+  vkBusy[v.id] = true
+  try {
+    await setVKDirection(v.id, direction)
+    v.direction = direction
+    flash('Направление сохранено')
+  } catch (e) { flash(e.message || 'Не удалось сохранить') }
+  finally { vkBusy[v.id] = false }
+}
+async function toggleVKPause(v) {
+  if (vkBusy[v.id]) return
+  vkBusy[v.id] = true
+  try {
+    await setVKPaused(v.id, !v.paused)
+    v.paused = !v.paused
+    flash(v.paused ? 'VK-связка на паузе' : 'VK-связка работает')
+  } catch (e) { flash(e.message || 'Не удалось сохранить') }
+  finally { vkBusy[v.id] = false }
+}
+async function removeVK(v) {
+  if (vkBusy[v.id]) return
+  vkBusy[v.id] = true
+  try {
+    await deleteVKBinding(v.id)
+    vkBindings.value = vkBindings.value.filter(x => x.id !== v.id)
+    flash('VK-связка удалена')
+  } catch (e) { flash(e.message || 'Не удалось удалить') }
+  finally { vkBusy[v.id] = false; vkConfirm[v.id] = false }
+}
 
 // Master-detail: открытая карточка = «экран настроек» одного объекта. anyOpen прячет
 // список/шапку/табы, closeAll — кнопка «Назад». Карточки single-open (раскрытие одной
@@ -174,7 +416,15 @@ function toggleCard(c) {
 }
 
 function gUi(g) {
-  if (!groupUi[g.tg_chat_id]) groupUi[g.tg_chat_id] = { busy: false, confirm: false, open: false, sec: {} }
+  if (!groupUi[g.tg_chat_id]) {
+    groupUi[g.tg_chat_id] = {
+      busy: false,
+      confirm: false,
+      open: false,
+      panel: g.standalone ? 'antispam' : 'bridge',
+      sec: {},
+    }
+  }
   return groupUi[g.tg_chat_id]
 }
 function toggleGroupCard(g) {
@@ -276,7 +526,7 @@ async function delAsRule(g, rid) {
 
 function gAsOf(g) {
   const u = gUi(g)
-  if (!u.as) u.as = { mode: g.antispam_mode || 'enforce', link_delay_h: 24, trust_msgs: 3, strike_limit: g.strike_limit || 2, ban_after: g.ban_after || 3, action: g.action || 'mute', mute_minutes: g.mute_minutes || 60, warn: !!g.warn, notify: g.notify || 'ban', captcha: !!g.captcha, antiraid: !!g.antiraid, profile_guard: !!g.profile_guard, block_words: g.block_words || '', block_cats: g.block_cats || '', del_service: !!g.del_service, tone: g.tone || 'strict' }
+  if (!u.as) u.as = { mode: g.antispam_mode || 'enforce', allow_links: !!g.allow_links, link_delay_h: 24, trust_msgs: 3, strike_limit: g.strike_limit || 2, ban_after: g.ban_after || 3, action: g.action || 'mute', mute_minutes: g.mute_minutes || 60, warn: !!g.warn, notify: g.notify || 'ban', captcha: !!g.captcha, antiraid: !!g.antiraid, profile_guard: !!g.profile_guard, block_words: g.block_words || '', block_cats: g.block_cats || '', del_service: !!g.del_service, tone: g.tone || 'strict' }
   return u.as
 }
 async function toggleGroupAntispam(g) {
@@ -579,10 +829,10 @@ function reasonLabel(reason) {
   return r
 }
 
-async function buy() {
+async function buy(posts) {
   if (buying.value) return
   buying.value = true
-  try { const { url } = await buyPosts(); if (url) location.href = url }
+  try { const { url } = await buyPosts(posts); if (url) location.href = url }
   catch { flash('Не удалось создать платёж') }
   finally { buying.value = false }
 }
@@ -620,7 +870,7 @@ async function togglePause(c) {
 // Настройки антиспама держим в ui-объекте связки (с дефолтами).
 function asOf(c) {
   const u = uiOf(c)
-  if (!u.as) u.as = { mode: c.antispam_mode || 'enforce', link_delay_h: 24, trust_msgs: 3, strike_limit: c.strike_limit || 2, ban_after: c.ban_after || 3, action: c.action || 'mute', mute_minutes: c.mute_minutes || 60, warn: !!c.warn, notify: c.notify || 'ban', captcha: !!c.captcha, antiraid: !!c.antiraid, profile_guard: !!c.profile_guard, block_words: c.block_words || '', block_cats: c.block_cats || '', del_service: !!c.del_service }
+  if (!u.as) u.as = { mode: c.antispam_mode || 'enforce', allow_links: !!c.allow_links, link_delay_h: 24, trust_msgs: 3, strike_limit: c.strike_limit || 2, ban_after: c.ban_after || 3, action: c.action || 'mute', mute_minutes: c.mute_minutes || 60, warn: !!c.warn, notify: c.notify || 'ban', captcha: !!c.captcha, antiraid: !!c.antiraid, profile_guard: !!c.profile_guard, block_words: c.block_words || '', block_cats: c.block_cats || '', del_service: !!c.del_service }
   return u.as
 }
 async function toggleAntispam(c) {
@@ -699,31 +949,84 @@ async function saveRepl(c) {
 </script>
 
 <template>
-  <main class="wrap">
-    <header class="top">
-      <h1>Кабинет</h1>
+  <main class="wrap" :class="{ 'cabinet-desktop': browserMode, 'detail-open': anyOpen, 'auth-required': noAuth }">
+    <aside v-if="browserMode && !noAuth" class="cabinet-sidebar" aria-label="Разделы кабинета">
+      <a class="brand" href="/cabinet/" aria-label="Мост — главная кабинета">
+        <span class="brand-mark" aria-hidden="true">М</span>
+        <span><b>Мост</b><small>Кабинет</small></span>
+      </a>
+      <nav class="side-nav">
+        <a v-for="item in cabinetSections" :key="item.id"
+          :href="'/cabinet/' + item.path"
+          :class="{ active: currentSection === item.id }"
+          :aria-current="currentSection === item.id ? 'page' : undefined"
+          @click.prevent="navigate(item.id)">{{ item.label }}</a>
+      </nav>
+      <div class="side-bottom">
+        <a href="https://t.me/+0ucbOj4wBwQzMWNi" target="_blank" rel="noopener">Поддержка</a>
+        <button :disabled="loggingOut" @click="logout">{{ loggingOut ? 'Выходим…' : 'Выйти' }}</button>
+      </div>
+    </aside>
+
+    <section class="cabinet-content">
+    <header v-if="!noAuth" id="overview" class="top">
+      <div>
+        <p v-if="browserMode" class="eyebrow">Рабочее пространство</p>
+        <h1>{{ browserMode ? currentSectionLabel : 'Кабинет' }}</h1>
+      </div>
       <button v-if="!loading && !noAuth && !error" class="icon-btn" title="Обновить" @click="load">↻</button>
     </header>
 
     <p v-if="loading" class="muted">Загрузка…</p>
-    <div v-else-if="noAuth" class="center" style="padding:24px 8px">
-      <div style="font-size:48px;line-height:1">✅</div>
-      <p style="font-size:16px;font-weight:600;margin:8px 0 4px">Готово</p>
-      <p class="muted" style="font-size:14px">Вернитесь в бот — кабинет откроется с актуальным статусом.</p>
+    <div v-else-if="noAuth" class="login-card">
+      <span class="login-mark" aria-hidden="true">М</span>
+      <p class="eyebrow">Без паролей</p>
+      <h2>Войдите через бота</h2>
+      <p class="muted">Отправьте боту команду <code>/cabinet</code>. Он пришлёт личную одноразовую ссылку — откройте её на этом компьютере.</p>
+      <div class="login-actions">
+        <a class="btn accent" :href="tgBotUrl" target="_blank" rel="noopener">Открыть Telegram-бота</a>
+        <a class="btn ghost" :href="maxBotUrl" target="_blank" rel="noopener">Открыть MAX-бота</a>
+      </div>
+      <p class="security-note">Ссылка действует 10 минут и срабатывает один раз. Пароль придумывать и хранить не нужно.</p>
     </div>
     <p v-else-if="error" class="center error">{{ error }}</p>
 
     <template v-else>
+      <label v-if="browserMode && !anyOpen" class="mobile-section-picker">
+        <span>Раздел</span>
+        <select :value="currentSection" @change="onMobileSection">
+          <option v-for="item in cabinetSections" :key="item.id" :value="item.id">{{ item.label }}</option>
+        </select>
+      </label>
+
       <!-- Назад к списку (когда открыт «экран» одного объекта) -->
       <button v-if="anyOpen" class="back-bar" @click="closeAll">← Назад к списку</button>
 
-      <div v-if="me" v-show="!anyOpen" class="whoami">👤 <b>{{ me.name }}</b> · id {{ me.id }} · {{ platform }}</div>
+      <div v-if="me" v-show="!anyOpen" class="whoami">👤 <b>{{ me.name }}</b> · id {{ me.id }} · {{ browserMode ? acctPlat.toUpperCase() : platform }}</div>
+
+      <section v-if="browserMode" v-show="!anyOpen && currentSection === 'overview'" class="overview-grid" aria-label="Состояние кабинета">
+        <article><span>Связок работает</span><strong>{{ totalConnections - pausedConnections }}</strong><small>из {{ totalConnections }}</small></article>
+        <article><span>Свободных слотов</span><strong>{{ freeSlots }}</strong><small>можно подключить сейчас</small></article>
+        <article><span>На паузе</span><strong>{{ pausedConnections }}</strong><small>{{ pausedConnections ? 'проверьте связки' : 'всё активно' }}</small></article>
+        <article :class="{ attention: attentionCount }"><span>Требует внимания</span><strong>{{ attentionCount }}</strong><small>{{ attentionCount ? 'есть действия' : 'всё спокойно' }}</small></article>
+      </section>
+
+      <section v-if="browserMode" v-show="!anyOpen && currentSection === 'overview'" class="focus-card">
+        <div>
+          <p class="eyebrow">Следующий шаг</p>
+          <h2>{{ attentionCount ? 'Проверьте то, что требует внимания' : 'Все основные связки под контролем' }}</h2>
+          <p class="muted">{{ attentionCount ? 'Паузы и события модерации собраны в соответствующих разделах.' : 'Можно добавить новую связку или спокойно закрыть кабинет.' }}</p>
+        </div>
+        <button class="btn accent" @click="navigate(attentionCount ? 'moderation' : 'channels')">
+          {{ attentionCount ? 'Открыть события' : 'Перейти к связкам' }}
+        </button>
+      </section>
 
       <!-- Вход в админку (только владелец) — отдельный экран -->
-      <button v-if="isAdmin" v-show="!anyOpen" class="btn ghost full admin-link" @click="emit('admin')">📊 Админка — статистика</button>
+      <button v-if="isAdmin" v-show="!anyOpen && (!browserMode || currentSection === 'overview')" class="btn ghost full admin-link" @click="emit('admin')">📊 Админка — статистика</button>
 
       <!-- Бесплатный тариф: яркий CTA-блок (сразу видны кнопки, без раскрытия) -->
-      <div v-if="!isPro" v-show="!anyOpen" class="cta">
+      <div id="billing" v-if="!isPro" v-show="!anyOpen && (!browserMode || currentSection === 'billing')" class="cta section-anchor">
         <div class="cta-title">🚀 Откройте PRO</div>
         <div class="cta-sub">5 слотов на мосты, зеркала и каналы (с докупкой), комментарии под постами, антиспам в группах, без подписи бота.</div>
         <div class="consent-terms" style="margin-bottom:10px">
@@ -733,20 +1036,20 @@ async function saveRepl(c) {
           {{ subscribing ? '…' : '🎁 Попробовать 7 дней бесплатно' }}
         </button>
         <div class="consent">
-          <div class="consent-terms">Подписка <b>PRO — 299 ₽/мес</b>. Регулярное автосписание раз в 30 дней до отмены.</div>
+          <div class="consent-terms">Подписка <b>PRO — {{ rub(proPriceKopecks) }}/мес</b>. Регулярное автосписание раз в 30 дней до отмены.</div>
           <label class="consent-check">
             <input type="checkbox" v-model="recurrentConsent" />
-            <span>Согласен на регулярные списания 299 ₽ раз в 30 дней. Отменить можно в любой момент в этом кабинете.</span>
+            <span>Согласен на регулярные списания {{ rub(proPriceKopecks) }} раз в 30 дней. Отменить можно в любой момент в этом кабинете.</span>
           </label>
           <div class="consent-contact">Возврат, отмена, вопросы оплаты — <a href="https://t.me/+0ucbOj4wBwQzMWNi">группа поддержки</a></div>
         </div>
         <button class="btn full" :class="trialUsed ? 'accent' : 'ghost-light'" :disabled="subscribing || !recurrentConsent" @click="upgrade" style="margin-top:8px">
-          {{ subscribing ? '…' : 'Оформить PRO — 299 ₽/мес' }}
+          {{ subscribing ? '…' : 'Оформить PRO — ' + rub(proPriceKopecks) + '/мес' }}
         </button>
       </div>
 
       <!-- PRO активен: раскрывающееся управление подпиской -->
-      <div v-else v-show="!anyOpen" class="pro-banner active">
+      <div id="billing" v-else v-show="!anyOpen && (!browserMode || currentSection === 'billing')" class="pro-banner active section-anchor">
         <button class="pro-head" @click="proOpen = !proOpen">
           <div>
             <b>⭐ PRO активен</b>
@@ -772,7 +1075,7 @@ async function saveRepl(c) {
           <div v-if="subStatus === 'trial' || cardPan" class="consent">
             <label class="consent-check">
               <input type="checkbox" v-model="recurrentConsent" />
-              <span>Согласен на регулярные списания 299 ₽ раз в 30 дней до отмены (в кабинете).</span>
+              <span>Согласен на регулярные списания {{ rub(proPriceKopecks) }} раз в 30 дней до отмены (в кабинете).</span>
             </label>
             <div class="consent-contact">Возврат/отмена/вопросы — <a href="https://t.me/+0ucbOj4wBwQzMWNi">группа поддержки</a></div>
           </div>
@@ -781,7 +1084,7 @@ async function saveRepl(c) {
             {{ subscribing ? '…' : 'Отменить подписку' }}
           </button>
           <button v-else-if="subStatus === 'trial'" class="btn accent full" :disabled="subscribing || !recurrentConsent" @click="upgrade">
-            {{ subscribing ? '…' : 'Оформить полную PRO — 299 ₽/мес' }}
+            {{ subscribing ? '…' : 'Оформить полную PRO — ' + rub(proPriceKopecks) + '/мес' }}
           </button>
           <button v-else class="btn accent full" :disabled="subscribing" @click="resumeSub">
             {{ subscribing ? '…' : 'Возобновить подписку' }}
@@ -790,7 +1093,7 @@ async function saveRepl(c) {
       </div>
 
       <!-- Привязка MAX↔TG (баланс постов/PRO по TG-аккаунту) -->
-      <div v-if="acctPlat === 'max' && !accLinked" v-show="!anyOpen" class="help-card acc-card">
+      <div v-if="acctPlat === 'max' && !accLinked" v-show="!anyOpen && (!browserMode || currentSection === 'overview')" class="help-card acc-card">
         <div class="help-head" style="cursor:default">
           <span class="help-q">🔗</span>
           <span class="help-title">Telegram-аккаунт не привязан</span>
@@ -811,7 +1114,7 @@ async function saveRepl(c) {
         </div>
       </div>
 
-      <div class="tabs" v-show="!anyOpen">
+      <div id="connections" class="tabs section-anchor" v-show="!anyOpen && !browserMode">
         <button type="button" :class="{ active: tab === 'channels' }" @click="tab = 'channels'">Каналы ({{ crossposts.length }})</button>
         <button type="button" :class="{ active: tab === 'groups' }" @click="tab = 'groups'">Группы ({{ groups.length }})</button>
         <button type="button" :class="{ active: tab === 'mirrors' }" @click="tab = 'mirrors'">Зеркала ({{ mirrors.length }})</button>
@@ -819,12 +1122,12 @@ async function saveRepl(c) {
       </div>
 
       <!-- Слоты тарифа: общий счётчик мостов/зеркал/каналов + докупка -->
-      <div class="help-card" v-show="!anyOpen && slots">
+      <div class="help-card" v-show="!anyOpen && slots && (!browserMode || currentSection === 'billing')">
         <div class="help-body" style="display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px">
           <span class="muted small">🧩 Слоты: <b>{{ slots.used }}</b> из <b>{{ slots.limit }}</b> (база {{ slots.base }} + докуплено {{ slots.extra }})</span>
           <span style="display:flex;gap:6px">
             <button v-if="isPro && slots.extra > 0" class="btn ghost" @click="openReducePanel">{{ slotReduceOpen ? 'Скрыть' : '−' }}</button>
-            <button v-if="isPro" class="btn ghost" @click="openSlotsPanel">{{ slotsOpen ? 'Скрыть' : '+ слот (49 ₽/мес)' }}</button>
+            <button v-if="isPro" class="btn ghost" @click="openSlotsPanel">{{ slotsOpen ? 'Скрыть' : '+ слот (' + rub(slotPriceKopecks) + '/мес)' }}</button>
           </span>
         </div>
         <!-- Уменьшение слотов: без возврата, рекуррент снизится со следующего периода -->
@@ -838,7 +1141,7 @@ async function saveRepl(c) {
           </div>
           <p class="muted small" style="margin:4px 0">
             Возврата за текущий оплаченный период нет — слоты работают до его конца.
-            Со следующего продления списание уменьшится на {{ slotReduceQty * 49 }} ₽/мес.
+            Со следующего продления списание уменьшится на {{ rub(slotReduceQty * slotPriceKopecks) }}/мес.
             Если занятых связок останется больше лимита, существующие продолжат работать,
             но новые подключить будет нельзя.
           </p>
@@ -877,7 +1180,7 @@ async function saveRepl(c) {
           <p v-else class="muted small">Расчёт…</p>
         </div>
       </div>
-      <div v-show="tab === 'channels'">
+      <div v-show="(!browserMode && tab === 'channels') || (browserMode && currentSection === 'channels')">
       <p class="muted small" style="margin-top:-4px" v-show="!anyOpen">
         <template v-if="isPro">Тариф PRO — 5 слотов на мосты, зеркала и каналы; доп-слоты — /slots в личке бота.</template>
         <template v-else>Бесплатно — 1 канал, PRO — 5 слотов (мосты, зеркала, каналы) с докупкой. Новый канал добавится, только если есть свободный слот (удалите лишние связки или оформите PRO).</template>
@@ -977,7 +1280,11 @@ async function saveRepl(c) {
             </p>
             <button type="button" class="as-sec-head" @click="secToggle(uiOf(c),'adv')">⚙️ Расширенные настройки <span class="chev">{{ secOpen(uiOf(c),'adv') ? '▾' : '▸' }}</span></button>
             <div v-show="secOpen(uiOf(c),'adv')">
-            <label class="as-field">Новичкам нельзя ссылки, часов
+            <label class="as-check">
+              <input type="checkbox" v-model="asOf(c).allow_links" />
+              <span>Разрешать ссылки участникам. Остальные антиспам-проверки продолжат работать.</span>
+            </label>
+            <label v-if="!asOf(c).allow_links" class="as-field">Новичкам нельзя ссылки, часов
               <input type="number" min="0" max="720" v-model.number="asOf(c).link_delay_h" />
             </label>
             <label class="as-field">«Доверенный» после N сообщений
@@ -1103,7 +1410,7 @@ async function saveRepl(c) {
       </div>
 
       </div>
-      <div v-show="tab === 'groups'">
+      <div v-show="(!browserMode && tab === 'groups') || (browserMode && currentSection === 'groups')">
       <p class="muted small" style="margin-top:-4px" v-show="!anyOpen">Зеркало сообщений между TG-группой и MAX-чатом (в обе стороны).</p>
 
       <div class="help-card" v-show="!anyOpen">
@@ -1150,19 +1457,71 @@ async function saveRepl(c) {
           <span class="chev">{{ gUi(g).open ? '▾' : '▸' }}</span>
         </button>
         <div v-if="gUi(g).open" class="card-body">
-          <div v-if="!g.standalone" class="toggle-row" @click="toggleGroupPrefix(g)">
+          <nav class="group-settings-nav" aria-label="Разделы настроек группы">
+            <button
+              v-if="!g.standalone"
+              type="button"
+              :class="{ active: gUi(g).panel === 'bridge' }"
+              @click="gUi(g).panel = 'bridge'"
+            >
+              <span>↔</span> Мост
+            </button>
+            <button
+              type="button"
+              :class="{ active: gUi(g).panel === 'welcome' }"
+              @click="gUi(g).panel = 'welcome'"
+            >
+              <span>👋</span> Приветствие
+            </button>
+            <button
+              type="button"
+              :class="{ active: gUi(g).panel === 'antispam' }"
+              @click="gUi(g).panel = 'antispam'"
+            >
+              <span>🛡</span> Антиспам
+              <i :class="{ on: g.antispam }">{{ g.antispam ? 'вкл' : 'выкл' }}</i>
+            </button>
+            <button
+              type="button"
+              :class="{ active: gUi(g).panel === 'other' }"
+              @click="gUi(g).panel = 'other'"
+            >
+              <span>•••</span> Прочее
+            </button>
+          </nav>
+
+          <div class="group-panel-intro">
+            <template v-if="gUi(g).panel === 'bridge'">
+              <b>Пересылка между Telegram и MAX</b>
+              <span>Направление, подпись источника и пауза.</span>
+            </template>
+            <template v-else-if="gUi(g).panel === 'welcome'">
+              <b>Приветствие новых участников</b>
+              <span>Один текст и понятные подстановки — без лишних настроек.</span>
+            </template>
+            <template v-else-if="gUi(g).panel === 'antispam'">
+              <b>Защита от спама</b>
+              <span>Сначала выберите режим. Тонкая настройка спрятана ниже.</span>
+            </template>
+            <template v-else>
+              <b>Дополнительные действия</b>
+              <span>Системные сообщения и управление связкой.</span>
+            </template>
+          </div>
+
+          <div v-if="!g.standalone" v-show="gUi(g).panel === 'bridge'" class="toggle-row" @click="toggleGroupPrefix(g)">
             <span class="tg-label">🏷 Префикс [TG]/[MAX]
               <span class="tg-desc muted">Добавлять метку источника перед каждым пересланным сообщением.</span>
             </span>
             <span class="switch" :class="{ on: g.prefix }"></span>
           </div>
-          <div v-if="!g.standalone" class="toggle-row" @click="toggleGroupPause(g)">
+          <div v-if="!g.standalone" v-show="gUi(g).panel === 'bridge'" class="toggle-row" @click="toggleGroupPause(g)">
             <span class="tg-label">⏸ Пауза связки
               <span class="tg-desc muted">Временно остановить зеркалирование сообщений (в обе стороны). Связка не удаляется.</span>
             </span>
             <span class="switch" :class="{ on: g.paused }"></span>
           </div>
-          <div v-if="!g.standalone" class="as-settings">
+          <div v-if="!g.standalone" v-show="gUi(g).panel === 'bridge'" class="as-settings">
             <div class="repl-dir">↔️ Направление пересылки <span class="muted small" v-if="!isPro">(PRO)</span></div>
             <div class="as-row">
               <button type="button" :class="{ sel: (g.direction || 'both') === 'both' }" @click="setGroupDir(g, 'both')">TG ↔ MAX</button>
@@ -1171,7 +1530,7 @@ async function saveRepl(c) {
             </div>
             <p class="repl-hint muted" style="margin-top:0">Односторонний режим (напр. TG → MAX) удобен, когда несколько TG-групп сливаются в одну MAX-группу.</p>
           </div>
-          <div class="as-settings welcome-settings">
+          <div v-show="gUi(g).panel === 'welcome'" class="as-settings welcome-settings">
             <div class="repl-dir">👋 Приветствие новичков <span class="muted small" v-if="!isPro">(PRO)</span></div>
             <label class="as-field as-field-col">Текст приветствия
               <textarea
@@ -1190,13 +1549,13 @@ async function saveRepl(c) {
               <button v-if="g.welcome_text" type="button" class="btn ghost sm" :disabled="gUi(g).busy" @click="disableGroupWelcome(g)">Выключить</button>
             </div>
           </div>
-          <div class="toggle-row" @click="toggleGroupAntispam(g)">
+          <div v-show="gUi(g).panel === 'antispam'" class="toggle-row antispam-master" @click="toggleGroupAntispam(g)">
             <span class="tg-label">🛡 Антиспам <span class="muted small" v-if="!isPro">(PRO)</span>
               <span class="tg-desc muted">Чистит спам в группе: удаление + мут повторных, новички не постят ссылки заданное время. Ловит обфускацию (эмодзи-слова, разрядка, гомоглифы) + LLM на смысл. ⚠️ Бот должен быть <b>администратором</b> группы (с правами удалять сообщения и банить).</span>
             </span>
             <span class="switch" :class="{ on: g.antispam }"></span>
           </div>
-          <div v-if="g.antispam" class="as-settings" @change="scheduleSaveG(g)" @click="scheduleSaveG(g)">
+          <div v-if="g.antispam" v-show="gUi(g).panel === 'antispam'" class="as-settings" @change="scheduleSaveG(g)" @click="scheduleSaveG(g)">
             <div v-if="g.bot_admin === false" class="as-warn">⚠️ Бот не админ в этой группе — добавьте его администратором (с правами удалять сообщения и банить), иначе модерация не работает.
               <button class="btn ghost sm" style="margin-top:6px" @click="recheckGroup(g)">Проверить</button>
             </div>
@@ -1212,7 +1571,11 @@ async function saveRepl(c) {
             </p>
             <button type="button" class="as-sec-head" @click="secToggle(gUi(g),'adv')">⚙️ Расширенные настройки <span class="chev">{{ secOpen(gUi(g),'adv') ? '▾' : '▸' }}</span></button>
             <div v-show="secOpen(gUi(g),'adv')">
-            <label class="as-field">Новичкам нельзя ссылки, часов
+            <label class="as-check">
+              <input type="checkbox" v-model="gAsOf(g).allow_links" />
+              <span>Разрешать ссылки участникам. Остальные антиспам-проверки продолжат работать.</span>
+            </label>
+            <label v-if="!gAsOf(g).allow_links" class="as-field">Новичкам нельзя ссылки, часов
               <input type="number" min="0" max="720" v-model.number="gAsOf(g).link_delay_h" />
             </label>
             <label class="as-field">«Доверенный» после N сообщений
@@ -1298,13 +1661,13 @@ async function saveRepl(c) {
             </div>
             <p class="repl-hint muted" style="text-align:center;margin:6px 0 0">✓ Изменения сохраняются автоматически</p>
           </div>
-          <div class="toggle-row" @click="toggleGroupDelService(g)">
+          <div v-show="gUi(g).panel === 'other'" class="toggle-row" @click="toggleGroupDelService(g)">
             <span class="tg-label">🧹 Удалять системные сообщения
               <span class="tg-desc muted">Авто-удаление служебных сообщений в группе: вошёл / вышел / сменил название / закрепил. Нужны права админа на удаление.</span>
             </span>
             <span class="switch" :class="{ on: gAsOf(g).del_service }"></span>
           </div>
-          <div v-if="!g.standalone" class="danger-zone">
+          <div v-if="!g.standalone" v-show="gUi(g).panel === 'other'" class="danger-zone">
             <template v-if="!gUi(g).confirm">
               <button class="btn danger full" @click="gUi(g).confirm = true">🗑 Разорвать связку</button>
             </template>
@@ -1319,7 +1682,7 @@ async function saveRepl(c) {
 
       </div>
 
-      <div v-show="tab === 'mirrors' && !anyOpen">
+      <div v-show="((!browserMode && tab === 'mirrors') || (browserMode && currentSection === 'mirrors')) && !anyOpen">
       <h2>Зеркала <span class="muted">({{ mirrors.length }})</span></h2>
       <p class="muted small" style="margin-top:-4px">Односторонние копии постов канала в группы: MAX-канал → MAX-группы и TG-канал → TG-группы (без плашки «переслано»).</p>
       <p v-if="!mirrors.length" class="muted small">
@@ -1338,7 +1701,152 @@ async function saveRepl(c) {
       </div>
       </div>
 
-      <div v-show="tab === 'blocks' && !anyOpen">
+      <div v-show="browserMode && currentSection === 'vk' && !anyOpen">
+        <div class="page-intro">
+          <div>
+            <h2>VK-связки <span class="muted">({{ vkBindings.length }})</span></h2>
+            <p class="muted small">Кросспостинг публикаций и мосты бесед между VK, Telegram и MAX.</p>
+          </div>
+          <div class="page-actions">
+            <button v-if="vkCommunities.length" class="btn ghost page-action" @click="openVKWizard">
+              Связать беседу
+            </button>
+            <button class="btn accent page-action" :disabled="vkConnecting" @click="connectVK">
+              {{ vkConnecting ? 'Открываем VK…' : 'Подключить VK' }}
+            </button>
+          </div>
+        </div>
+        <div v-if="vkCommunities.length" class="vk-community-list">
+          <span class="muted small">Подключённые сообщества:</span>
+          <span v-for="id in vkCommunities" :key="id" class="vk-community">VK {{ id }}</span>
+        </div>
+        <section v-if="vkWizardOpen" class="vk-wizard" aria-labelledby="vk-wizard-title">
+          <div class="vk-wizard-head">
+            <div>
+              <h3 id="vk-wizard-title">Связать беседу VK</h3>
+              <p class="muted small">Сообщения и ответы будут передаваться между беседой VK и выбранной группой.</p>
+            </div>
+            <button class="vk-close" type="button" aria-label="Закрыть" :disabled="vkCreating" @click="closeVKWizard">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </div>
+
+          <div class="vk-step">
+            <span class="vk-step-number">1</span>
+            <div class="vk-step-body">
+              <h4>Выберите беседу VK</h4>
+              <p class="muted small">
+                Сначала добавьте одно из подключённых сообществ участником беседы и отправьте в беседу любое сообщение.
+              </p>
+              <label class="vk-field">
+                <span>Ссылка на беседу</span>
+                <div class="vk-link-row">
+                  <input v-model.trim="vkChatLink" type="url" inputmode="url"
+                    placeholder="https://vk.ru/im?sel=c160" @keyup.enter="findVKChatByLink()" />
+                  <button class="btn ghost" type="button" :disabled="vkChatsLoading" @click="findVKChatByLink()">Найти</button>
+                </div>
+              </label>
+              <div class="vk-list-head">
+                <span class="muted small">Доступные беседы</span>
+                <button class="text-button" type="button" :disabled="vkChatsLoading" @click="loadVKChats">
+                  {{ vkChatsLoading ? 'Обновляем…' : 'Обновить список' }}
+                </button>
+              </div>
+              <div v-if="vkChatsLoading && !vkChatsLoaded" class="vk-loading">Получаем беседы из VK…</div>
+              <div v-else-if="vkChatsLoaded && !vkChats.length" class="vk-empty">
+                Беседы не найдены. Проверьте, что сообщество добавлено в беседу и в ней уже появилось новое сообщение.
+              </div>
+              <div v-else class="vk-choice-list">
+                <button v-for="chat in vkChats" :key="vkChatKey(chat)" type="button"
+                  class="vk-choice" :class="{ selected: vkSelectedChat === vkChatKey(chat) }"
+                  :aria-pressed="vkSelectedChat === vkChatKey(chat)"
+                  @click="vkSelectedChat = vkChatKey(chat); vkWizardError = ''">
+                  <span class="vk-radio" aria-hidden="true"></span>
+                  <span>
+                    <b>{{ chat.title }}</b>
+                    <small>Сообщество VK {{ chat.community_id }}</small>
+                  </span>
+                </button>
+              </div>
+              <p v-if="vkChatsFailed.length" class="vk-warning small">
+                Не удалось прочитать беседы сообществ: {{ vkChatsFailed.join(', ') }}. Переподключите их к VK.
+              </p>
+            </div>
+          </div>
+
+          <div class="vk-step">
+            <span class="vk-step-number">2</span>
+            <div class="vk-step-body">
+              <h4>Куда передавать сообщения</h4>
+              <p class="muted small">Показываются группы, которыми вы управляете. Направление можно изменить после подключения.</p>
+              <div v-if="!vkSources.length" class="vk-empty">
+                Подходящих групп пока нет. Сначала добавьте Bridge Bot в группу Telegram или MAX и настройте мост группы.
+              </div>
+              <div v-else class="vk-choice-list">
+                <button v-for="source in vkSources" :key="vkSourceKey(source)" type="button"
+                  class="vk-choice" :class="{ selected: vkSelectedSource === vkSourceKey(source) }"
+                  :aria-pressed="vkSelectedSource === vkSourceKey(source)"
+                  @click="vkSelectedSource = vkSourceKey(source); vkWizardError = ''">
+                  <span class="vk-radio" aria-hidden="true"></span>
+                  <span>
+                    <b>{{ source.title }}</b>
+                    <small>{{ source.platform.toUpperCase() }}</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <p v-if="vkWizardError" class="vk-form-error" role="alert">{{ vkWizardError }}</p>
+          <div class="vk-wizard-footer">
+            <span class="muted small">Связка занимает 1 слот PRO.</span>
+            <button class="btn accent" type="button"
+              :disabled="vkCreating || !selectedVKChat || !selectedVKSource" @click="createVKChat">
+              {{ vkCreating ? 'Подключаем…' : 'Связать в обе стороны' }}
+            </button>
+          </div>
+        </section>
+        <div v-if="!vkCommunities.length" class="empty-card">
+          <h3>VK ещё не подключён</h3>
+          <p class="muted small">Выберите сообщество, которым управляете, и подтвердите разрешения VK. Команды в боте не нужны.</p>
+          <button class="btn accent" :disabled="vkConnecting" @click="connectVK">
+            {{ vkConnecting ? 'Открываем VK…' : 'Выбрать сообщество VK' }}
+          </button>
+        </div>
+        <p v-else-if="!vkBindings.length" class="empty-card muted small">
+          Сообщество подключено, но связок пока нет. Отправьте боту <code>/vk</code> и выберите, что связать.
+        </p>
+        <article v-for="v in vkBindings" :key="v.id" class="card vk-card">
+          <div class="vk-card-head">
+            <div class="body">
+              <b>{{ vkSource(v) }} → {{ vkTarget(v) }}</b>
+              <span class="muted small">{{ vkDirection(v) }}<template v-if="v.paused"> · на паузе</template></span>
+            </div>
+            <span class="status-pill" :class="{ paused: v.paused }">{{ v.paused ? 'Пауза' : 'Работает' }}</span>
+          </div>
+          <div class="vk-card-body">
+            <div class="repl-dir">Направление</div>
+            <div class="as-row vk-directions">
+              <button :disabled="vkBusy[v.id]" :class="{ sel: v.direction === 'source>vk' }" @click="changeVKDirection(v, 'source>vk')">{{ v.source_platform.toUpperCase() }} → VK</button>
+              <button :disabled="vkBusy[v.id]" :class="{ sel: v.direction === 'vk>source' }" @click="changeVKDirection(v, 'vk>source')">VK → {{ v.source_platform.toUpperCase() }}</button>
+              <button :disabled="vkBusy[v.id]" :class="{ sel: v.direction === 'both' }" @click="changeVKDirection(v, 'both')">Оба</button>
+            </div>
+            <div class="vk-actions">
+              <button class="btn ghost sm" :disabled="vkBusy[v.id]" @click="toggleVKPause(v)">{{ v.paused ? 'Возобновить' : 'Поставить на паузу' }}</button>
+              <template v-if="!vkConfirm[v.id]">
+                <button class="btn danger sm" @click="vkConfirm[v.id] = true">Удалить</button>
+              </template>
+              <template v-else>
+                <span class="muted small">Удалить связку?</span>
+                <button class="btn danger sm" :disabled="vkBusy[v.id]" @click="removeVK(v)">Да, удалить</button>
+                <button class="btn ghost sm" @click="vkConfirm[v.id] = false">Отмена</button>
+              </template>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div v-show="((!browserMode && tab === 'blocks') || (browserMode && currentSection === 'moderation')) && !anyOpen">
       <h2>Заблокированные <span class="muted">({{ blocks.length }})</span></h2>
       <p class="muted small" style="margin-top:-4px">Кого антиспам замьютил или забанил во всех ваших каналах и группах. Можно вернуть.</p>
       <p v-if="!blocks.length" class="muted small">Пока пусто — здесь появятся те, кого антиспам наказал в режиме «удалять» (в «репорт»/«тест» баны не выдаются).</p>
@@ -1361,11 +1869,15 @@ async function saveRepl(c) {
       </div>
       </div>
 
-      <div v-show="!anyOpen">
+      <div id="import" v-show="!anyOpen && (!browserMode || currentSection === 'import')" class="section-anchor">
       <h2>Импорт истории</h2>
       <div class="import-card">
         <div>Баланс постов: <b>{{ importBalance }}</b></div>
-        <button class="btn accent sm" :disabled="buying" @click="buy">{{ buying ? '…' : 'Купить 1000 — 250 ₽' }}</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          <button v-for="p in postPackages" :key="p.Posts" class="btn accent sm" :disabled="buying" @click="buy(p.Posts)">
+            {{ buying ? '…' : p.Posts + ' — ' + rub(p.Amount) }}
+          </button>
+        </div>
       </div>
       <p class="muted" style="font-size:12px;margin-top:6px">
         Посты тратятся при переносе истории канала в MAX. Антиспам в группах — команда <code>/antispam on</code> (PRO).
@@ -1374,6 +1886,7 @@ async function saveRepl(c) {
     </template>
 
     <p v-if="toast" class="toast">{{ toast }}</p>
+    </section>
   </main>
 </template>
 
@@ -1465,6 +1978,18 @@ h2 { font-size: 15px; margin: 20px 0 8px; }
 .lk-steps code { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
 .as-settings { margin: 10px 0 16px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .as-settings .repl-dir:first-child { margin-top: 0; }
+.group-settings-nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+.group-settings-nav button { position: relative; display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 48px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.group-settings-nav button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--text); }
+.group-settings-nav button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
+.group-settings-nav button.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
+.group-settings-nav button > span { font-size: 16px; line-height: 1; }
+.group-settings-nav i { padding: 2px 5px; border-radius: 999px; background: var(--border); color: var(--text-muted); font-size: 9px; font-style: normal; line-height: 1.2; text-transform: uppercase; }
+.group-settings-nav i.on { background: #dcfce7; color: #166534; }
+.group-panel-intro { display: grid; gap: 3px; margin: 0 0 12px; padding: 0 2px; }
+.group-panel-intro b { font-size: 15px; }
+.group-panel-intro span { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+.antispam-master { border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border)); border-radius: 12px; padding: 14px; background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
 /* Segmented control: подпись над контролом, кнопки — нейтральные плашки;
    выбранная = белая с акцентной рамкой (БЕЗ синей заливки), чтобы не было «каши». */
 .as-row { display: flex; align-items: center; gap: 8px; margin: 14px 0; flex-wrap: wrap; }
@@ -1484,4 +2009,130 @@ h2 { font-size: 15px; margin: 20px 0 8px; }
 code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; box-shadow: 0 4px 20px rgba(0,0,0,.3); max-width: 90%; text-align: center; }
+
+.cabinet-content { min-width: 0; }
+.cabinet-sidebar { display: none; }
+.eyebrow { margin: 0 0 3px; color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.overview-grid article { padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); display: grid; gap: 3px; }
+.overview-grid article > span { color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.overview-grid strong { font-size: 28px; line-height: 1.1; }
+.overview-grid small { color: var(--text-muted); font-size: 12px; }
+.overview-grid .attention strong { color: #b45309; }
+.focus-card { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px; margin: 12px 0 20px; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--accent) 5%, var(--bg)); }
+.focus-card h2 { margin: 2px 0 4px; font-size: 18px; }
+.focus-card p:last-child { margin: 0; font-size: 13px; }
+.focus-card .btn { min-height: 44px; padding: 0 18px; white-space: nowrap; }
+.section-anchor { scroll-margin-top: 20px; }
+.login-card { max-width: 520px; margin: 12vh auto 0; padding: 32px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg); box-shadow: 0 18px 50px rgba(15,23,42,.08); }
+.login-mark, .brand-mark { display: grid; place-items: center; color: #fff; background: var(--accent); font-weight: 800; }
+.login-mark { width: 48px; height: 48px; border-radius: 14px; margin-bottom: 20px; }
+.login-card h2 { margin: 0 0 8px; font-size: 24px; }
+.login-actions { display: flex; gap: 10px; margin-top: 22px; }
+.login-actions .btn { flex: 1; min-height: 46px; display: grid; place-items: center; padding: 0 16px; text-decoration: none; }
+.security-note { margin: 18px 0 0; padding-top: 16px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
+.page-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 16px; }
+.page-intro h2 { margin: 0 0 3px; font-size: 18px; }
+.page-intro p { margin: 0; }
+.page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.page-action { min-height: 44px; padding: 0 16px; display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap; }
+.vk-community-list { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.vk-community { padding: 5px 9px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 12px; font-weight: 700; }
+.vk-wizard { margin: 14px 0 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); overflow: hidden; }
+.vk-wizard-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 18px; border-bottom: 1px solid var(--border); }
+.vk-wizard-head h3 { margin: 0 0 4px; font-size: 17px; }
+.vk-wizard-head p { margin: 0; }
+.vk-close { width: 44px; height: 44px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text); cursor: pointer; }
+.vk-close svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.vk-close:focus-visible, .vk-choice:focus-visible, .text-button:focus-visible { outline: 3px solid rgba(80, 110, 255, .28); outline-offset: 2px; }
+.vk-step { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 12px; padding: 18px; border-bottom: 1px solid var(--border); }
+.vk-step-number { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 13px; }
+.vk-step-body { min-width: 0; }
+.vk-step-body h4 { margin: 3px 0 5px; font-size: 15px; }
+.vk-step-body > p { margin: 0 0 12px; }
+.vk-field { display: grid; gap: 6px; margin: 12px 0; font-size: 13px; font-weight: 700; }
+.vk-link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.vk-link-row input { width: 100%; min-height: 44px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 11px; padding: 0 12px; background: var(--bg); color: var(--text); font: inherit; }
+.vk-link-row input:focus { border-color: var(--accent); outline: 3px solid rgba(80, 110, 255, .18); }
+.vk-list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 14px 0 7px; }
+.text-button { min-height: 44px; border: 0; padding: 0 6px; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+.text-button:disabled { cursor: default; opacity: .55; }
+.vk-choice-list { display: grid; gap: 8px; max-height: 280px; overflow: auto; padding: 2px; }
+.vk-choice { min-height: 54px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 10px; width: 100%; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: var(--bg); color: var(--text); text-align: left; font: inherit; cursor: pointer; transition: border-color .18s ease, background .18s ease; }
+.vk-choice:hover { border-color: var(--accent); }
+.vk-choice.selected { border-color: var(--accent); background: rgba(80, 110, 255, .08); }
+.vk-choice b, .vk-choice small { display: block; overflow-wrap: anywhere; }
+.vk-choice small { margin-top: 3px; color: var(--text-muted); font-size: 12px; }
+.vk-radio { width: 18px; height: 18px; box-sizing: border-box; border: 2px solid var(--border); border-radius: 50%; box-shadow: inset 0 0 0 4px var(--bg); }
+.vk-choice.selected .vk-radio { border-color: var(--accent); background: var(--accent); }
+.vk-empty, .vk-loading { padding: 13px; border: 1px dashed var(--border); border-radius: 11px; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
+.vk-warning { margin: 10px 0 0; color: #9a6700; }
+.vk-form-error { margin: 14px 18px 0; padding: 11px 12px; border-radius: 11px; background: rgba(205, 64, 64, .1); color: #b43c3c; font-size: 13px; line-height: 1.4; }
+.vk-wizard-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; }
+.vk-wizard-footer .btn { min-height: 44px; }
+.empty-card { padding: 20px; border: 1px dashed var(--border); border-radius: 14px; background: var(--bg); }
+.empty-card h3 { margin: 0 0 6px; font-size: 16px; }
+.empty-card .btn { min-height: 44px; margin-top: 10px; padding: 0 16px; display: inline-flex; align-items: center; text-decoration: none; }
+.vk-card-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; background: var(--surface); }
+.vk-card-head .body { display: grid; gap: 3px; }
+.status-pill { padding: 5px 9px; border-radius: 999px; background: #dcfce7; color: #166534; font-size: 12px; font-weight: 700; }
+.status-pill.paused { background: #fef3c7; color: #92400e; }
+.vk-card-body { padding: 14px; border-top: 1px solid var(--border); }
+.vk-directions { margin-top: 6px; }
+.vk-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+@media (min-width: 960px) {
+  .cabinet-desktop.wrap {
+    --bg: #fff; --surface: #f8fafc; --text: #0f172a; --text-muted: #64748b;
+    --accent: #2563eb; --border: #e2e8f0; --danger: #dc2626;
+    max-width: none; min-height: 100dvh; margin: 0; padding: 0; display: grid;
+    grid-template-columns: 244px minmax(0, 1fr); background: #f8fafc; color-scheme: light;
+  }
+  .cabinet-desktop.auth-required { grid-template-columns: minmax(0, 1fr); }
+  .cabinet-desktop.auth-required .cabinet-content { width: min(720px, calc(100vw - 48px)); }
+  .cabinet-desktop .cabinet-sidebar { position: sticky; top: 0; height: 100dvh; padding: 24px 16px; display: flex; flex-direction: column; border-right: 1px solid #e2e8f0; background: #fff; }
+  .brand { display: flex; align-items: center; gap: 11px; padding: 0 8px 24px; color: #0f172a; text-decoration: none; }
+  .brand-mark { width: 36px; height: 36px; border-radius: 10px; }
+  .brand span:last-child { display: grid; line-height: 1.2; }
+  .brand small { color: #64748b; font-size: 11px; font-weight: 500; }
+  .side-nav { display: grid; gap: 4px; }
+.side-nav a, .side-bottom button, .side-bottom a { min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: #475569; font: inherit; font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; text-decoration: none; display: flex; align-items: center; }
+.side-nav a:hover, .side-bottom button:hover, .side-bottom a:hover { background: #f1f5f9; color: #0f172a; }
+.side-nav a.active { background: #eff6ff; color: #1d4ed8; }
+  .side-bottom { margin-top: auto; display: grid; gap: 4px; padding-top: 16px; border-top: 1px solid #e2e8f0; }
+  .cabinet-desktop .cabinet-content { width: min(1080px, calc(100vw - 292px)); margin: 0 auto; padding: 30px 24px 64px; }
+  .cabinet-desktop .top h1 { margin: 0; font-size: 26px; }
+  .cabinet-desktop .whoami { margin-top: 6px; }
+  .cabinet-desktop .tabs { max-width: 720px; }
+  .cabinet-desktop .card, .cabinet-desktop .help-card, .cabinet-desktop .pro-banner, .cabinet-desktop .cta, .cabinet-desktop .import-card { background-color: #fff; }
+  .cabinet-desktop .cta { color: var(--text); background: #fff; border: 1px solid var(--border); }
+  .cabinet-desktop .cta .cta-sub { color: var(--text-muted); opacity: 1; }
+  .cabinet-desktop .cta .btn.accent { color: #fff; background: var(--accent); }
+  .cabinet-desktop .cta .btn.ghost-light { color: #1d4ed8; background: #eff6ff; }
+  .cabinet-desktop.detail-open .cabinet-content { max-width: 840px; }
+}
+
+.mobile-section-picker { display: none; }
+
+@media (max-width: 959px) {
+  .mobile-section-picker { display: grid; gap: 5px; margin: 2px 0 16px; color: var(--text-muted); font-size: 12px; font-weight: 600; }
+  .mobile-section-picker select { width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 15px; }
+}
+
+@media (max-width: 760px) {
+  .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .group-settings-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .group-settings-nav button { justify-content: flex-start; padding-inline: 13px; }
+  .focus-card { align-items: stretch; flex-direction: column; gap: 12px; }
+  .login-card { margin-top: 5vh; padding: 22px; }
+  .login-actions { flex-direction: column; }
+  .page-intro { display: grid; }
+  .page-actions { justify-content: stretch; }
+  .page-actions .btn { flex: 1 1 145px; justify-content: center; }
+  .vk-step { grid-template-columns: 28px minmax(0, 1fr); padding: 14px; gap: 9px; }
+  .vk-link-row { grid-template-columns: 1fr; }
+  .vk-link-row .btn { width: 100%; min-height: 44px; justify-content: center; }
+  .vk-wizard-footer { align-items: stretch; flex-direction: column; }
+  .vk-wizard-footer .btn { width: 100%; justify-content: center; }
+}
 </style>

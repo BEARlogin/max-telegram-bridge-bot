@@ -43,14 +43,23 @@ type user struct {
 func authUser(r *http.Request) user {
 	initData := r.Header.Get("X-Init-Data")
 	if initData == "" || len(botTokens) == 0 {
+		if u := browserSessionUser(r); u.Valid {
+			return u
+		}
 		return user{Name: "Гость"}
 	}
 	vals, err := url.ParseQuery(initData)
 	if err != nil {
+		if u := browserSessionUser(r); u.Valid {
+			return u
+		}
 		return user{Name: "Гость"}
 	}
 	hash := vals.Get("hash")
 	if hash == "" {
+		if u := browserSessionUser(r); u.Valid {
+			return u
+		}
 		return user{Name: "Гость"}
 	}
 
@@ -87,6 +96,9 @@ func authUser(r *http.Request) user {
 		}
 	}
 	if platform == "" {
+		if u := browserSessionUser(r); u.Valid {
+			return u
+		}
 		return user{Name: "Гость"}
 	}
 
