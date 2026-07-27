@@ -216,7 +216,8 @@ func (b *Bridge) handleInternalVKChatBind(w http.ResponseWriter, r *http.Request
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&in) != nil ||
-		in.ActorID <= 0 || in.SourceChatID == 0 || in.AccountID <= 0 || in.PeerID < 2000000000 ||
+		in.ActorID <= 0 || in.SourceChatID == 0 || in.AccountID <= 0 ||
+		in.PeerID < 2000000000 || in.PeerID > 2999999999 ||
 		(in.Platform != "tg" && in.Platform != "max") {
 		w.WriteHeader(http.StatusBadRequest)
 		return
