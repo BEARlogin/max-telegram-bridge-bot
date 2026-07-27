@@ -34,6 +34,18 @@ type BotChatRef struct {
 	ChatType string
 }
 
+// TgMediaState is the persisted Telegram attachment needed to distinguish a
+// caption-only edit from an actual media replacement and to rebuild albums.
+type TgMediaState struct {
+	TgMsgID      int
+	MediaGroupID string
+	Kind         string
+	FileID       string
+	FileName     string
+	MimeType     string
+	Fingerprint  string
+}
+
 // Repository — абстракция хранилища для bridge.
 type Repository interface {
 	// Register обрабатывает /bridge команду.
@@ -58,6 +70,9 @@ type Repository interface {
 
 	SaveMsg(tgChatID int64, tgMsgID int, maxChatID int64, maxMsgID string, tgThreadID int)
 	SaveMsgOrigin(tgChatID int64, tgMsgID int, maxChatID int64, maxMsgID string, tgThreadID int, origin string)
+	SaveTgMediaState(tgChatID int64, state TgMediaState)
+	GetTgMediaState(tgChatID int64, tgMsgID int) (TgMediaState, bool)
+	ListTgMediaStates(tgChatID int64, maxMsgID string) []TgMediaState
 	LookupMaxMsgID(tgChatID int64, tgMsgID int) (string, bool)
 	LookupTgMsgID(maxMsgID string) (tgChatID int64, tgMsgID int, tgThreadID int, ok bool)
 	ListTgMsgIDs(maxMsgID string, tgChatID int64) []int

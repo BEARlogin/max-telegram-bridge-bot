@@ -1,0 +1,6 @@
+ALTER TABLE messages ADD COLUMN media_group_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN media_kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN media_file_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN media_file_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN media_mime_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN media_fingerprint TEXT NOT NULL DEFAULT '';

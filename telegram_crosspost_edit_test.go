@@ -30,6 +30,10 @@ func TestTgCrosspostEditPreservesMaxMedia(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo.SaveMsgOrigin(tgChatID, tgMsgID, maxChatID, maxMsgID, 0, "tg")
+	repo.SaveTgMediaState(tgChatID, TgMediaState{
+		TgMsgID: tgMsgID, Kind: "photo", FileID: "existing-photo",
+		Fingerprint: "photo:existing-photo",
+	})
 
 	var requestBody []byte
 	bridge := &Bridge{
@@ -70,5 +74,54 @@ func TestTgCrosspostEditPreservesMaxMedia(t *testing.T) {
 	}
 	if bytes.Contains(requestBody, []byte("attachments")) {
 		t.Fatalf("edit must omit attachments to preserve MAX media: %s", requestBody)
+	}
+}
+
+func TestTgMediaStateDetectsReplacementAndRebuildsAlbum(t *testing.T) {
+	before, ok := tgMediaStateFromMessage(&TGMessage{
+		MessageID: 10, MediaGroupID: "album-1",
+		Photo: []PhotoSize{{FileID: "small"}, {FileID: "photo-before"}},
+	})
+	if !ok || before.Fingerprint != "photo:photo-before" {
+		t.Fatalf("before=%+v ok=%v", before, ok)
+	}
+	after, ok := tgMediaStateFromMessage(&TGMessage{
+		MessageID: 10, MediaGroupID: "album-1",
+		Photo: []PhotoSize{{FileID: "photo-after"}},
+	})
+	if !ok || before.Fingerprint == after.Fingerprint {
+		t.Fatalf("replacement was not detected: before=%+v after=%+v", before, after)
+	}
+	states := replaceTgMediaState([]TgMediaState{
+		before,
+		{TgMsgID: 11, MediaGroupID: "album-1", Kind: "video", FileID: "video-2", Fingerprint: "video:video-2"},
+	}, after)
+	if err := validateAlbumMediaStates(states, "album-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 2 || states[0].FileID != "photo-after" || states[1].FileID != "video-2" {
+		t.Fatalf("states=%+v", states)
+	}
+}
+
+func TestTgMediaStatePersistsForCompleteAlbum(t *testing.T) {
+	repo := testRepo(t)
+	const tgChatID = int64(-100777)
+	repo.SaveMsgOrigin(tgChatID, 1, -2001, "mid-album", 0, "tg")
+	repo.SaveMsgOrigin(tgChatID, 2, -2001, "mid-album", 0, "tg")
+	repo.SaveTgMediaState(tgChatID, TgMediaState{
+		TgMsgID: 1, MediaGroupID: "album", Kind: "photo",
+		FileID: "photo-1", Fingerprint: "photo:photo-1",
+	})
+	repo.SaveTgMediaState(tgChatID, TgMediaState{
+		TgMsgID: 2, MediaGroupID: "album", Kind: "video",
+		FileID: "video-2", Fingerprint: "video:video-2",
+	})
+	states := repo.ListTgMediaStates(tgChatID, "mid-album")
+	if err := validateAlbumMediaStates(states, "album"); err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 2 {
+		t.Fatalf("states=%+v", states)
 	}
 }

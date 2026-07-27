@@ -365,6 +365,7 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 		"captionRepaired", captionRepaired)
 	for _, it := range items {
 		b.repo.SaveMsgOrigin(it.msg.Chat.ID, it.msg.MessageID, maxChatID, result.Body.Mid, it.msg.MessageThreadID, "tg")
+		b.saveTgMediaState(it.msg)
 	}
 	return result.Body.Mid, nil
 }

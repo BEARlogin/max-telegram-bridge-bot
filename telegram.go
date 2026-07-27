@@ -1143,6 +1143,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 			b.cbSuccess(maxChatID)
 			slog.Info("TG→MAX sent", "mid", result.Body.Mid)
 			b.repo.SaveMsgOrigin(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid, msg.MessageThreadID, "tg")
+			b.saveTgMediaState(msg)
 		}
 		return
 	} else if msg.Animation != nil {
@@ -1198,6 +1199,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 					} else {
 						slog.Info("TG→MAX sent", "mid", result.Body.Mid)
 						b.repo.SaveMsgOrigin(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid, msg.MessageThreadID, "tg")
+						b.saveTgMediaState(msg)
 					}
 					return
 				} else {
@@ -1447,6 +1449,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		b.cbSuccess(maxChatID)
 		slog.Info("TG→MAX sent", "mid", mid, "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 		b.repo.SaveMsgOrigin(msg.Chat.ID, msg.MessageID, maxChatID, mid, msg.MessageThreadID, "tg")
+		b.saveTgMediaState(msg)
 	}
 }
 
@@ -2126,6 +2129,33 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *TGMessag
 	}
 	if text == "" {
 		return
+	}
+
+	if currentMedia, hasMedia := tgMediaStateFromMessage(edited); hasMedia {
+		previousMedia, known := b.repo.GetTgMediaState(edited.Chat.ID, edited.MessageID)
+		mediaChanged := !known || previousMedia.Fingerprint != currentMedia.Fingerprint
+		if mediaChanged {
+			states := []TgMediaState{currentMedia}
+			if edited.MediaGroupID != "" {
+				states = replaceTgMediaState(
+					b.repo.ListTgMediaStates(edited.Chat.ID, maxMsgID),
+					currentMedia,
+				)
+				if err := validateAlbumMediaStates(states, edited.MediaGroupID); err != nil {
+					// Старые альбомы ещё не имеют сохранённого состава. Запоминаем
+					// увиденную часть, но не рискуем затереть остальные вложения.
+					b.repo.SaveTgMediaState(edited.Chat.ID, currentMedia)
+					slog.Warn("TG→MAX album media replacement deferred", "err", err,
+						"tgChat", edited.Chat.ID, "tgMsg", edited.MessageID)
+				} else {
+					go b.editTgCrosspostMediaInMax(ctx, edited, states, maxChatID, maxMsgID, text)
+					return
+				}
+			} else {
+				go b.editTgCrosspostMediaInMax(ctx, edited, states, maxChatID, maxMsgID, text)
+				return
+			}
+		}
 	}
 
 	// MAX трактует SDK EditMessage без явно добавленных вложений как полную замену

@@ -131,6 +131,45 @@ func (r *sqliteRepo) SaveMsgOrigin(tgChatID int64, tgMsgID int, maxChatID int64,
 		tgChatID, tgMsgID, maxChatID, maxMsgID, tgThreadID, origin, time.Now().Unix())
 }
 
+func (r *sqliteRepo) SaveTgMediaState(tgChatID int64, state TgMediaState) {
+	r.db.Exec(`UPDATE messages SET media_group_id=?,media_kind=?,media_file_id=?,
+		media_file_name=?,media_mime_type=?,media_fingerprint=?
+		WHERE tg_chat_id=? AND tg_msg_id=?`,
+		state.MediaGroupID, state.Kind, state.FileID, state.FileName, state.MimeType,
+		state.Fingerprint, tgChatID, state.TgMsgID)
+}
+
+func (r *sqliteRepo) GetTgMediaState(tgChatID int64, tgMsgID int) (TgMediaState, bool) {
+	var state TgMediaState
+	state.TgMsgID = tgMsgID
+	err := r.db.QueryRow(`SELECT media_group_id,media_kind,media_file_id,
+		media_file_name,media_mime_type,media_fingerprint
+		FROM messages WHERE tg_chat_id=? AND tg_msg_id=?`,
+		tgChatID, tgMsgID).Scan(&state.MediaGroupID, &state.Kind, &state.FileID,
+		&state.FileName, &state.MimeType, &state.Fingerprint)
+	return state, err == nil && state.Fingerprint != ""
+}
+
+func (r *sqliteRepo) ListTgMediaStates(tgChatID int64, maxMsgID string) []TgMediaState {
+	rows, err := r.db.Query(`SELECT tg_msg_id,media_group_id,media_kind,media_file_id,
+		media_file_name,media_mime_type,media_fingerprint
+		FROM messages WHERE tg_chat_id=? AND max_msg_id=? AND media_fingerprint!=''
+		ORDER BY tg_msg_id`, tgChatID, maxMsgID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var states []TgMediaState
+	for rows.Next() {
+		var state TgMediaState
+		if rows.Scan(&state.TgMsgID, &state.MediaGroupID, &state.Kind, &state.FileID,
+			&state.FileName, &state.MimeType, &state.Fingerprint) == nil {
+			states = append(states, state)
+		}
+	}
+	return states
+}
+
 func (r *sqliteRepo) LookupMaxMsgID(tgChatID int64, tgMsgID int) (string, bool) {
 	var id string
 	err := r.db.QueryRow("SELECT max_msg_id FROM messages WHERE tg_chat_id = ? AND tg_msg_id = ?", tgChatID, tgMsgID).Scan(&id)
