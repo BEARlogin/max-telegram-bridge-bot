@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -16,7 +17,7 @@ import (
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 )
 
-var internalVKReloadOnce sync.Once
+var internalVKHandlersOnce sync.Once
 
 // Config — настройки bridge, читаемые из env.
 type Config struct {
@@ -155,8 +156,9 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		maxSeenMid:  make(map[string]int64),
 	}
 	b.addon = loadAddon(b)
-	internalVKReloadOnce.Do(func() {
+	internalVKHandlersOnce.Do(func() {
 		http.HandleFunc("/internal/vk-reload", b.handleInternalVKReload)
+		http.HandleFunc("/internal/vk-connect", b.handleInternalVKConnect)
 	})
 	return b
 }
@@ -183,6 +185,45 @@ func (b *Bridge) handleInternalVKReload(w http.ResponseWriter, r *http.Request) 
 	}
 	reloader.ReloadVKConfig()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleInternalVKConnect создаёт одноразовую ссылку существующего VK OAuth для
+// пользователя, уже авторизованного в браузерном кабинете.
+func (b *Bridge) handleInternalVKConnect(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Secret   string `json:"secret"`
+		OwnerID  int64  `json:"owner_id"`
+		Platform string `json:"platform"`
+		ChatID   int64  `json:"chat_id"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&in) != nil ||
+		in.OwnerID <= 0 || in.ChatID <= 0 || (in.Platform != "tg" && in.Platform != "max") {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	secret := os.Getenv("COMMENT_SYNC_SECRET")
+	if secret == "" || len(in.Secret) != len(secret) ||
+		subtle.ConstantTimeCompare([]byte(in.Secret), []byte(secret)) != 1 {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	starter, ok := b.addon.(interface {
+		CreateVKCabinetLink(context.Context, int64, string, int64) (string, error)
+	})
+	if !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	link, err := starter.CreateVKCabinetLink(r.Context(), in.OwnerID, in.Platform, in.ChatID)
+	if err != nil {
+		slog.Warn("vk cabinet connect link failed", "owner", in.OwnerID, "err", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"url": link})
 }
 
 // cbBlocked проверяет, заблокирован ли чат.
