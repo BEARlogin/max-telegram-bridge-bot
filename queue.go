@@ -23,7 +23,7 @@ const (
 	queueMediaFallbackAfter       = 10
 	queueVideoRefreshAfter        = 2
 	queueVideoFallbackAfter       = 4
-	queueLegacyVideoFallbackAfter = 10
+	queueLegacyMediaFallbackAfter = 4
 )
 
 func queueTimeout(item QueueItem) time.Duration {
@@ -325,9 +325,9 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 	// очереди сохраняем Telegram file_id и после двух неудач выдаём MAX новый upload
 	// token. Старые элементы без file_id безопасно деградируют до текста/подписи,
 	// только если MAX снова подтвердил именно ошибку обработки вложения.
-	if item.AttType == "video" && item.Attempts >= queueLegacyVideoFallbackAfter {
+	if item.AttType != "" && item.Attempts >= queueLegacyMediaFallbackAfter {
 		if _, recoverable := decodeTgQueueMediaSource(item.AttURL); !recoverable {
-			b.deliverTg2MaxTextFallback(ctx, item, "старое видео не принято MAX; повторная загрузка для этой записи недоступна")
+			b.deliverTg2MaxMediaFallback(ctx, item, "старое медиа не принято MAX; повторная загрузка для этой записи недоступна")
 			return
 		}
 	}
@@ -358,7 +358,7 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 				slog.Warn("queue video not ready; retrying with fresh upload", "id", item.ID, "attempt", item.Attempts+1)
 				b.repo.IncrementAttempt(item.ID, now.Add(retryDelay(item.Attempts+1)).Unix())
 			} else {
-				b.deliverTg2MaxTextFallback(ctx, item, "MAX не смог обработать видео")
+				b.deliverTg2MaxMediaFallback(ctx, item, "MAX не смог обработать видео")
 			}
 			return
 		}
@@ -390,9 +390,9 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 	b.repo.DeleteFromQueue(item.ID)
 }
 
-// deliverTg2MaxTextFallback не даёт сломанному видео навсегда остановить свой чат.
+// deliverTg2MaxMediaFallback не даёт сломанному медиа навсегда остановить свой чат.
 // Подпись/текст доставляются без изменения, а владелец получает отдельное уведомление.
-func (b *Bridge) deliverTg2MaxTextFallback(ctx context.Context, item QueueItem, reason string) {
+func (b *Bridge) deliverTg2MaxMediaFallback(ctx context.Context, item QueueItem, reason string) {
 	if item.Text == "" {
 		b.repo.DeleteFromQueue(item.ID)
 		b.notifyTg2MaxFailure(ctx, item, reason)
@@ -400,7 +400,7 @@ func (b *Bridge) deliverTg2MaxTextFallback(ctx context.Context, item QueueItem, 
 	}
 	mid, err := b.sendMaxDirectFormatted(ctx, item.DstChatID, item.Text, "", "", item.ReplyTo, item.Format)
 	if err != nil {
-		slog.Warn("queue video text fallback failed", "id", item.ID, "err", err)
+		slog.Warn("queue media text fallback failed", "id", item.ID, "err", err)
 		b.repo.IncrementAttempt(item.ID, time.Now().Add(retryDelay(item.Attempts+1)).Unix())
 		return
 	}
@@ -410,7 +410,7 @@ func (b *Bridge) deliverTg2MaxTextFallback(ctx context.Context, item QueueItem, 
 	}
 	b.repo.DeleteFromQueue(item.ID)
 	b.notifyTg2MaxFailure(ctx, item, reason+"; текст сообщения доставлен без видео")
-	slog.Info("queue video degraded to text", "id", item.ID, "mid", mid)
+	slog.Info("queue media degraded to text", "id", item.ID, "type", item.AttType, "mid", mid)
 }
 
 func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now time.Time) {
