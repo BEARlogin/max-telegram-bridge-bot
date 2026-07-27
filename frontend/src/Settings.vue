@@ -12,7 +12,6 @@ import {
   logoutCabinet, startVKConnect, setVKDirection, setVKPaused, deleteVKBinding,
   getVKChats, createVKChatBinding,
 } from './api.js'
-import { peerFromVKLink } from './vkLinks.js'
 
 const loading = ref(true)
 const error = ref('')
@@ -44,7 +43,7 @@ const vkWizardOpen = ref(false)
 const vkChats = ref([])
 const vkChatsLoading = ref(false)
 const vkChatsLoaded = ref(false)
-const vkChatLink = ref('')
+const vkFailedCommunities = ref([])
 const vkSelectedCommunity = ref('')
 const vkSelectedChat = ref('')
 const vkSelectedSource = ref('')
@@ -271,6 +270,14 @@ const displayedVKCommunities = computed(() => {
 const selectedVKCommunity = computed(() =>
   vkCommunityDetails.value.find(x => String(x.account_id) === vkSelectedCommunity.value) || null
 )
+const visibleVKChats = computed(() => {
+  const accountID = Number(vkSelectedCommunity.value)
+  return vkChats.value.filter(x => Number(x.account_id) === accountID)
+})
+const selectedVKCommunityFailed = computed(() => {
+  const communityID = Number(selectedVKCommunity.value?.community_id || 0)
+  return communityID > 0 && vkFailedCommunities.value.some(id => Number(id) === communityID)
+})
 const selectedVKChat = computed(() => vkChats.value.find(x => vkChatKey(x) === vkSelectedChat.value) || null)
 const selectedVKSource = computed(() => vkSources.value.find(x => vkSourceKey(x) === vkSelectedSource.value) || null)
 function clearVKWizardErrors() {
@@ -278,37 +285,6 @@ function clearVKWizardErrors() {
   vkCommunityError.value = ''
   vkLinkError.value = ''
   vkSourceError.value = ''
-}
-function findVKChatByLink(showError = true) {
-  vkLinkError.value = ''
-  vkWizardError.value = ''
-  const peer = peerFromVKLink(vkChatLink.value)
-  if (!peer) {
-    if (showError) vkLinkError.value = 'Скопируйте ссылку из адресной строки беседы VK.'
-    return false
-  }
-  const community = selectedVKCommunity.value
-  if (!community) {
-    if (showError) vkLinkError.value = 'Сначала выберите сообщество VK в шаге 1.'
-    return false
-  }
-  let found = vkChats.value.find(x =>
-    Number(x.account_id) === Number(community.account_id) && Number(x.peer_id) === peer
-  )
-  if (!found) {
-    const chatID = peer - 2000000000
-    found = {
-      account_id: community.account_id,
-      community_id: community.community_id,
-      community_name: community.name,
-      peer_id: peer,
-      title: `Беседа VK c${chatID}`,
-    }
-    vkChats.value = [found, ...vkChats.value]
-  }
-  vkSelectedChat.value = vkChatKey(found)
-  vkLinkError.value = ''
-  return true
 }
 async function loadVKChats(silent = false) {
   if (vkChatsLoading.value) return
@@ -318,11 +294,11 @@ async function loadVKChats(silent = false) {
     const result = await getVKChats()
     vkChats.value = result.chats || []
     vkCommunityDetails.value = result.communities || []
+    vkFailedCommunities.value = result.failed_communities || []
     if (!selectedVKCommunity.value && vkCommunityDetails.value.length) {
       vkSelectedCommunity.value = String(vkCommunityDetails.value[0].account_id)
     }
     vkChatsLoaded.value = true
-    if (vkChatLink.value) findVKChatByLink(false)
   } catch (e) {
     if (!silent) vkCommunityError.value = e.message || 'Не удалось получить данные VK'
   } finally {
@@ -357,7 +333,6 @@ async function createVKChat() {
       selectedVKSource.value.platform, selectedVKSource.value.chat_id,
     )
     vkWizardOpen.value = false
-    vkChatLink.value = ''
     vkSelectedChat.value = ''
     vkSelectedSource.value = ''
     await load()
@@ -1817,28 +1792,17 @@ async function saveRepl(c) {
           <div class="vk-step">
             <span class="vk-step-number">2</span>
             <div class="vk-step-body">
-              <h4>Вставьте ссылку на беседу</h4>
-              <p class="muted small">
-                Откройте беседу в браузере и скопируйте адрес. Поддерживаются новый формат
-                <code>vk.ru/im/convo/2000000160</code> и старый <code>vk.ru/im?sel=c160</code>.
-              </p>
-              <label class="vk-field">
-                <span>Ссылка на беседу</span>
-                <div class="vk-link-row">
-                  <input v-model.trim="vkChatLink" type="url" inputmode="url"
-                    placeholder="https://vk.ru/im/convo/2000000160"
-                    :aria-invalid="!!vkLinkError" :aria-describedby="vkLinkError ? 'vk-link-error' : undefined"
-                    @input="vkLinkError = ''; vkWizardError = ''" @keyup.enter="findVKChatByLink()" />
-                  <button class="btn ghost" type="button" :disabled="vkChatsLoading || !selectedVKCommunity"
-                    @click="findVKChatByLink()">Добавить</button>
-                </div>
-                <span v-if="vkLinkError" id="vk-link-error" class="vk-inline-error" role="alert">{{ vkLinkError }}</span>
-              </label>
-              <div v-if="!vkChats.length" class="vk-empty">
-                Вставьте ссылку выше. VK не даёт боту получить полный список бесед сообщества.
+              <h4>Выберите беседу</h4>
+              <p class="muted small">Показываются реальные беседы, которые видит выбранное сообщество.</p>
+              <div v-if="vkChatsLoading" class="vk-loading">Получаем беседы сообщества…</div>
+              <div v-else-if="selectedVKCommunityFailed" class="vk-empty">
+                Не удалось прочитать беседы. Нажмите «Подключить VK» и заново разрешите доступ этому сообществу.
+              </div>
+              <div v-else-if="!visibleVKChats.length" class="vk-empty">
+                Беседы не найдены. Добавьте это сообщество в нужную беседу VK, отправьте в ней любое сообщение и обновите страницу.
               </div>
               <div v-else class="vk-choice-list">
-                <button v-for="chat in vkChats" :key="vkChatKey(chat)" type="button"
+                <button v-for="chat in visibleVKChats" :key="vkChatKey(chat)" type="button"
                   class="vk-choice" :class="{ selected: vkSelectedChat === vkChatKey(chat) }"
                   :aria-pressed="vkSelectedChat === vkChatKey(chat)"
                   @click="vkSelectedChat = vkChatKey(chat); vkLinkError = ''; vkWizardError = ''">
@@ -1849,6 +1813,7 @@ async function saveRepl(c) {
                   </span>
                 </button>
               </div>
+              <p v-if="vkLinkError" class="vk-inline-error" role="alert">{{ vkLinkError }}</p>
             </div>
           </div>
 
