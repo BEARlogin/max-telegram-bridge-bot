@@ -453,6 +453,11 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					}
 				}
 			}
+			if isGroup && isAdmin && msg.From != nil && !isTgServiceSender(msg.From.ID) {
+				if b.repo.ClaimPairOwner("tg", msg.Chat.ID, msg.From.ID) {
+					slog.Info("legacy pair owner claimed", "platform", "tg", "chat", msg.Chat.ID, "user", msg.From.ID)
+				}
+			}
 			adminDeniedText := "Эта команда доступна только админам группы."
 			if botNotAdmin {
 				adminDeniedText = "Бот не может проверить ваши права — сделайте бота админом группы и повторите команду."

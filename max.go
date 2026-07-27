@@ -534,6 +534,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				// В каналах MAX не передаёт sender userId — пропускаем проверку
 				isAdmin = true
 			}
+			if isGroup && isAdmin && msgUpd.Message.Sender.UserId != 0 {
+				if b.repo.ClaimPairOwner("max", chatID, msgUpd.Message.Sender.UserId) {
+					slog.Info("legacy pair owner claimed", "platform", "max", "chat", chatID, "user", msgUpd.Message.Sender.UserId)
+				}
+			}
 
 			// Внешняя модерация сообщения до пересылки.
 			if isGroup && msgUpd.Message.Sender.UserId != 0 {

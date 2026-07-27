@@ -101,6 +101,13 @@ type Bridge struct {
 	doctorMu   sync.Mutex
 	doctorLast map[string]time.Time
 
+	// Очередь обрабатывается параллельно между разными чатами, но строго по одному
+	// сообщению на чат. Медленное видео одного пользователя не должно останавливать
+	// доставку всех остальных.
+	queueMu           sync.Mutex
+	queueInFlight     map[int64]struct{}
+	queueDestInFlight map[string]struct{}
+
 	// Буферизация TG media groups (альбомы)
 	mgMu      sync.Mutex
 	mgBuffers map[string]*mediaGroupBuffer // MediaGroupID → buffer
@@ -146,14 +153,16 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		apiClient: &http.Client{
 			Timeout: 15 * time.Second, // для коротких API-запросов
 		},
-		whSecret:    secret,
-		cpWait:      make(map[int64]int64),
-		cpTgOwner:   make(map[int64]int64),
-		breakers:    make(map[int64]*chatBreaker),
-		doctorLast:  make(map[string]time.Time),
-		mgBuffers:   make(map[string]*mediaGroupBuffer),
-		maxBotCache: make(map[int64]string),
-		maxSeenMid:  make(map[string]int64),
+		whSecret:          secret,
+		cpWait:            make(map[int64]int64),
+		cpTgOwner:         make(map[int64]int64),
+		breakers:          make(map[int64]*chatBreaker),
+		doctorLast:        make(map[string]time.Time),
+		queueInFlight:     make(map[int64]struct{}),
+		queueDestInFlight: make(map[string]struct{}),
+		mgBuffers:         make(map[string]*mediaGroupBuffer),
+		maxBotCache:       make(map[int64]string),
+		maxSeenMid:        make(map[string]int64),
 	}
 	b.addon = loadAddon(b)
 	internalVKHandlersOnce.Do(func() {
@@ -685,9 +694,10 @@ func (b *Bridge) Run(ctx context.Context) {
 		}
 	}()
 
-	// Воркер очереди — проверяет каждые 10 секунд
+	// Воркер очереди — часто подхватывает следующий элемент каждого свободного
+	// чата. Сами отправки выполняются асинхронно и изолированы по destination.
 	go func() {
-		t := time.NewTicker(10 * time.Second)
+		t := time.NewTicker(2 * time.Second)
 		defer t.Stop()
 		for {
 			select {

@@ -13,7 +13,8 @@ import (
 const (
 	queueMaxAttempts  = 30             // максимум попыток
 	queueMaxAge       = 24 * time.Hour // дропаем сообщения старше 24 часов
-	queueBatchSize    = 10
+	queueBatchSize    = 256
+	queueMaxInFlight  = 12
 	queueItemTimeout  = 45 * time.Second
 	queueMediaTimeout = 5 * time.Minute
 )
@@ -150,34 +151,82 @@ func (b *Bridge) enqueueMax2TgAlbum(maxChatID, tgChatID int64, maxMid, caption s
 	b.enqueueMax2Tg(maxChatID, tgChatID, maxMid, caption, "album", string(data), parseMode)
 }
 
-// processQueue обрабатывает очередь — вызывается периодически.
+func queueDestinationKey(item QueueItem) string {
+	return item.Direction + ":" + strconv.FormatInt(item.DstChatID, 10)
+}
+
+func (b *Bridge) claimQueueItem(item QueueItem) bool {
+	key := queueDestinationKey(item)
+	b.queueMu.Lock()
+	defer b.queueMu.Unlock()
+	if b.queueInFlight == nil {
+		b.queueInFlight = make(map[int64]struct{})
+	}
+	if b.queueDestInFlight == nil {
+		b.queueDestInFlight = make(map[string]struct{})
+	}
+	if len(b.queueInFlight) >= queueMaxInFlight {
+		return false
+	}
+	if _, exists := b.queueInFlight[item.ID]; exists {
+		return false
+	}
+	if _, exists := b.queueDestInFlight[key]; exists {
+		return false
+	}
+	b.queueInFlight[item.ID] = struct{}{}
+	b.queueDestInFlight[key] = struct{}{}
+	return true
+}
+
+func (b *Bridge) releaseQueueItem(item QueueItem) {
+	key := queueDestinationKey(item)
+	b.queueMu.Lock()
+	delete(b.queueInFlight, item.ID)
+	delete(b.queueDestInFlight, key)
+	b.queueMu.Unlock()
+}
+
+// processQueue запускает ограниченное число независимых доставок. PeekQueue
+// возвращает только головной элемент каждого destination, поэтому внутри одного
+// чата порядок сохраняется, а медиа другого чата больше не блокирует очередь.
 func (b *Bridge) processQueue(ctx context.Context) {
 	items, err := b.repo.PeekQueue(queueBatchSize)
 	if err != nil {
 		slog.Error("peek queue failed", "err", err)
 		return
 	}
-	now := time.Now()
 	for _, item := range items {
-		// Слишком старое или слишком много попыток — дропаем
-		age := now.Sub(time.Unix(item.CreatedAt, 0))
-		if item.Attempts >= queueMaxAttempts || age > queueMaxAge {
-			slog.Warn("queue item expired", "id", item.ID, "dir", item.Direction, "attempts", item.Attempts, "age", age)
-			b.repo.DeleteFromQueue(item.ID)
-			if item.Direction == "tg2max" {
-				b.notifyTg2MaxFailure(ctx, item, "MAX долго не принимал сообщение (превышено число попыток)")
-			}
+		if !b.claimQueueItem(item) {
 			continue
 		}
+		go func(item QueueItem) {
+			defer b.releaseQueueItem(item)
+			b.processQueueItem(ctx, item)
+		}(item)
+	}
+}
 
-		itemCtx, cancel := context.WithTimeout(ctx, queueTimeout(item))
-		switch item.Direction {
-		case "tg2max":
-			b.processQueueTg2Max(itemCtx, item, now)
-		case "max2tg":
-			b.processQueueMax2Tg(itemCtx, item, now)
+func (b *Bridge) processQueueItem(ctx context.Context, item QueueItem) {
+	now := time.Now()
+	// Слишком старое или слишком много попыток — дропаем
+	age := now.Sub(time.Unix(item.CreatedAt, 0))
+	if item.Attempts >= queueMaxAttempts || age > queueMaxAge {
+		slog.Warn("queue item expired", "id", item.ID, "dir", item.Direction, "attempts", item.Attempts, "age", age)
+		b.repo.DeleteFromQueue(item.ID)
+		if item.Direction == "tg2max" {
+			b.notifyTg2MaxFailure(ctx, item, "MAX долго не принимал сообщение (превышено число попыток)")
 		}
-		cancel()
+		return
+	}
+
+	itemCtx, cancel := context.WithTimeout(ctx, queueTimeout(item))
+	defer cancel()
+	switch item.Direction {
+	case "tg2max":
+		b.processQueueTg2Max(itemCtx, item, now)
+	case "max2tg":
+		b.processQueueMax2Tg(itemCtx, item, now)
 	}
 }
 

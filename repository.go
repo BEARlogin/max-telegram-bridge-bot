@@ -93,6 +93,10 @@ type Repository interface {
 	// чтобы старые группы появлялись в кабинете). Возвращает true, если пара найдена.
 	SetPairOwner(platform string, chatID, userID int64) bool
 
+	// ClaimPairOwner безопасно заполняет только пустого владельца старой связки.
+	// Используется при обычной активности подтверждённого администратора.
+	ClaimPairOwner(platform string, chatID, userID int64) bool
+
 	// SetCrosspostOwner проставляет владельца стороны существующей crosspost-связки
 	// (аналог /bridge_update для каналов: клейм по форварду поста админом канала,
 	// чтобы старые связки появлялись в /crosspost и кабинете).

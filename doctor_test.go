@@ -120,6 +120,39 @@ func TestDoctorConnectionsOwnedMetadataOnly(t *testing.T) {
 	}
 }
 
+func TestLegacyPairClaimMakesConnectionVisibleWithoutStealingOwner(t *testing.T) {
+	repo := testRepo(t)
+	const (
+		tgChat   = int64(-100500)
+		maxChat  = int64(-200500)
+		tgOwner  = int64(101)
+		maxOwner = int64(202)
+	)
+	if _, err := repo.db.Exec(`INSERT INTO pairs
+		(tg_chat_id,max_chat_id,prefix,created_at,tg_owner_id,max_owner_id,paused)
+		VALUES (?,?,0,0,0,0,0)`, tgChat, maxChat); err != nil {
+		t.Fatal(err)
+	}
+	if !repo.ClaimPairOwner("tg", tgChat, tgOwner) {
+		t.Fatal("TG legacy owner was not claimed")
+	}
+	if repo.ClaimPairOwner("tg", tgChat, 999) {
+		t.Fatal("existing TG owner was overwritten")
+	}
+	if !repo.ClaimPairOwner("max", maxChat, maxOwner) {
+		t.Fatal("MAX legacy owner was not claimed")
+	}
+
+	tgConnections, err := repo.DoctorConnections("tg", tgOwner, 0)
+	if err != nil || len(tgConnections) != 1 || tgConnections[0].TgChatID != tgChat {
+		t.Fatalf("TG doctor connections=%+v err=%v", tgConnections, err)
+	}
+	maxConnections, err := repo.DoctorConnections("max", maxOwner, 0)
+	if err != nil || len(maxConnections) != 1 || maxConnections[0].MaxChatID != maxChat {
+		t.Fatalf("MAX doctor connections=%+v err=%v", maxConnections, err)
+	}
+}
+
 func TestDoctorConnectionsRejectInvalidPrincipal(t *testing.T) {
 	repo := testRepo(t)
 	for _, tc := range []struct {

@@ -293,6 +293,27 @@ func (r *pgRepo) SetPairOwner(platform string, chatID, userID int64) bool {
 	return n > 0
 }
 
+func (r *pgRepo) ClaimPairOwner(platform string, chatID, userID int64) bool {
+	if userID <= 0 {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var res sql.Result
+	if platform == "tg" {
+		res, _ = r.db.Exec(`UPDATE pairs SET tg_owner_id=$1
+			WHERE tg_chat_id=$2 AND COALESCE(tg_owner_id,0)=0`, userID, chatID)
+	} else if platform == "max" {
+		res, _ = r.db.Exec(`UPDATE pairs SET max_owner_id=$1
+			WHERE max_chat_id=$2 AND COALESCE(max_owner_id,0)=0`, userID, chatID)
+	}
+	if res == nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
 func (r *pgRepo) SetCrosspostOwner(platform string, chatID, userID int64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -821,7 +842,15 @@ func (r *pgRepo) EnqueueSend(item *QueueItem) error {
 func (r *pgRepo) PeekQueue(limit int) ([]QueueItem, error) {
 	rows, err := r.db.Query(
 		`SELECT id, direction, src_chat_id, dst_chat_id, src_msg_id, text, att_type, att_token, reply_to, format, att_url, parse_mode, attempts, created_at, next_retry
-		 FROM send_queue WHERE next_retry <= $1 ORDER BY id ASC LIMIT $2`,
+		 FROM send_queue q
+		 WHERE q.next_retry <= $1
+		   AND NOT EXISTS (
+		     SELECT 1 FROM send_queue earlier
+		     WHERE earlier.direction=q.direction
+		       AND earlier.dst_chat_id=q.dst_chat_id
+		       AND earlier.id < q.id
+		   )
+		 ORDER BY q.id ASC LIMIT $2`,
 		time.Now().Unix(), limit,
 	)
 	if err != nil {
