@@ -188,6 +188,19 @@ func (s *tgBotSender) SendPhoto(ctx context.Context, chatID int64, file FileArg,
 	return msg.ID, nil
 }
 
+func (s *tgBotSender) SendAnimation(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error) {
+	p := &bot.SendAnimationParams{
+		ChatID:    chatID,
+		Animation: toInputFile(file),
+	}
+	applySendAnimationOpts(p, opts)
+	msg, err := s.b.SendAnimation(ctx, p)
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	return msg.ID, nil
+}
+
 func (s *tgBotSender) SendVideo(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error) {
 	p := &bot.SendVideoParams{
 		ChatID: chatID,
@@ -651,6 +664,27 @@ func applySendMessageOpts(p *bot.SendMessageParams, opts *SendOpts) {
 }
 
 func applySendPhotoOpts(p *bot.SendPhotoParams, opts *SendOpts) {
+	if opts == nil {
+		return
+	}
+	if opts.ThreadID != 0 {
+		p.MessageThreadID = opts.ThreadID
+	}
+	if opts.Caption != "" {
+		p.Caption = opts.Caption
+	}
+	if opts.ParseMode != "" {
+		p.ParseMode = models.ParseMode(opts.ParseMode)
+	}
+	if opts.ReplyToID != 0 {
+		p.ReplyParameters = &models.ReplyParameters{MessageID: opts.ReplyToID}
+	}
+	if opts.ReplyMarkup != nil {
+		p.ReplyMarkup = toLibKeyboard(opts.ReplyMarkup)
+	}
+}
+
+func applySendAnimationOpts(p *bot.SendAnimationParams, opts *SendOpts) {
 	if opts == nil {
 		return
 	}

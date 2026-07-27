@@ -73,13 +73,18 @@ func (b *Bridge) sendTgMediaFromURL(ctx context.Context, tgChatID int64, mediaUR
 	switch mediaType {
 	case "photo":
 		// MAX иногда помечает GIF как photo. Telegram sendPhoto такие файлы не
-		// принимает (а локальный Bot API может зависнуть до timeout). Фото свыше
-		// 10 МБ Telegram тоже отвергает — отправляем оба случая документом, чтобы
-		// медиа не блокировало очередь своего чата бесконечными повторами.
-		if photoNeedsDocument(len(data), detectedType) {
-			if detectedType == "image/gif" && !strings.HasSuffix(strings.ToLower(file.Name), ".gif") {
+		// принимает (а локальный Bot API может зависнуть до timeout), поэтому
+		// используем специальный sendAnimation. Фото свыше 10 МБ Telegram
+		// отвергает — отправляем их документом.
+		if detectedType == "image/gif" {
+			if !strings.HasSuffix(strings.ToLower(file.Name), ".gif") {
 				file.Name = "animation.gif"
 			}
+			return b.tg.SendAnimation(ctx, tgChatID, file, &SendOpts{
+				Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
+			})
+		}
+		if photoNeedsDocument(len(data), detectedType) {
 			return b.tg.SendDocument(ctx, tgChatID, file, &SendOpts{
 				Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
 			})

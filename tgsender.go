@@ -257,6 +257,7 @@ type TGSender interface {
 	// Send methods return message ID.
 	SendMessage(ctx context.Context, chatID int64, text string, opts *SendOpts) (int, error)
 	SendPhoto(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error)
+	SendAnimation(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error)
 	SendVideo(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error)
 	SendAudio(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error)
 	SendDocument(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error)
