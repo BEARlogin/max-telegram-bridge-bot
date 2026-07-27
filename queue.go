@@ -20,6 +20,7 @@ const (
 	queueMaxMediaInFlight   = 4 // оставляем не менее 8 слотов для обычных сообщений
 	queueItemTimeout        = 45 * time.Second
 	queueMediaTimeout       = 5 * time.Minute
+	queueMediaFallbackAfter = 10
 	queueVideoRefreshAfter  = 2
 	queueVideoFallbackAfter = 4
 )
@@ -436,6 +437,14 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 
 	threadID := b.repo.GetTgThreadID(item.DstChatID)
 
+	// Один повреждённый/неподдерживаемый файл не должен навсегда останавливать
+	// все следующие сообщения своего чата. После достаточного числа попыток
+	// сохраняем хотя бы подпись и освобождаем голову очереди.
+	if item.AttType != "" && item.Attempts >= queueMediaFallbackAfter {
+		b.deliverMax2TgTextFallback(ctx, item, threadID)
+		return
+	}
+
 	if item.AttType == "album" {
 		// Альбом: сохранённый JSON нужен для совместимости, но CDN URL в нём
 		// короткоживущие. Перед каждой попыткой перечитываем исходное MAX-сообщение.
@@ -503,4 +512,24 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 	slog.Info("queue retry ok", "id", item.ID, "dir", "max2tg", "msgID", sentMsgID)
 	b.repo.SaveMsgOrigin(item.DstChatID, sentMsgID, item.SrcChatID, item.SrcMsgID, threadID, "max")
 	b.repo.DeleteFromQueue(item.ID)
+}
+
+func (b *Bridge) deliverMax2TgTextFallback(ctx context.Context, item QueueItem, threadID int) {
+	if item.Text == "" {
+		slog.Warn("queue MAX media dropped after retries", "id", item.ID, "type", item.AttType, "attempts", item.Attempts)
+		b.repo.DeleteFromQueue(item.ID)
+		return
+	}
+	sentMsgID, err := b.tg.SendMessage(ctx, item.DstChatID, item.Text, &SendOpts{
+		ParseMode: item.ParseMode,
+		ThreadID:  threadID,
+	})
+	if err != nil {
+		slog.Warn("queue MAX media text fallback failed", "id", item.ID, "err", err)
+		b.repo.IncrementAttempt(item.ID, time.Now().Add(retryDelay(item.Attempts+1)).Unix())
+		return
+	}
+	b.repo.SaveMsgOrigin(item.DstChatID, sentMsgID, item.SrcChatID, item.SrcMsgID, threadID, "max")
+	b.repo.DeleteFromQueue(item.ID)
+	slog.Info("queue MAX media degraded to text", "id", item.ID, "type", item.AttType, "msgID", sentMsgID)
 }
