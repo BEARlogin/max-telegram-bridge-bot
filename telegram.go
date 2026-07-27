@@ -892,6 +892,13 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				maxChatID, linked = b.repo.GetMaxChat(msg.Chat.ID)
 			}
 			if !linked {
+				// The crosspost wizard can bind a Telegram supergroup to a MAX
+				// channel (for example a discussion-style publication group).
+				// It has no ordinary bridge pair, but the explicit crosspost
+				// must still deliver in the configured direction.
+				if b.dispatchTgCrossposts(ctx, msg) {
+					continue
+				}
 				continue
 			}
 			if b.isSelfTgBot(msg.From) {
@@ -1614,11 +1621,31 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		return
 	}
 
-	// Пересылка crosspost: TG → MAX. Один TG-канал может иметь несколько MAX-адресатов,
-	// а несколько TG-каналов могут сходиться в один MAX-чат.
+	b.dispatchTgCrossposts(ctx, msg)
+}
+
+// dispatchTgCrossposts publishes an explicitly configured TG source to every
+// MAX crosspost destination. Although most sources are channels, the picker can
+// also produce a supergroup source, so the normal message path calls it when no
+// ordinary bridge pair exists.
+func (b *Bridge) dispatchTgCrossposts(ctx context.Context, msg *TGMessage) bool {
 	links := b.repo.GetCrosspostMaxChats(msg.Chat.ID)
 	if len(links) == 0 {
-		return
+		return false
+	}
+	if b.tgChannelPostCameFromMax(msg.Chat.ID, msg.MessageID) {
+		slog.Info("skip mapped TG crosspost source (MAX echo)", "tgChat", msg.Chat.ID, "tgMsg", msg.MessageID)
+		return true
+	}
+	if b.isSelfTgBot(msg.From) || msg.IsService || !tgHasContent(msg) {
+		return true
+	}
+	checkText := msg.Text
+	if checkText == "" {
+		checkText = msg.Caption
+	}
+	if strings.HasPrefix(checkText, "[MAX]") || strings.HasPrefix(checkText, "[TG]") {
+		return true
 	}
 	for _, link := range links {
 		maxChatID, direction := link.MaxChatID, link.Direction
@@ -1638,6 +1665,7 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 		}
 		go b.publishTgCrosspost(ctx, msg, maxChatID, true)
 	}
+	return true
 }
 
 func (b *Bridge) tgChannelPostCameFromMax(tgChatID int64, tgMsgID int) bool {

@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestMessageOriginDistinguishesSourceFromMirror(t *testing.T) {
 	repo := testRepo(t)
@@ -55,5 +58,38 @@ func TestTGChannelPostFromMaxIsNotCrosspostedBack(t *testing.T) {
 	}
 	if bridge.tgChannelPostCameFromMax(-1001, 23) {
 		t.Fatal("unmapped channel post must remain deliverable")
+	}
+}
+
+func TestDispatchTgCrosspostsRecognizesSupergroupSource(t *testing.T) {
+	repo := testRepo(t)
+	const (
+		tgChatID  = int64(-1001509845382)
+		maxChatID = int64(-72574916360919)
+	)
+	if err := repo.PairCrosspost(tgChatID, maxChatID, 11, 22); err != nil {
+		t.Fatal(err)
+	}
+	// Keep this test free of network calls: the opposite direction still proves
+	// that an explicitly configured supergroup is recognized as a crosspost
+	// source by the normal Telegram message path.
+	if !repo.SetCrosspostDirection(maxChatID, "max>tg") {
+		t.Fatal("failed to set crosspost direction")
+	}
+
+	bridge := &Bridge{repo: repo}
+	if !bridge.dispatchTgCrossposts(context.Background(), &TGMessage{
+		MessageID: 101,
+		Chat:      ChatInfo{ID: tgChatID, Type: "supergroup"},
+		Text:      "channel-style publication",
+	}) {
+		t.Fatal("configured Telegram supergroup must be handled as a crosspost source")
+	}
+	if bridge.dispatchTgCrossposts(context.Background(), &TGMessage{
+		MessageID: 102,
+		Chat:      ChatInfo{ID: -100999, Type: "supergroup"},
+		Text:      "unconfigured publication",
+	}) {
+		t.Fatal("unconfigured Telegram supergroup must remain in the ordinary bridge path")
 	}
 }
