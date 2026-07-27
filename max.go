@@ -449,6 +449,22 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				b.noteBotChatMax(ctx, chatID, string(msgUpd.Message.Recipient.ChatType))
 			}
 
+			// Полноценный кабинет в обычном браузере. Ссылка одноразовая и короткоживущая;
+			// личность берём из подписанного MAX update.
+			if isDialog && text == "/cabinet" {
+				name := strings.TrimSpace(msgUpd.Message.Sender.Name)
+				if name == "" {
+					name = msgUpd.Message.Sender.Username
+				}
+				link, ttl, ok := b.issueCabinetLink(ctx, "max", msgUpd.Message.Sender.UserId, name)
+				reply := "Не удалось создать ссылку на кабинет. Попробуйте ещё раз через минуту."
+				if ok {
+					reply = fmt.Sprintf("Кабинет «Моста» для компьютера и телефона:\n%s\n\nСсылка одноразовая и действует %d минут. Не пересылайте её другим.", link, ttl)
+				}
+				b.maxClientFor(ctx, chatID).Messages.Send(ctx, maxbot.NewMessage().SetChat(chatID).SetText(reply))
+				continue
+			}
+
 			// Команды MAX-диалога, обрабатываемые аддоном. Ядро не знает семантику.
 			if isDialog && strings.HasPrefix(text, "/") && b.maxAddonCommand(ctx, msgUpd.Message.Sender.UserId, msgUpd.Message.Sender.UserId, text) {
 				continue

@@ -236,6 +236,22 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					strings.TrimSpace(msg.From.FirstName+" "+msg.From.LastName), msg.From.UserName)
 			}
 
+			// Полноценный кабинет в обычном браузере. Обрабатываем до аддона, чтобы
+			// команда одинаково работала в публичной и production-сборке.
+			if msg.Chat.Type == "private" && msg.From != nil && text == "/cabinet" {
+				name := strings.TrimSpace(msg.From.FirstName + " " + msg.From.LastName)
+				if name == "" {
+					name = msg.From.UserName
+				}
+				link, ttl, ok := b.issueCabinetLink(ctx, "tg", msg.From.ID, name)
+				reply := "Не удалось создать ссылку на кабинет. Попробуйте ещё раз через минуту."
+				if ok {
+					reply = fmt.Sprintf("Кабинет «Моста» для компьютера и телефона:\n%s\n\nСсылка одноразовая и действует %d минут. Не пересылайте её другим.", link, ttl)
+				}
+				b.tg.SendMessage(ctx, msg.Chat.ID, reply, &SendOpts{ThreadID: msg.MessageThreadID})
+				continue
+			}
+
 			// Опциональные аддоны (если подключены build-тегом) первыми получают
 			// личные сообщения и форварды из каналов. Если аддон взял сообщение в
 			// работу — бридж дальше не обрабатывает. В публичной сборке addon == nil.
