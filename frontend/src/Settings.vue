@@ -296,7 +296,13 @@ async function loadVKChats(silent = false) {
     vkCommunityDetails.value = result.communities || []
     vkFailedCommunities.value = result.failed_communities || []
     if (!selectedVKCommunity.value && vkCommunityDetails.value.length) {
-      vkSelectedCommunity.value = String(vkCommunityDetails.value[0].account_id)
+      const availableAccountID = vkChats.value[0]?.account_id
+      const healthyCommunity = vkCommunityDetails.value.find(community =>
+        !vkFailedCommunities.value.some(id => Number(id) === Number(community.community_id))
+      )
+      vkSelectedCommunity.value = String(
+        availableAccountID || healthyCommunity?.account_id || vkCommunityDetails.value[0].account_id
+      )
     }
     vkChatsLoaded.value = true
   } catch (e) {

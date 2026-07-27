@@ -14,4 +14,5 @@ test('renders only community-visible VK conversations and keeps selection errors
   assert.ok(inlineError < nextStep, 'link error must stay inside step 2')
   assert.match(source.slice(picker, inlineError + 200), /role="alert"/)
   assert.doesNotMatch(source, /vkChatLink|findVKChatByLink/)
+  assert.match(source, /availableAccountID \|\| healthyCommunity\?\.account_id/)
 })
