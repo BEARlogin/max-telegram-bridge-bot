@@ -159,8 +159,91 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 	internalVKHandlersOnce.Do(func() {
 		http.HandleFunc("/internal/vk-reload", b.handleInternalVKReload)
 		http.HandleFunc("/internal/vk-connect", b.handleInternalVKConnect)
+		http.HandleFunc("/internal/vk-chats", b.handleInternalVKChats)
+		http.HandleFunc("/internal/vk-chat-bind", b.handleInternalVKChatBind)
 	})
 	return b
+}
+
+func validInternalSecret(got string) bool {
+	secret := os.Getenv("COMMENT_SYNC_SECRET")
+	return secret != "" && len(got) == len(secret) &&
+		subtle.ConstantTimeCompare([]byte(got), []byte(secret)) == 1
+}
+
+// handleInternalVKChats проксирует безопасный список бесед: без OAuth-токенов
+// и содержимого сообщений. Вызывается только авторизованным commenter.
+func (b *Bridge) handleInternalVKChats(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Secret  string `json:"secret"`
+		OwnerID int64  `json:"owner_id"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&in) != nil || in.OwnerID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !validInternalSecret(in.Secret) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	lister, ok := b.addon.(interface {
+		VKCabinetChatsJSON(context.Context, int64) ([]byte, error)
+	})
+	if !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	body, err := lister.VKCabinetChatsJSON(r.Context(), in.OwnerID)
+	if err != nil {
+		slog.Warn("vk cabinet chats failed", "owner", in.OwnerID, "err", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body)
+}
+
+func (b *Bridge) handleInternalVKChatBind(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Secret       string `json:"secret"`
+		ActorID      int64  `json:"actor_id"`
+		Platform     string `json:"platform"`
+		SourceChatID int64  `json:"source_chat_id"`
+		AccountID    int64  `json:"account_id"`
+		PeerID       int64  `json:"peer_id"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&in) != nil ||
+		in.ActorID <= 0 || in.SourceChatID == 0 || in.AccountID <= 0 || in.PeerID < 2000000000 ||
+		(in.Platform != "tg" && in.Platform != "max") {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !validInternalSecret(in.Secret) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	creator, ok := b.addon.(interface {
+		CreateVKCabinetChatBinding(context.Context, int64, string, int64, int64, int64) (int64, bool, string)
+	})
+	if !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	endpointID, created, reason := creator.CreateVKCabinetChatBinding(
+		r.Context(), in.ActorID, in.Platform, in.SourceChatID, in.AccountID, in.PeerID)
+	status := http.StatusOK
+	if !created {
+		status = http.StatusUnprocessableEntity
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": created, "endpoint_id": endpointID, "error": reason,
+	})
 }
 
 // handleInternalVKReload обновляет только in-memory индекс источников VK после
