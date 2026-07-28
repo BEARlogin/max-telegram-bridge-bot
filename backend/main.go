@@ -91,7 +91,9 @@ func main() {
 	mux.HandleFunc("/api/billing/subscribe", srv.handleSubscribe)
 	mux.HandleFunc("/api/billing/cancel", srv.handleCancelSub)
 	mux.HandleFunc("/api/billing/resume", srv.handleResume)
-	mux.HandleFunc("/api/admin/stats", srv.handleAdminStats) // бизнес-показатели (только админ)
+	mux.HandleFunc("/api/admin/stats", srv.handleAdminStats)                     // бизнес-показатели (только админ)
+	mux.HandleFunc("/api/admin/campaigns", srv.handleAdminCampaigns)             // рекламные кампании и атрибуция
+	mux.HandleFunc("/api/admin/campaigns/active", srv.handleAdminCampaignActive) // запуск/архив кампании
 	mux.HandleFunc("/api/billing/trial", srv.handleTrial)
 	mux.HandleFunc("/api/billing/tbank-notify", srv.handleTbankNotify)
 	mux.HandleFunc("/api/internal/comment", srv.handleInternalComment)          // приём комментов из TG-обсуждения (бридж)

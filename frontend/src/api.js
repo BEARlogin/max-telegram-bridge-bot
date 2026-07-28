@@ -373,6 +373,34 @@ export async function adminStats() {
   return r.json()
 }
 
+export async function adminCampaigns() {
+  const r = await fetch(`${API}/admin/campaigns`, { headers: { 'X-Init-Data': initData() } })
+  if (!r.ok) throw new Error('campaigns failed')
+  return r.json()
+}
+
+export async function createAdminCampaign(name, source, note) {
+  const r = await fetch(`${API}/admin/campaigns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ name, source, note }),
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(data.error || 'create campaign failed')
+  return data
+}
+
+export async function setAdminCampaignActive(id, active) {
+  const r = await fetch(`${API}/admin/campaigns/active`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData() },
+    body: JSON.stringify({ id, active }),
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(data.error || 'update campaign failed')
+  return data
+}
+
 export async function whoami() {
   const r = await fetch(`${API}/whoami`, { headers: { 'X-Init-Data': initData() } })
   if (!r.ok) throw new Error('whoami failed')
