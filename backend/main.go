@@ -48,7 +48,7 @@ func main() {
 			NotifyURL:     os.Getenv("TBANK_NOTIFY_URL"),
 			SuccessURL:    os.Getenv("TBANK_SUCCESS_URL"),
 			FailURL:       os.Getenv("TBANK_FAIL_URL"),
-			AmountKopecks: parseUint(os.Getenv("TBANK_AMOUNT"), 99000),
+			AmountKopecks: parseUint(os.Getenv("TBANK_AMOUNT"), 49900),
 			ReceiptEmail:  os.Getenv("TBANK_RECEIPT_EMAIL"),
 		}
 		if bcfg.TerminalKey != "" {
@@ -70,7 +70,7 @@ func main() {
 				NotifyURL:     os.Getenv("TBANK_NOTIFY_URL"),
 				SuccessURL:    os.Getenv("TBANK_SUCCESS_URL"),
 				FailURL:       os.Getenv("TBANK_FAIL_URL"),
-				AmountKopecks: parseUint(os.Getenv("TBANK_AMOUNT"), 99000),
+				AmountKopecks: parseUint(os.Getenv("TBANK_AMOUNT"), 49900),
 				ReceiptEmail:  os.Getenv("TBANK_RECEIPT_EMAIL"),
 				Taxation:      os.Getenv("TBANK_TAXATION"),
 			}

@@ -31,19 +31,19 @@ func TestStatsUsesActualRenewalsForMRR(t *testing.T) {
 	future := time.Now().Add(24 * time.Hour).Unix()
 	if _, err = db.Exec(`INSERT INTO subscriptions VALUES
 		(1,'active',29900,?,'card-1',2,1),
-		(2,'active',99000,?,'card-2',1,0),
+		(2,'active',49900,?,'card-2',1,0),
 		(3,'trial',0,?,'',0,1),
 		(4,'active',0,?,'',0,0)`, future, future, future, future); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO payments VALUES
 		(1,29900,'sub','CONFIRMED',1),
-		(2,99000,'sub','AUTHORIZED',2)`); err != nil {
+		(2,49900,'sub','AUTHORIZED',2)`); err != nil {
 		t.Fatal(err)
 	}
 
-	got := (&Service{db: db, cfg: Config{AmountKopecks: 99000}}).Stats()
-	if got["mrr_rub"] != int64(1486) { // 299 + 2×49 + 990 + 1×99
+	got := (&Service{db: db, cfg: Config{AmountKopecks: 49900}}).Stats()
+	if got["mrr_rub"] != int64(995) { // 299 + 2×49 + 499 + 1×99
 		t.Fatalf("mrr_rub=%v", got["mrr_rub"])
 	}
 	if got["pro_paying"] != int64(2) || got["sub_renewing"] != int64(2) {

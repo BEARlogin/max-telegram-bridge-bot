@@ -37,12 +37,12 @@ func TestPriceCohortsPreserveLegacySubscription(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	s, err := New(db, Config{AmountKopecks: 99000})
+	s, err := New(db, Config{AmountKopecks: 49900})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := s.BaseAmount(10); got != 99000 {
-		t.Fatalf("new user base=%d want 99000", got)
+	if got := s.BaseAmount(10); got != 49900 {
+		t.Fatalf("new user base=%d want 49900", got)
 	}
 	if got := s.SlotPrice(10); got != 9900 {
 		t.Fatalf("new user slot=%d want 9900", got)
@@ -52,8 +52,8 @@ func TestPriceCohortsPreserveLegacySubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := s.BaseAmount(20); got != 99000 {
-		t.Fatalf("unpaid subscription row base=%d want 99000", got)
+	if got := s.BaseAmount(20); got != 49900 {
+		t.Fatalf("unpaid subscription row base=%d want 49900", got)
 	}
 	if got := s.SlotPrice(20); got != 9900 {
 		t.Fatalf("unpaid subscription row slot=%d want 9900", got)

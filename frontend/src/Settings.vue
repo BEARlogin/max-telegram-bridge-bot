@@ -68,7 +68,7 @@ const slotReducing = ref(false)
 const blockBusy = reactive({})
 const groupUi = reactive({}) // { [tg_chat_id]: { busy, confirm } }
 const importBalance = ref(0)
-const proPriceKopecks = ref(99000)
+const proPriceKopecks = ref(49900)
 const slotPriceKopecks = ref(9900)
 const postPackages = ref([])
 const subscribing = ref(false)
@@ -165,7 +165,7 @@ async function load() {
     vkSources.value = s.vk_sources || []
     slots.value = s.slots || null
     importBalance.value = s.import_balance || 0
-    proPriceKopecks.value = s.pro_price_kopecks || 99000
+    proPriceKopecks.value = s.pro_price_kopecks || 49900
     slotPriceKopecks.value = s.slot_price_kopecks || 9900
     postPackages.value = s.post_packages || []
     acctPlat.value = s.platform || ''
