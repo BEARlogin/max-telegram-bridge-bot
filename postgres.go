@@ -797,11 +797,14 @@ func (r *pgRepo) TgOwnerForChat(chatID int64) int64 {
 	return owner
 }
 
-func (r *pgRepo) TouchUser(userID int64, platform, username, firstName string) {
+func (r *pgRepo) TouchUser(userID int64, platform, username, firstName string) int64 {
 	now := time.Now().Unix()
-	r.db.Exec(`INSERT INTO users (user_id, platform, username, first_name, first_seen, last_seen) VALUES ($1, $2, $3, $4, $5, $5)
-		ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username, first_name=EXCLUDED.first_name, last_seen=EXCLUDED.last_seen`,
-		userID, platform, username, firstName, now)
+	var firstSeen int64
+	_ = r.db.QueryRow(`INSERT INTO users (user_id, platform, username, first_name, first_seen, last_seen) VALUES ($1, $2, $3, $4, $5, $5)
+		ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username, first_name=EXCLUDED.first_name, last_seen=EXCLUDED.last_seen
+		RETURNING first_seen`,
+		userID, platform, username, firstName, now).Scan(&firstSeen)
+	return firstSeen
 }
 
 func (r *pgRepo) FindUserByUsername(platform, username string) (int64, bool) {

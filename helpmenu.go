@@ -5,6 +5,24 @@ import (
 	"strings"
 )
 
+// telegramStartParam распознаёт обычный /start и рекламный deep-link
+// /start <campaign_id>. Payload возвращается без интерпретации: приватный addon
+// сам принимает только существующий числовой id кампании.
+func telegramStartParam(text string) (payload string, ok bool) {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return "", false
+	}
+	command := strings.ToLower(strings.SplitN(fields[0], "@", 2)[0])
+	if command != "/start" {
+		return "", false
+	}
+	if len(fields) == 1 {
+		return "", true
+	}
+	return fields[1], true
+}
+
 // --- /start и /help как меню ---
 // Вместо «портянки» по /start показываем короткий интро + inline-кнопки. Детали
 // (как связать группы/каналы, команды, FAQ) — за кнопками (callback help:*),

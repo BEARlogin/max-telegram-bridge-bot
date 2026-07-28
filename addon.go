@@ -219,6 +219,24 @@ func (b *Bridge) maxAddonText(ctx context.Context, userID, chatID int64, text st
 	return ok && h.HandleMaxText(ctx, userID, chatID, text)
 }
 
+// trackTelegramCampaignStart — опциональный приватный хук рекламной атрибуции.
+// Ядро передаёт только технические метаданные /start; названия кампаний и
+// аналитика остаются в addon и не попадают в публичную схему bridge.db.
+func (b *Bridge) trackTelegramCampaignStart(
+	ctx context.Context,
+	userID int64,
+	messageID int,
+	payload string,
+	firstSeen int64,
+) {
+	h, ok := b.addon.(interface {
+		TrackTelegramStart(context.Context, int64, int, string, int64)
+	})
+	if ok {
+		h.TrackTelegramStart(ctx, userID, messageID, payload, firstSeen)
+	}
+}
+
 // Telegram account automation hooks are optional so public/third-party addons keep compiling.
 func (b *Bridge) addonTgBusinessConnection(ctx context.Context, c *TGBusinessConnection) {
 	if c == nil {

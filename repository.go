@@ -164,7 +164,10 @@ type Repository interface {
 	ClaimCrosspost(platform string, chatID int64, msgID string) bool
 
 	// Users
-	TouchUser(userID int64, platform, username, firstName string)
+	// TouchUser обновляет профиль и возвращает исходный first_seen. Он нужен
+	// приватному слою для честной атрибуции рекламного /start: старый пользователь,
+	// впервые кликнувший рекламу, не должен считаться новой регистрацией.
+	TouchUser(userID int64, platform, username, firstName string) int64
 
 	// FindUserByUsername — id юзера по @username из таблицы users (виденные ботом).
 	// Для модер-команд /unban @user и т.п. Регистронезависимо, username без «@».

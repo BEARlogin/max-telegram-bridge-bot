@@ -28,6 +28,26 @@ func TestStartMenuLinksPagedAndFullHelp(t *testing.T) {
 	}
 }
 
+func TestTelegramStartParamSupportsAdvertisingDeepLinks(t *testing.T) {
+	for _, tc := range []struct {
+		text    string
+		payload string
+		ok      bool
+	}{
+		{text: "/start", ok: true},
+		{text: "/start 42", payload: "42", ok: true},
+		{text: "/start@MaxTelegramBridgeBot 77", payload: "77", ok: true},
+		{text: "/help", ok: false},
+		{text: "start 42", ok: false},
+	} {
+		payload, ok := telegramStartParam(tc.text)
+		if payload != tc.payload || ok != tc.ok {
+			t.Fatalf("telegramStartParam(%q)=(%q,%v), want (%q,%v)",
+				tc.text, payload, ok, tc.payload, tc.ok)
+		}
+	}
+}
+
 func TestExtraHelpMenuUsesSeparatePages(t *testing.T) {
 	b := &Bridge{extraHelpPages: []extraHelpPage{
 		{ID: "dm", Button: "Личный мост", Text: "Описание DM"},

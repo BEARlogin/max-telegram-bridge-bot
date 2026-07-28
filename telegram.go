@@ -228,12 +228,17 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				}
 			}
 			slog.Debug("TG msg received", "uid", tgUserID(msg), "chat", msg.Chat.ID, "type", msg.Chat.Type)
+			startPayload, isStart := telegramStartParam(text)
 
 			// Запоминаем юзера при личном сообщении
+			var firstSeen int64
 			if msg.Chat.Type == "private" && msg.From != nil {
-				b.repo.TouchUser(msg.From.ID, "tg", msg.From.UserName, msg.From.FirstName)
+				firstSeen = b.repo.TouchUser(msg.From.ID, "tg", msg.From.UserName, msg.From.FirstName)
 				b.observePrivateUser(ctx, "tg", msg.From.ID,
 					strings.TrimSpace(msg.From.FirstName+" "+msg.From.LastName), msg.From.UserName)
+				if isStart && startPayload != "" {
+					b.trackTelegramCampaignStart(ctx, msg.From.ID, msg.MessageID, startPayload, firstSeen)
+				}
 			}
 
 			// Полноценный кабинет в обычном браузере. Обрабатываем до аддона, чтобы
@@ -287,7 +292,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				continue
 			}
 
-			if text == "/start" || text == "/help" {
+			if isStart || text == "/help" {
 				intro, kb := b.tgStartMenu()
 				b.tg.SendMessage(ctx, msg.Chat.ID, intro,
 					&SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID, ReplyMarkup: kb})

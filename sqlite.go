@@ -796,13 +796,18 @@ func (r *sqliteRepo) TgOwnerForChat(chatID int64) int64 {
 	return owner
 }
 
-func (r *sqliteRepo) TouchUser(userID int64, platform, username, firstName string) {
+func (r *sqliteRepo) TouchUser(userID int64, platform, username, firstName string) int64 {
 	now := time.Now().Unix()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.db.Exec(`INSERT INTO users (user_id, platform, username, first_name, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)
+	if _, err := r.db.Exec(`INSERT INTO users (user_id, platform, username, first_name, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name, last_seen=excluded.last_seen`,
-		userID, platform, username, firstName, now, now)
+		userID, platform, username, firstName, now, now); err != nil {
+		return 0
+	}
+	var firstSeen int64
+	_ = r.db.QueryRow(`SELECT first_seen FROM users WHERE user_id=?`, userID).Scan(&firstSeen)
+	return firstSeen
 }
 
 func (r *sqliteRepo) FindUserByUsername(platform, username string) (int64, bool) {
