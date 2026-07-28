@@ -53,7 +53,7 @@ func (b *Bridge) tgStartMenu() (string, *InlineKeyboardMarkup) {
 	}
 	// Если задана подробная инструкция (HELP_FILE/help.html) — кнопка на полный текст.
 	if customHelp() != "" {
-		kb.Rows = append(kb.Rows, NewInlineRow(NewInlineButton("📖 Полная инструкция", "help:full")))
+		kb.Rows = append(kb.Rows, NewInlineRow(NewInlineButton("📖 Все шаги одной инструкцией", "help:full")))
 	}
 	return text, kb
 }

@@ -17,14 +17,19 @@ func TestStartMenuLinksPagedAndFullHelp(t *testing.T) {
 
 	_, kb := b.tgStartMenu()
 	var callbacks []string
+	var labels []string
 	for _, row := range kb.Rows {
 		for _, button := range row {
 			callbacks = append(callbacks, button.CallbackData)
+			labels = append(labels, button.Text)
 		}
 	}
 	joined := strings.Join(callbacks, " ")
 	if !strings.Contains(joined, "help:more") || !strings.Contains(joined, "help:full") {
 		t.Fatalf("callbacks = %q", joined)
+	}
+	if !strings.Contains(strings.Join(labels, " "), "Все шаги одной инструкцией") {
+		t.Fatalf("labels = %q", labels)
 	}
 }
 
