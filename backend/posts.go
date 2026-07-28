@@ -23,9 +23,9 @@ var postPackages = []struct {
 	Posts  int
 	Amount uint64
 }{
-	{Posts: 100, Amount: 99000},
-	{Posts: 500, Amount: 299000},
-	{Posts: 1000, Amount: 499000},
+	{Posts: 100, Amount: 49000},
+	{Posts: 500, Amount: 149000},
+	{Posts: 1000, Amount: 249000},
 }
 
 func postPackage(posts int) (uint64, bool) {
