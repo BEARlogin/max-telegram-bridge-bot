@@ -288,7 +288,7 @@ func (s *server) slotsInfo(u user) map[string]any {
 						continue
 					}
 					items = append(items, slotUsageItem{
-						Kind: "direct_message", Label: "Личный мост",
+						Kind: "direct_message", Label: "Один на один",
 						Detail: strings.ToUpper(aPlatform) + " " + strconv.FormatInt(aUserID, 10) +
 							" ↔ " + strings.ToUpper(bPlatform) + " " + strconv.FormatInt(bUserID, 10),
 					})
@@ -308,7 +308,7 @@ func (s *server) slotsInfo(u user) map[string]any {
 						continue
 					}
 					items = append(items, slotUsageItem{
-						Kind: "business_inbox", Label: "Telegram Business-инбокс",
+						Kind: "business_inbox", Label: "Входящие Telegram",
 						Detail: "Telegram " + strconv.FormatInt(tgUserID, 10) + " → " +
 							slotChatName(bridgeDB, "max", maxChatID),
 					})
