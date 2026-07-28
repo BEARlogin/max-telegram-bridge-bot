@@ -13,7 +13,7 @@ func TestStartMenuLinksPagedAndFullHelp(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HELP_FILE", helpPath)
-	b := &Bridge{extraHelpPages: []extraHelpPage{{ID: "dm", Button: "Личный мост", Text: "Описание"}}}
+	b := &Bridge{extraHelpPages: []extraHelpPage{{ID: "dm", Button: "Один на один", Text: "Описание"}}}
 
 	_, kb := b.tgStartMenu()
 	var callbacks []string
@@ -50,8 +50,8 @@ func TestTelegramStartParamSupportsAdvertisingDeepLinks(t *testing.T) {
 
 func TestExtraHelpMenuUsesSeparatePages(t *testing.T) {
 	b := &Bridge{extraHelpPages: []extraHelpPage{
-		{ID: "dm", Button: "Личный мост", Text: "Описание DM"},
-		{ID: "personal", Button: "Личные сообщения", Text: "Описание инбокса"},
+		{ID: "dm", Button: "Один на один", Text: "Описание DM"},
+		{ID: "personal", Button: "Входящие Telegram", Text: "Описание инбокса"},
 	}}
 	text, kb := b.extraHelpMenu()
 	if !strings.Contains(text, "Дополнительные возможности") {
