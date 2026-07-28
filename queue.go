@@ -440,6 +440,8 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 		}
 	}
 	var sentMsgID int
+	var sentMsgIDs []int
+	var richMediaSent bool
 	var err error
 
 	threadID := b.repo.GetTgThreadID(item.DstChatID)
@@ -462,6 +464,7 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 				ids, e := b.sendMaxAlbumToTg(ctx, item.DstChatID, items, item.Text, item.ParseMode, threadID, 0)
 				err = e
 				if e == nil && len(ids) > 0 {
+					sentMsgIDs = ids
 					sentMsgID = ids[0]
 				}
 			}
@@ -476,10 +479,15 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 			mediaURL, err = b.refreshQueuedMaxVideoURL(ctx, item.SrcChatID, item.SrcMsgID)
 		}
 		if err == nil {
-			// Как и прямая доставка, сначала скачиваем MAX CDN сами и загружаем
-			// байты в Telegram. Telegram ненадёжно забирает MAX CDN URL напрямую.
-			sentMsgID, err = b.sendTgMediaFromURL(ctx, item.DstChatID, mediaURL, item.AttType,
-				item.Text, item.ParseMode, 0, threadID, b.cfg.maxMaxFileBytes())
+			// Тот же путь, что у прямой доставки: длинный текст + одиночное
+			// фото/видео уходит одним Rich Message, с совместимым fallback.
+			var ids []int
+			ids, richMediaSent, err = b.sendMaxSingleMediaToTg(ctx, item.DstChatID, mediaURL, item.AttType,
+				item.Text, item.ParseMode, 0, threadID)
+			if len(ids) > 0 {
+				sentMsgIDs = ids
+				sentMsgID = ids[0]
+			}
 		}
 	} else {
 		sentMsgID, err = b.tg.SendMessage(ctx, item.DstChatID, item.Text, &SendOpts{ParseMode: item.ParseMode, ThreadID: threadID})
@@ -517,7 +525,20 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 		return
 	}
 	slog.Info("queue retry ok", "id", item.ID, "dir", "max2tg", "msgID", sentMsgID)
-	b.repo.SaveMsgOrigin(item.DstChatID, sentMsgID, item.SrcChatID, item.SrcMsgID, threadID, "max")
+	if len(sentMsgIDs) == 0 && sentMsgID != 0 {
+		sentMsgIDs = []int{sentMsgID}
+	}
+	for _, msgID := range sentMsgIDs {
+		b.repo.SaveMsgOrigin(item.DstChatID, msgID, item.SrcChatID, item.SrcMsgID, threadID, "max")
+	}
+	if richMediaSent && sentMsgID != 0 {
+		b.repo.SaveTgMediaState(item.DstChatID, TgMediaState{
+			TgMsgID:     sentMsgID,
+			Kind:        "rich_" + item.AttType,
+			FileID:      item.AttURL,
+			Fingerprint: "rich:" + item.SrcMsgID,
+		})
+	}
 	b.repo.DeleteFromQueue(item.ID)
 }
 

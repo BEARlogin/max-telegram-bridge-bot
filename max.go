@@ -352,17 +352,23 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					editParseMode = "HTML"
 				}
 
-				// Проверяем вложения в edit — если есть медиа, используем editMessageMedia
+				// Проверяем вложения в edit — если есть медиа, используем editMessageMedia.
+				// В edit-update MAX иногда оставляет типизированный список пустым, но
+				// присылает raw_attachments.
 				var mediaURL, mediaType string
-				for _, att := range editUpd.Message.Body.Attachments {
+				editAttachments := editUpd.Message.Body.Attachments
+				if parsed := parseMaxRawAttachments(editUpd.Message.Body.RawAttachments); len(parsed) > 0 {
+					editAttachments = parsed
+				}
+				for _, att := range editAttachments {
 					switch a := att.(type) {
 					case *maxschemes.PhotoAttachment:
 						if a.Payload.Url != "" {
 							mediaURL, mediaType = a.Payload.Url, "photo"
 						}
 					case *maxschemes.VideoAttachment:
-						if a.Payload.Url != "" {
-							mediaURL, mediaType = a.Payload.Url, "video"
+						if url := b.resolveMaxVideoURL(ctx, editUpd.Message.Recipient.ChatId, mid, a); url != "" {
+							mediaURL, mediaType = url, "video"
 						}
 					case *maxschemes.FileAttachment:
 						if a.Payload.Url != "" {
@@ -372,6 +378,62 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					if mediaURL != "" {
 						break
 					}
+				}
+
+				// Rich Message нужно редактировать тоже как rich. Обычный
+				// editMessageText заменил бы весь пост текстом и удалил медиа.
+				if mediaState, stateOK := b.repo.GetTgMediaState(tgChatID, tgMsgID); stateOK &&
+					strings.HasPrefix(mediaState.Kind, "rich_") {
+					expectedType := strings.TrimPrefix(mediaState.Kind, "rich_")
+					if mediaURL == "" {
+						if current, getErr := b.maxClientFor(ctx, editUpd.Message.Recipient.ChatId).Messages.GetMessage(ctx, mid); getErr == nil {
+							for _, att := range maxMessageAttachments(current) {
+								switch a := att.(type) {
+								case *maxschemes.PhotoAttachment:
+									if a.Payload.Url != "" {
+										mediaURL, mediaType = a.Payload.Url, "photo"
+									}
+								case *maxschemes.VideoAttachment:
+									if url := b.resolveMaxVideoURL(ctx, editUpd.Message.Recipient.ChatId, mid, a); url != "" {
+										mediaURL, mediaType = url, "video"
+									}
+								}
+								if mediaURL != "" {
+									break
+								}
+							}
+						}
+					}
+					if mediaURL == "" {
+						mediaURL = mediaState.FileID
+					}
+					if mediaType == "" {
+						mediaType = expectedType
+					}
+					richSender, supported := b.tg.(TGRichMessageSender)
+					if !supported || mediaURL == "" || (mediaType != "photo" && mediaType != "video") {
+						slog.Error("MAX→TG rich edit skipped: media unavailable",
+							"tgChat", tgChatID, "tgMsg", tgMsgID, "type", mediaType)
+						continue
+					}
+					data, fileName, downloadErr := b.downloadURLWithLimit(mediaURL, b.cfg.maxMaxFileBytes())
+					if downloadErr != nil {
+						slog.Error("MAX→TG rich edit media download failed",
+							"err", downloadErr, "tgChat", tgChatID, "tgMsg", tgMsgID)
+						continue
+					}
+					richHTML := formatTGRichMediaHTML(fwd, editParseMode, mediaType)
+					if editErr := richSender.EditRichMediaMessage(ctx, tgChatID, tgMsgID, richHTML,
+						TGRichMedia{Type: mediaType, File: FileArg{Name: fileName, Bytes: data}}); editErr != nil {
+						slog.Error("MAX→TG rich edit failed", "err", editErr, "tgChat", tgChatID, "tgMsg", tgMsgID)
+					} else {
+						mediaState.Kind = "rich_" + mediaType
+						mediaState.FileID = mediaURL
+						mediaState.Fingerprint = "rich:" + mid
+						b.repo.SaveTgMediaState(tgChatID, mediaState)
+						slog.Info("MAX→TG rich message edited", "tgMsg", tgMsgID, "type", mediaType)
+					}
+					continue
 				}
 
 				if mediaURL != "" {
@@ -1811,6 +1873,85 @@ func splitMaxMediaCaption(caption string) (mediaCaption, overflowCaption string)
 	return caption, ""
 }
 
+func buildTGRichMediaHTML(caption, parseMode, mediaType string) (string, bool) {
+	if mediaType != "photo" && mediaType != "video" {
+		return "", false
+	}
+	runes := utf8.RuneCountInString(caption)
+	if runes <= 1024 || runes > 32768 {
+		return "", false
+	}
+	return formatTGRichMediaHTML(caption, parseMode, mediaType), true
+}
+
+func formatTGRichMediaHTML(caption, parseMode, mediaType string) string {
+	body := caption
+	if !strings.EqualFold(parseMode, "HTML") {
+		body = html.EscapeString(body)
+	}
+	// В Rich HTML медиа должно быть отдельным блоком. Оставляем его над текстом,
+	// как в обычном посте Telegram, но оба блока относятся к одному message_id.
+	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\n", "<br>")
+	tag := `<img src="tg://photo?id=` + tgRichMediaID + `"/>`
+	if mediaType == "video" {
+		tag = `<video src="tg://video?id=` + tgRichMediaID + `"></video>`
+	}
+	return tag + "<p>" + body + "</p>"
+}
+
+// sendMaxSingleMediaToTg сначала использует Rich Messages Bot API 10.2 для
+// фото/видео с длинным текстом. Если Telegram отклоняет новый формат, доставка
+// не теряется: остаётся прежний вариант «медиа + отдельный текст».
+func (b *Bridge) sendMaxSingleMediaToTg(
+	ctx context.Context,
+	tgChatID int64,
+	mediaURL, mediaType, caption, parseMode string,
+	replyToID, threadID int,
+) ([]int, bool, error) {
+	if richHTML, ok := buildTGRichMediaHTML(caption, parseMode, mediaType); ok {
+		if richSender, supported := b.tg.(TGRichMessageSender); supported {
+			data, name, downloadErr := b.downloadURLWithLimit(mediaURL, b.cfg.maxMaxFileBytes())
+			if downloadErr == nil {
+				// Большие фото и GIF обычный путь корректно превращает в document/
+				// animation; они не подходят InputMediaPhoto rich-сообщения.
+				contentType := http.DetectContentType(data)
+				if mediaType != "photo" || !photoNeedsDocument(len(data), contentType) {
+					msgID, richErr := richSender.SendRichMediaMessage(ctx, tgChatID, richHTML,
+						TGRichMedia{Type: mediaType, File: FileArg{Name: name, Bytes: data}},
+						&SendOpts{ReplyToID: replyToID, ThreadID: threadID})
+					if richErr == nil {
+						slog.Info("MAX→TG rich media sent", "tgChat", tgChatID, "msgID", msgID, "type", mediaType)
+						return []int{msgID}, true, nil
+					}
+					slog.Warn("MAX→TG rich media failed, using compatibility fallback",
+						"tgChat", tgChatID, "type", mediaType, "err", richErr)
+				}
+			} else {
+				slog.Warn("MAX→TG rich media download failed, using compatibility fallback",
+					"tgChat", tgChatID, "type", mediaType, "err", downloadErr)
+			}
+		}
+	}
+
+	mediaCaption, overflowCaption := splitMaxMediaCaption(caption)
+	msgID, err := b.sendTgMediaFromURL(ctx, tgChatID, mediaURL, mediaType, mediaCaption, parseMode,
+		replyToID, threadID, b.cfg.maxMaxFileBytes())
+	if err != nil {
+		return nil, false, err
+	}
+	ids := []int{msgID}
+	if overflowCaption != "" {
+		overflowID, overflowErr := b.tg.SendMessage(ctx, tgChatID, overflowCaption,
+			&SendOpts{ParseMode: parseMode, ThreadID: threadID})
+		if overflowErr != nil {
+			slog.Warn("MAX→TG media long caption send failed", "tgChat", tgChatID, "err", overflowErr)
+		} else {
+			ids = append(ids, overflowID)
+		}
+	}
+	return ids, false, nil
+}
+
 // sendMaxAlbumToTg качает байты каждого элемента альбома и шлёт media group в TG.
 // Байты (а не URL) — Telegram не фетчит MAX-CDN надёжно; уникальные attach-имена ставит
 // SendMediaGroup (иначе все фото схлопывались в первое). caption/parseMode — на [0].
@@ -1979,6 +2120,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	var sentMsgIDs []int
 	var sendErr error
 	mediaSent := false
+	richMediaSent := false
 	var qAttType, qAttURL string // для очереди при ошибке
 
 	// Определяем HTML caption: всегда для bridge-режима (жирное имя) и при наличии markups
@@ -2117,17 +2259,10 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 
 		if len(albumMedia) == 1 {
 			// Одно вложение — отправляем обычным сообщением (альбом из 1 элемента не имеет reply)
-			mediaCaption, overflowCaption := splitMaxMediaCaption(htmlCaption)
-			sentMsgID, sendErr = b.sendTgMediaFromURL(ctx, tgChatID, qAttURL, qAttType, mediaCaption, pm, replyToID, threadID, b.cfg.maxMaxFileBytes())
-			if sendErr == nil && sentMsgID != 0 {
-				sentMsgIDs = append(sentMsgIDs, sentMsgID)
-			}
-			if sendErr == nil && overflowCaption != "" {
-				if overflowID, err := b.tg.SendMessage(ctx, tgChatID, overflowCaption, &SendOpts{ParseMode: pm, ThreadID: threadID}); err != nil {
-					slog.Warn("MAX→TG media long caption send failed", "tgChat", tgChatID, "err", err)
-				} else {
-					sentMsgIDs = append(sentMsgIDs, overflowID)
-				}
+			sentMsgIDs, richMediaSent, sendErr = b.sendMaxSingleMediaToTg(ctx, tgChatID, qAttURL, qAttType,
+				htmlCaption, pm, replyToID, threadID)
+			if len(sentMsgIDs) > 0 {
+				sentMsgID = sentMsgIDs[0]
 			}
 			var e *ErrFileTooLarge
 			if errors.As(sendErr, &e) {
@@ -2283,6 +2418,14 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		}
 		for _, id := range sentMsgIDs {
 			b.repo.SaveMsgOrigin(tgChatID, id, chatID, body.Mid, threadID, "max")
+		}
+		if richMediaSent && sentMsgID != 0 {
+			b.repo.SaveTgMediaState(tgChatID, TgMediaState{
+				TgMsgID:     sentMsgID,
+				Kind:        "rich_" + qAttType,
+				FileID:      qAttURL,
+				Fingerprint: "rich:" + body.Mid,
+			})
 		}
 	}
 }

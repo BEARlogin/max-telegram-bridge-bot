@@ -31,3 +31,28 @@ func TestSplitMaxMediaCaption(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildTGRichMediaHTML(t *testing.T) {
+	long := strings.Repeat("я", 1025)
+	got, ok := buildTGRichMediaHTML(long+"\n<b>важно</b>", "HTML", "video")
+	if !ok {
+		t.Fatal("long video caption must use rich message")
+	}
+	if !strings.Contains(got, `<video src="tg://video?id=bridge_media"></video>`) {
+		t.Fatalf("missing video block: %q", got)
+	}
+	if !strings.Contains(got, "<br><b>важно</b>") {
+		t.Fatalf("formatting/newline lost: %q", got)
+	}
+
+	escaped, ok := buildTGRichMediaHTML(long+" <тег>", "", "photo")
+	if !ok || !strings.Contains(escaped, "&lt;тег&gt;") {
+		t.Fatalf("plain text is not escaped: %q", escaped)
+	}
+	if _, ok := buildTGRichMediaHTML("short", "HTML", "video"); ok {
+		t.Fatal("short caption must keep regular Telegram media")
+	}
+	if _, ok := buildTGRichMediaHTML(long, "HTML", "document"); ok {
+		t.Fatal("documents are not rich photo/video blocks")
+	}
+}

@@ -18,18 +18,21 @@ import (
 )
 
 type tgBotSender struct {
-	b        *bot.Bot
-	token    string
-	username string
-	apiURL   string
-	updates  chan TGUpdate
+	b          *bot.Bot
+	token      string
+	username   string
+	apiURL     string
+	httpClient *http.Client
+	updates    chan TGUpdate
 }
 
 func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, error) {
+	httpClient := &http.Client{Timeout: 2 * time.Minute}
 	s := &tgBotSender{
-		token:   token,
-		apiURL:  apiURL,
-		updates: make(chan TGUpdate, 100),
+		token:      token,
+		apiURL:     apiURL,
+		httpClient: httpClient,
+		updates:    make(chan TGUpdate, 100),
 	}
 
 	opts := []bot.Option{
@@ -37,7 +40,7 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 		// нагрузкой регулярно занимает больше 30 секунд. Очередь сама задаёт
 		// короткий контекст для текста и длинный для медиа, поэтому транспортный
 		// timeout должен позволять тяжёлому запросу завершиться.
-		bot.WithHTTPClient(25*time.Second, &http.Client{Timeout: 2 * time.Minute}),
+		bot.WithHTTPClient(25*time.Second, httpClient),
 		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			tgu := convertUpdate(update)
 			select {

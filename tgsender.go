@@ -216,6 +216,22 @@ type TGInputMedia struct {
 	ParseMode string
 }
 
+// TGRichMedia — фото или видео, встроенное в один Telegram Rich Message.
+// Bot API 10.2 позволяет так отправлять медиа вместе с текстом длиннее
+// обычного лимита caption (1024 символа).
+type TGRichMedia struct {
+	Type string // "photo" | "video"
+	File FileArg
+}
+
+// TGRichMessageSender — опциональная возможность TG-адаптера. Она намеренно
+// вынесена из TGSender, чтобы сторонние/тестовые адаптеры продолжали работать:
+// если реализация её не поддерживает, мост использует обычную отправку.
+type TGRichMessageSender interface {
+	SendRichMediaMessage(ctx context.Context, chatID int64, html string, media TGRichMedia, opts *SendOpts) (int, error)
+	EditRichMediaMessage(ctx context.Context, chatID int64, msgID int, html string, media TGRichMedia) error
+}
+
 type BotCommand struct {
 	Command     string
 	Description string

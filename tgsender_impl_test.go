@@ -1,12 +1,78 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
+
+func TestSendRichMediaMessageUploadsVideo(t *testing.T) {
+	var gotRichHTML string
+	var gotVideo []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bot123:ABC/sendRichMessage" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm: %v", err)
+		}
+		if got := r.FormValue("chat_id"); got != "-10042" {
+			t.Errorf("chat_id = %q", got)
+		}
+		if got := r.FormValue("message_thread_id"); got != "7" {
+			t.Errorf("message_thread_id = %q", got)
+		}
+		var rich tgInputRichMessage
+		if err := json.Unmarshal([]byte(r.FormValue("rich_message")), &rich); err != nil {
+			t.Fatalf("rich_message: %v", err)
+		}
+		gotRichHTML = rich.HTML
+		if len(rich.Media) != 1 || rich.Media[0].ID != tgRichMediaID ||
+			rich.Media[0].Media.Type != "video" ||
+			rich.Media[0].Media.Media != "attach://"+tgRichMediaID {
+			t.Errorf("media = %#v", rich.Media)
+		}
+		file, _, err := r.FormFile(tgRichMediaID)
+		if err != nil {
+			t.Fatalf("media file: %v", err)
+		}
+		defer file.Close()
+		gotVideo, _ = io.ReadAll(file)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":314}}`)
+	}))
+	defer server.Close()
+
+	s := &tgBotSender{
+		token:      "123:ABC",
+		apiURL:     server.URL,
+		httpClient: server.Client(),
+	}
+	msgID, err := s.SendRichMediaMessage(context.Background(), -10042,
+		`<video src="tg://video?id=bridge_media"></video><p>Длинный текст</p>`,
+		TGRichMedia{Type: "video", File: FileArg{Name: "post.mp4", Bytes: []byte("video-data")}},
+		&SendOpts{ThreadID: 7, ReplyToID: 99})
+	if err != nil {
+		t.Fatalf("SendRichMediaMessage: %v", err)
+	}
+	if msgID != 314 {
+		t.Fatalf("message_id = %d", msgID)
+	}
+	if !strings.Contains(gotRichHTML, `tg://video?id=bridge_media`) {
+		t.Errorf("html = %q", gotRichHTML)
+	}
+	if string(gotVideo) != "video-data" {
+		t.Errorf("video = %q", gotVideo)
+	}
+}
 
 // --- convertMsg ---
 
