@@ -16,3 +16,19 @@ test('renders only community-visible VK conversations and keeps selection errors
   assert.doesNotMatch(source, /vkChatLink|findVKChatByLink/)
   assert.match(source, /availableAccountID \|\| healthyCommunity\?\.account_id/)
 })
+
+test('mini app uses a compact navigation menu and keeps slot details collapsed by default', () => {
+  assert.match(source, /class="mini-nav-trigger"/)
+  assert.match(source, /aria-controls="mini-nav-menu"/)
+  assert.match(source, /const slotUsageOpen = ref\(false\)/)
+  assert.match(source, /<ol v-if="slotUsageOpen" id="slot-usage-list">/)
+  assert.doesNotMatch(source, /class="tabs section-anchor"/)
+})
+
+test('payment waits for a direct user click before opening an external browser', () => {
+  assert.match(source, /const paymentUrl = ref\(''\)/)
+  assert.match(source, /@click="openPreparedPayment"/)
+  assert.match(source, /preparePayment\(url, 'Оплата PRO/)
+  assert.match(source, /if \(result === 'need_card'\) \{\s*const \{ url \} = await subscribePro\(\)/)
+  assert.doesNotMatch(source, /location\.href = url/)
+})

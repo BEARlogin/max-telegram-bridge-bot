@@ -12,6 +12,7 @@ import {
   logoutCabinet, startVKConnect, setVKDirection, setVKPaused, deleteVKBinding,
   getVKChats, createVKChatBinding,
 } from './api.js'
+import { openExternalLink } from './externalLink.js'
 
 const loading = ref(true)
 const error = ref('')
@@ -28,6 +29,8 @@ const isAdmin = ref(false)
 const emit = defineEmits(['admin'])
 const proOpen = ref(false)
 const tab = ref('channels') // вкладки: channels | groups
+const mobileNavOpen = ref(false)
+const slotUsageOpen = ref(false)
 const crossposts = ref([])
 const groups = ref([])
 const blocks = ref([])
@@ -74,6 +77,8 @@ const postPackages = ref([])
 const subscribing = ref(false)
 const buying = ref(false)
 const toast = ref('')
+const paymentUrl = ref('')
+const paymentTitle = ref('')
 // Инструкция «как связать канал/группу» (линковка — через бота)
 const linkOpen = ref(false)
 const grpHelp = ref(false)
@@ -113,6 +118,14 @@ const pausedConnections = computed(() =>
   vkBindings.value.filter(x => x.paused).length)
 const freeSlots = computed(() => slots.value ? Math.max(0, slots.value.limit - slots.value.used) : 0)
 const attentionCount = computed(() => pausedConnections.value + blocks.value.length + (!accLinked.value ? 1 : 0))
+const miniSections = computed(() => [
+  { id: 'channels', label: 'Каналы', count: crossposts.value.length },
+  { id: 'groups', label: 'Группы', count: groups.value.length },
+  { id: 'mirrors', label: 'Зеркала', count: mirrors.value.length },
+  { id: 'blocks', label: 'Баны', count: blocks.value.length },
+])
+const currentMiniSection = computed(() =>
+  miniSections.value.find(x => x.id === tab.value) || miniSections.value[0])
 
 const platform = (() => {
   const h = new URLSearchParams((location.hash || '').replace(/^#/, ''))
@@ -124,6 +137,28 @@ const platform = (() => {
 function flash(msg) {
   toast.value = msg
   setTimeout(() => { if (toast.value === msg) toast.value = '' }, 3500)
+}
+
+function preparePayment(url, title) {
+  if (!url) throw new Error('Платёжная ссылка не получена')
+  paymentUrl.value = url
+  paymentTitle.value = title
+}
+
+function openPreparedPayment() {
+  if (!paymentUrl.value) return
+  try {
+    openExternalLink(paymentUrl.value, platform)
+  } catch {
+    flash('Не удалось открыть браузер. Нажмите запасную ссылку ниже.')
+  }
+}
+
+async function refreshAfterPayment() {
+  paymentUrl.value = ''
+  paymentTitle.value = ''
+  await load()
+  flash(isPro.value ? 'PRO активирован' : 'Платёж ещё обрабатывается. Обновите через минуту.')
 }
 
 function cpKey(c) { return c.tg_chat_id + '-' + c.max_chat_id }
@@ -207,6 +242,11 @@ function navigate(section) {
 
 function onMobileSection(event) {
   navigate(event.target.value)
+}
+
+function selectMiniSection(section) {
+  tab.value = section
+  mobileNavOpen.value = false
 }
 
 async function logout() {
@@ -685,8 +725,7 @@ async function onBuySlot() {
   try {
     const r = await buySlots(slotQty.value)
     if (r.ok && r.pay_url) {
-      window.open(r.pay_url, '_blank')
-      flash('Откройте ссылку оплаты — слоты начислятся после платежа')
+      preparePayment(r.pay_url, 'Оплата дополнительных слотов')
       slotsOpen.value = false
     } else {
       flash(r.error || 'Не удалось создать оплату')
@@ -734,7 +773,10 @@ async function getLinkCode() {
 async function upgrade() {
   if (subscribing.value) return
   subscribing.value = true
-  try { const { url } = await subscribePro(); if (url) location.href = url }
+  try {
+    const { url } = await subscribePro()
+    preparePayment(url, 'Оплата PRO — ' + rub(proPriceKopecks.value) + '/мес')
+  }
   catch { flash('Не удалось создать платёж') }
   finally { subscribing.value = false }
 }
@@ -773,7 +815,11 @@ async function resumeSub() {
   subscribing.value = true
   try {
     const { result } = await resumePro()
-    if (result === 'need_card') { await upgrade(); return }
+    if (result === 'need_card') {
+      const { url } = await subscribePro()
+      preparePayment(url, 'Возобновление PRO — ' + rub(proPriceKopecks.value) + '/мес')
+      return
+    }
     await load()
     flash(result === 'charging' ? 'Списываем по сохранённой карте — PRO активируется через минуту 💳' : 'Подписка возобновлена 🎉')
   } catch (e) {
@@ -854,7 +900,10 @@ function reasonLabel(reason) {
 async function buy(posts) {
   if (buying.value) return
   buying.value = true
-  try { const { url } = await buyPosts(posts); if (url) location.href = url }
+  try {
+    const { url } = await buyPosts(posts)
+    preparePayment(url, 'Оплата пакета: ' + posts + ' публикаций')
+  }
   catch { flash('Не удалось создать платёж') }
   finally { buying.value = false }
 }
@@ -1136,28 +1185,52 @@ async function saveRepl(c) {
         </div>
       </div>
 
-      <div id="connections" class="tabs section-anchor" v-show="!anyOpen && !browserMode">
-        <button type="button" :class="{ active: tab === 'channels' }" @click="tab = 'channels'">Каналы ({{ crossposts.length }})</button>
-        <button type="button" :class="{ active: tab === 'groups' }" @click="tab = 'groups'">Группы ({{ groups.length }})</button>
-        <button type="button" :class="{ active: tab === 'mirrors' }" @click="tab = 'mirrors'">Зеркала ({{ mirrors.length }})</button>
-        <button type="button" :class="{ active: tab === 'blocks' }" @click="tab = 'blocks'">Баны ({{ blocks.length }})</button>
+      <div id="connections" class="mini-nav section-anchor" v-show="!anyOpen && !browserMode" @keydown.esc="mobileNavOpen = false">
+        <button type="button" class="mini-nav-trigger"
+          :aria-expanded="mobileNavOpen" aria-controls="mini-nav-menu"
+          @click="mobileNavOpen = !mobileNavOpen">
+          <svg class="mini-nav-burger" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4 7h16M4 12h16M4 17h16"/>
+          </svg>
+          <span class="mini-nav-current">
+            <small>Разделы</small>
+            <b>{{ currentMiniSection.label }} <span>({{ currentMiniSection.count }})</span></b>
+          </span>
+          <svg class="mini-nav-chevron" :class="{ open: mobileNavOpen }" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="m7 10 5 5 5-5"/>
+          </svg>
+        </button>
+        <nav v-if="mobileNavOpen" id="mini-nav-menu" class="mini-nav-menu" aria-label="Разделы мини-приложения">
+          <button v-for="item in miniSections" :key="item.id" type="button"
+            :class="{ active: tab === item.id }"
+            :aria-current="tab === item.id ? 'page' : undefined"
+            @click="selectMiniSection(item.id)">
+            <span>{{ item.label }}</span>
+            <span class="mini-nav-count">{{ item.count }}</span>
+          </button>
+        </nav>
       </div>
 
       <!-- Слоты тарифа: общий счётчик мостов/зеркал/каналов + докупка -->
       <div class="help-card" v-show="!anyOpen && slots && (!browserMode || currentSection === 'billing')">
-        <div class="help-body" style="display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px">
-          <span class="muted small">🧩 Слоты: <b>{{ slots.used }}</b> из <b>{{ slots.limit }}</b> (база {{ slots.base }} + докуплено {{ slots.extra }})</span>
-          <span style="display:flex;gap:6px">
+        <div class="help-body slot-summary">
+          <span class="muted small"><b>Слоты: {{ slots.used }} из {{ slots.limit }}</b><small>База {{ slots.base }} + докуплено {{ slots.extra }}</small></span>
+          <span class="slot-actions">
             <button v-if="isPro && slots.extra > 0" class="btn ghost" @click="openReducePanel">{{ slotReduceOpen ? 'Скрыть' : '−' }}</button>
             <button v-if="isPro" class="btn ghost" @click="openSlotsPanel">{{ slotsOpen ? 'Скрыть' : '+ слот (' + rub(slotPriceKopecks) + '/мес)' }}</button>
           </span>
         </div>
         <div v-if="slots.items?.length" class="slot-usage">
-          <div class="slot-usage-head">
-            <b>Чем заняты слоты</b>
-            <span>{{ slots.items.length }}</span>
-          </div>
-          <ol>
+          <button type="button" class="slot-usage-head"
+            :aria-expanded="slotUsageOpen" aria-controls="slot-usage-list"
+            @click="slotUsageOpen = !slotUsageOpen">
+            <span><b>Чем заняты слоты</b><small>{{ slotUsageOpen ? 'Скрыть список' : 'Показать список' }}</small></span>
+            <span class="slot-usage-meta">
+              <i>{{ slots.items.length }}</i>
+              <svg :class="{ open: slotUsageOpen }" aria-hidden="true" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>
+            </span>
+          </button>
+          <ol v-if="slotUsageOpen" id="slot-usage-list">
             <li v-for="(item, index) in slots.items" :key="item.kind + ':' + index">
               <span class="slot-usage-icon" :class="{ vk: item.kind === 'vk' }">{{ slotIcon(item.kind) }}</span>
               <span class="slot-usage-copy">
@@ -1937,7 +2010,29 @@ async function saveRepl(c) {
       </div>
     </template>
 
-    <p v-if="toast" class="toast">{{ toast }}</p>
+    <div v-if="paymentUrl" class="payment-scrim" @click.self="paymentUrl = ''">
+      <section class="payment-sheet" role="dialog" aria-modal="true" aria-labelledby="payment-title">
+        <button type="button" class="payment-close" aria-label="Закрыть окно оплаты" @click="paymentUrl = ''">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+        <span class="payment-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M7 4h10M12 4v16M8 9h8"/></svg>
+        </span>
+        <h2 id="payment-title">{{ paymentTitle }}</h2>
+        <p>Платёж готов. Т-Банк откроется во внешнем браузере — miniapp останется открытым.</p>
+        <button type="button" class="btn accent full payment-primary" @click="openPreparedPayment">
+          Открыть оплату Т-Банка
+        </button>
+        <a class="payment-fallback" :href="paymentUrl" target="_blank" rel="noopener noreferrer">
+          Если не открылось — нажмите здесь
+        </a>
+        <button type="button" class="btn ghost full" @click="refreshAfterPayment">
+          Я оплатил — обновить статус
+        </button>
+      </section>
+    </div>
+
+    <p v-if="toast" class="toast" aria-live="polite">{{ toast }}</p>
     </section>
   </main>
 </template>
@@ -2020,9 +2115,20 @@ h2 { font-size: 18px; line-height: 1.3; margin: 28px 0 12px; }
 
 .danger-zone { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-.tabs { display: flex; gap: 8px; margin: 18px 0 12px; }
-.tabs button { flex: 1; padding: 11px 8px; min-height: 44px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font: inherit; font-weight: 600; cursor: pointer; }
-.tabs button.active { background: var(--accent, #2563eb); color: #fff; border-color: transparent; }
+.mini-nav { position: relative; z-index: 20; margin: 18px 0 12px; }
+.mini-nav-trigger { width: 100%; min-height: 52px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 20px; align-items: center; gap: 11px; padding: 8px 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; text-align: left; }
+.mini-nav-trigger:focus-visible, .mini-nav-menu button:focus-visible, .slot-usage-head:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
+.mini-nav-burger, .mini-nav-chevron, .slot-usage-head svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mini-nav-current { min-width: 0; display: grid; gap: 1px; }
+.mini-nav-current small { color: var(--text-muted); font-size: 11px; font-weight: 650; line-height: 1.2; }
+.mini-nav-current b { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.mini-nav-current b span { color: var(--text-muted); font-weight: 650; }
+.mini-nav-chevron, .slot-usage-head svg { transition: transform .18s ease; }
+.mini-nav-chevron.open, .slot-usage-head svg.open { transform: rotate(180deg); }
+.mini-nav-menu { position: absolute; top: calc(100% + 7px); left: 0; right: 0; z-index: 30; display: grid; gap: 4px; padding: 7px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 14px 35px rgba(15,23,42,.16); }
+.mini-nav-menu button { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 650; cursor: pointer; text-align: left; }
+.mini-nav-menu button.active { background: color-mix(in srgb, var(--accent) 11%, var(--surface)); color: var(--accent); }
+.mini-nav-count { min-width: 28px; padding: 3px 7px; border-radius: 999px; background: var(--border); color: var(--text-muted); font-size: 11px; font-weight: 750; text-align: center; }
 .as-warn { color: #f85149; font-size: 12px; line-height: 1.4; margin: 6px 0 0; }
 .help-card { border: 1px solid var(--border); border-radius: 14px; background: var(--bg); margin-bottom: 20px; box-shadow: 0 1px 2px rgba(15,23,42,.025); }
 .acc-card { border: 1px solid var(--accent, #2563eb); border-style: solid; }
@@ -2031,11 +2137,23 @@ h2 { font-size: 18px; line-height: 1.3; margin: 28px 0 12px; }
 .help-q { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; background: var(--border); color: var(--text); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .help-title { flex: 1; text-align: left; font-size: 15px; font-weight: 650; }
 .help-body { padding: 0 16px 18px; }
-.slot-usage { margin: 0 12px 12px; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
-.slot-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; font-size: 13px; }
-.slot-usage-head > span { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: var(--border); color: var(--text-muted); font-size: 11px; font-weight: 700; text-align: center; }
+.slot-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; }
+.slot-summary > .muted { display: grid; gap: 1px; }
+.slot-summary > .muted > small { color: var(--text-muted); font-size: 11px; font-weight: 500; }
+.slot-actions { display: flex; gap: 6px; }
+.slot-actions .btn { min-height: 44px; padding: 7px 10px; }
+.slot-usage { margin: 0 12px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); overflow: hidden; }
+.slot-usage-head { width: 100%; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; border: 0; background: transparent; color: var(--text); font: inherit; cursor: pointer; text-align: left; }
+.slot-usage-head > span:first-child { display: grid; gap: 1px; }
+.slot-usage-head b { font-size: 13px; }
+.slot-usage-head small { color: var(--text-muted); font-size: 11px; font-weight: 500; }
+.slot-usage-meta { display: flex; align-items: center; gap: 7px; }
+.slot-usage-meta i { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: var(--border); color: var(--text-muted); font-size: 11px; font-style: normal; font-weight: 700; text-align: center; }
+.slot-usage-head svg { width: 18px; height: 18px; color: var(--text-muted); }
 .slot-usage ol { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
-.slot-usage li { display: grid; grid-template-columns: 32px minmax(0, 1fr) 24px; align-items: center; gap: 9px; min-width: 0; padding: 9px 10px; border-radius: 9px; background: var(--bg); }
+.slot-usage li { display: grid; grid-template-columns: 32px minmax(0, 1fr) 24px; align-items: center; gap: 9px; min-width: 0; margin: 0 10px; padding: 9px 10px; border-radius: 9px; background: var(--bg); }
+.slot-usage li:first-child { margin-top: 2px; }
+.slot-usage li:last-child { margin-bottom: 10px; }
 .slot-usage-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 9%, var(--surface)); font-size: 15px; }
 .slot-usage-icon.vk { color: #2787f5; font-size: 11px; font-weight: 900; }
 .slot-usage-copy { display: grid; min-width: 0; gap: 2px; }
@@ -2078,6 +2196,20 @@ h2 { font-size: 18px; line-height: 1.3; margin: 28px 0 12px; }
 code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; box-shadow: 0 4px 20px rgba(0,0,0,.3); max-width: 90%; text-align: center; }
+.payment-scrim { position: fixed; inset: 0; z-index: 1000; display: grid; align-items: end; padding: 16px; background: rgba(15,23,42,.58); }
+.payment-sheet { position: relative; width: min(100%, 440px); margin: 0 auto; padding: 24px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg); color: var(--text); box-shadow: 0 24px 70px rgba(15,23,42,.28); text-align: center; }
+.payment-close { position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 12px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.payment-close svg, .payment-mark svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.payment-close:focus-visible, .payment-primary:focus-visible, .payment-fallback:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
+.payment-mark { width: 48px; height: 48px; display: grid; place-items: center; margin: 0 auto 14px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); }
+.payment-sheet h2 { margin: 0 34px 8px; font-size: 20px; }
+.payment-sheet p { margin: 0 0 18px; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
+.payment-primary { min-height: 48px; }
+.payment-fallback { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; margin: 4px 0; color: var(--accent); font-size: 13px; font-weight: 650; }
+
+@media (min-width: 620px) {
+  .payment-scrim { align-items: center; }
+}
 
 .cabinet-content { min-width: 0; }
 .cabinet-sidebar { display: none; }
@@ -2197,6 +2329,9 @@ code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-si
 }
 
 @media (max-width: 760px) {
+  .slot-summary { align-items: stretch; }
+  .slot-actions { flex: 0 0 auto; }
+  .slot-actions .btn { max-width: 112px; padding-inline: 9px; line-height: 1.15; }
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .group-settings-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .group-settings-nav button { justify-content: flex-start; padding-inline: 13px; }
@@ -2212,5 +2347,9 @@ code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-si
   .vk-wizard-footer { align-items: stretch; flex-direction: column; }
   .vk-submit { width: 100%; max-width: none; justify-items: stretch; }
   .vk-wizard-footer .btn { width: 100%; justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mini-nav-chevron, .slot-usage-head svg { transition: none; }
 }
 </style>
