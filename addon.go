@@ -222,6 +222,46 @@ func (b *Bridge) resolvePairWorkspace(
 	return h.ResolvePairWorkspace(ctx, tgChatID, maxChatID, tgUserID, maxUserID, initiatorPlatform)
 }
 
+func (b *Bridge) resolveCrosspostWorkspace(
+	ctx context.Context,
+	tgChatID, maxChatID, tgUserID, maxUserID int64,
+	initiatorPlatform string,
+) (billingMaxID, billingTgID int64, notice string, ok bool) {
+	h, supported := b.addon.(interface {
+		ResolveCrosspostWorkspace(context.Context, int64, int64, int64, int64, string) (int64, int64, string, bool)
+	})
+	if !supported {
+		return maxUserID, tgUserID, "", true
+	}
+	return h.ResolveCrosspostWorkspace(ctx, tgChatID, maxChatID, tgUserID, maxUserID, initiatorPlatform)
+}
+
+func (b *Bridge) canManageCrosspost(
+	ctx context.Context,
+	platform string,
+	userID, maxChatID int64,
+	ownerOnly bool,
+) bool {
+	h, supported := b.addon.(interface {
+		CanManageCrosspost(context.Context, string, int64, int64, bool) (bool, bool)
+	})
+	if supported {
+		if known, allowed := h.CanManageCrosspost(ctx, platform, userID, maxChatID, ownerOnly); known {
+			return allowed
+		}
+	}
+	return b.isCrosspostOwner(maxChatID, userID)
+}
+
+func (b *Bridge) forgetCrosspostWorkspace(ctx context.Context, maxChatID int64) {
+	h, supported := b.addon.(interface {
+		ForgetCrosspostWorkspace(context.Context, int64)
+	})
+	if supported {
+		h.ForgetCrosspostWorkspace(ctx, maxChatID)
+	}
+}
+
 func (b *Bridge) canDeletePair(ctx context.Context, platform string, userID, tgChatID, maxChatID int64) (bool, string) {
 	h, supported := b.addon.(interface {
 		CanDeletePair(context.Context, string, int64, int64, int64) (bool, string)

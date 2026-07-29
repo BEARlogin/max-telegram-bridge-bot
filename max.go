@@ -764,8 +764,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					billingMaxOwner, billingTgOwner, workspaceNotice, workspaceOK =
 						b.resolvePairWorkspace(ctx, pairTgChatID, chatID, pairTgOwner, msgUpd.Message.Sender.UserId, "tg")
 					if !workspaceOK {
+						if workspaceNotice == "" {
+							workspaceNotice = "Не удалось определить рабочее пространство. Повторите попытку или напишите @bearlogin."
+						}
 						m := maxbot.NewMessage().SetChat(chatID).
-							SetText("Не удалось определить рабочее пространство. Повторите попытку или напишите @bearlogin.")
+							SetText(workspaceNotice)
 						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 						continue
 					}
@@ -1102,14 +1105,27 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					tgOwnerID := b.cpTgOwner[tgChannelID]
 					b.cpTgOwnerMu.Unlock()
 
+					billingMaxID, billingTgID, workspaceNotice, workspaceOK :=
+						b.resolveCrosspostWorkspace(
+							ctx, tgChannelID, maxChannelID, tgOwnerID,
+							msgUpd.Message.Sender.UserId, "max",
+						)
+					if !workspaceOK {
+						m := maxbot.NewMessage().SetChat(chatID).
+							SetText("Не удалось определить рабочее пространство. Откройте кабинет и повторите попытку.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+						continue
+					}
 					// Новую связку создаём, только если аддон разрешил (иначе показываем его reason).
-					if ok, reason := b.crosspostAllowed(ctx, msgUpd.Message.Sender.UserId, tgOwnerID); !ok {
+					if ok, reason := b.crosspostAllowed(ctx, billingMaxID, billingTgID); !ok {
+						b.forgetCrosspostWorkspace(ctx, maxChannelID)
 						m := maxbot.NewMessage().SetChat(chatID).SetText(reason)
 						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 						continue
 					}
 
-					if err := b.repo.PairCrosspost(tgChannelID, maxChannelID, msgUpd.Message.Sender.UserId, tgOwnerID); err != nil {
+					if err := b.repo.PairCrosspost(tgChannelID, maxChannelID, billingMaxID, billingTgID); err != nil {
+						b.forgetCrosspostWorkspace(ctx, maxChannelID)
 						slog.Error("crosspost pair failed", "err", err)
 						m := maxbot.NewMessage().SetChat(chatID).SetText("Ошибка при создании связки.")
 						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
@@ -1118,11 +1134,15 @@ func (b *Bridge) listenMax(ctx context.Context) {
 
 					// Показать статус + клавиатуру после паринга
 					kb := maxCrosspostKeyboard(b.maxApi, "both", maxChannelID, false, false)
+					statusText := fmt.Sprintf("Кросспостинг настроен!\nTG: %d ↔ MAX: %d\nНаправление: ⟷ оба", tgChannelID, maxChannelID)
+					if workspaceNotice != "" {
+						statusText += "\n\n" + workspaceNotice
+					}
 					m := maxbot.NewMessage().SetChat(chatID).
-						SetText(fmt.Sprintf("Кросспостинг настроен!\nTG: %d ↔ MAX: %d\nНаправление: ⟷ оба", tgChannelID, maxChannelID)).
+						SetText(statusText).
 						AddKeyboard(kb)
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
-					slog.Info("crosspost paired", "tg", tgChannelID, "max", maxChannelID, "maxOwner", msgUpd.Message.Sender.UserId, "tgOwner", tgOwnerID)
+					slog.Info("crosspost paired", "tg", tgChannelID, "max", maxChannelID, "billing", billingMaxID)
 					continue
 				}
 
@@ -1377,9 +1397,9 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		if dir != "tg>max" && dir != "max>tg" && dir != "both" {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, userID) {
+		if !b.canManageCrosspost(ctx, "max", userID, maxChatID, false) {
 			b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
-				Notification: "Только владелец связки может изменять настройки.",
+				Notification: "У вас нет доступа к настройкам этой связки.",
 			})
 			return
 		}
@@ -1400,9 +1420,9 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		if err != nil {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, userID) {
+		if !b.canManageCrosspost(ctx, "max", userID, maxChatID, false) {
 			b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
-				Notification: "Только владелец связки может изменять настройки.",
+				Notification: "У вас нет доступа к настройкам этой связки.",
 			})
 			return
 		}
@@ -1427,9 +1447,9 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		if err != nil {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, userID) {
+		if !b.canManageCrosspost(ctx, "max", userID, maxChatID, false) {
 			b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
-				Notification: "Только владелец связки может изменять настройки.",
+				Notification: "У вас нет доступа к настройкам этой связки.",
 			})
 			return
 		}
@@ -1458,7 +1478,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		if err != nil {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, userID) {
+		if !b.canManageCrosspost(ctx, "max", userID, maxChatID, true) {
 			b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
 				Notification: "Только владелец связки может удалять.",
 			})
@@ -1484,7 +1504,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		if err != nil {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, userID) {
+		if !b.canManageCrosspost(ctx, "max", userID, maxChatID, true) {
 			b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
 				Notification: "Только владелец связки может удалять.",
 			})
@@ -1492,6 +1512,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		}
 		slog.Info("MAX crosspost unlink", "maxChatID", maxChatID, "by", userID)
 		b.repo.UnpairCrosspost(maxChatID, userID)
+		b.forgetCrosspostWorkspace(ctx, maxChatID)
 		body := &maxschemes.NewMessageBody{Text: "Кросспостинг удалён."}
 		b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
 			Message:      body,

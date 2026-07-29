@@ -683,8 +683,11 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					billingMaxOwner, billingTgOwner, workspaceNotice, workspaceOK =
 						b.resolvePairWorkspace(ctx, msg.Chat.ID, pairMaxChatID, bridgeUserID, pairMaxOwner, "max")
 					if !workspaceOK {
+						if workspaceNotice == "" {
+							workspaceNotice = "Не удалось определить рабочее пространство. Повторите попытку или напишите @bearlogin."
+						}
 						b.tg.SendMessage(ctx, msg.Chat.ID,
-							"Не удалось определить рабочее пространство. Повторите попытку или напишите @bearlogin.",
+							workspaceNotice,
 							&SendOpts{ThreadID: msg.MessageThreadID})
 						continue
 					}
@@ -1863,8 +1866,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		if dir != "tg>max" && dir != "max>tg" && dir != "both" {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, fromID) {
-			b.tg.AnswerCallback(ctx, query.ID, "Только владелец связки может изменять настройки.")
+		if !b.canManageCrosspost(ctx, "tg", fromID, maxChatID, false) {
+			b.tg.AnswerCallback(ctx, query.ID, "У вас нет доступа к настройкам этой связки.")
 			return
 		}
 		b.repo.SetCrosspostDirection(maxChatID, dir)
@@ -1884,8 +1887,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		if err != nil {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, fromID) {
-			b.tg.AnswerCallback(ctx, query.ID, "Только владелец связки может изменять настройки.")
+		if !b.canManageCrosspost(ctx, "tg", fromID, maxChatID, false) {
+			b.tg.AnswerCallback(ctx, query.ID, "У вас нет доступа к настройкам этой связки.")
 			return
 		}
 		cur := b.repo.GetCrosspostSyncEdits(maxChatID)
@@ -1909,8 +1912,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		if err != nil {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, fromID) {
-			b.tg.AnswerCallback(ctx, query.ID, "Только владелец связки может изменять настройки.")
+		if !b.canManageCrosspost(ctx, "tg", fromID, maxChatID, false) {
+			b.tg.AnswerCallback(ctx, query.ID, "У вас нет доступа к настройкам этой связки.")
 			return
 		}
 		paused := !b.repo.CrosspostPaused(maxChatID)
@@ -1941,7 +1944,7 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		if err != nil {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, fromID) {
+		if !b.canManageCrosspost(ctx, "tg", fromID, maxChatID, true) {
 			b.tg.AnswerCallback(ctx, query.ID, "Только владелец связки может удалять.")
 			return
 		}
@@ -2141,12 +2144,13 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		if err != nil {
 			return
 		}
-		if !b.isCrosspostOwner(maxChatID, fromID) {
+		if !b.canManageCrosspost(ctx, "tg", fromID, maxChatID, true) {
 			b.tg.AnswerCallback(ctx, query.ID, "Только владелец связки может удалять.")
 			return
 		}
 		slog.Info("TG crosspost unlink", "maxChatID", maxChatID, "by", fromID)
 		b.repo.UnpairCrosspost(maxChatID, fromID)
+		b.forgetCrosspostWorkspace(ctx, maxChatID)
 		b.tg.EditMessageText(ctx, chatID, msgID, "Кросспостинг удалён.", nil)
 		b.tg.AnswerCallback(ctx, query.ID, "Удалено")
 		return
