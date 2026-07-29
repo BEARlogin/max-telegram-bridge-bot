@@ -458,11 +458,6 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					}
 				}
 			}
-			if isGroup && isAdmin && msg.From != nil && !isTgServiceSender(msg.From.ID) {
-				if b.repo.ClaimPairOwner("tg", msg.Chat.ID, msg.From.ID) {
-					slog.Info("legacy pair owner claimed", "platform", "tg", "chat", msg.Chat.ID, "user", msg.From.ID)
-				}
-			}
 			adminDeniedText := "Эта команда доступна только админам группы."
 			if botNotAdmin {
 				adminDeniedText = "Бот не может проверить ваши права — сделайте бота админом группы и повторите команду."
@@ -601,8 +596,15 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					b.tg.SendMessage(ctx, msg.Chat.ID, adminDeniedText, &SendOpts{ThreadID: msg.MessageThreadID})
 					continue
 				}
-				if _, linked := b.repo.GetMaxChat(msg.Chat.ID); !linked {
+				maxChatID, linked := b.repo.GetMaxChat(msg.Chat.ID)
+				if !linked {
 					b.tg.SendMessage(ctx, msg.Chat.ID, "Эта группа не связана с MAX. Сначала свяжите её через /bridge.", &SendOpts{ThreadID: msg.MessageThreadID})
+					continue
+				}
+				if b.pairHasWorkspace(ctx, msg.Chat.ID, maxChatID) {
+					b.tg.SendMessage(ctx, msg.Chat.ID,
+						"Эта связка уже входит в рабочее пространство. Владельца и участников меняйте в кабинете: /cabinet",
+						&SendOpts{ThreadID: msg.MessageThreadID})
 					continue
 				}
 				// Анонимный админ: From — общий GroupAnonymousBot, владельцем писать нельзя.
@@ -667,34 +669,61 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				// Гейт free-лимита связок (аддон, фича-флаг PAIR_FREE_LIMIT). ДО паринга:
 				// при потреблении ключа знаем владельцев ОБЕИХ сторон (peek pending),
 				// при генерации ключа — только свою (вторая проверится при потреблении).
-				var pairMaxOwner int64
+				var pairMaxOwner, pairMaxChatID int64
 				if key != "" {
-					if peerPlatform, _, peerUser, ok := b.repo.PeekBridgeKey(key); ok && peerPlatform == "max" {
+					if peerPlatform, peerChat, peerUser, ok := b.repo.PeekBridgeKey(key); ok && peerPlatform == "max" {
 						pairMaxOwner = peerUser
+						pairMaxChatID = peerChat
 					}
 				}
-				if allowed, reason := b.pairAllowed(ctx, pairMaxOwner, bridgeUserID); !allowed {
+				billingMaxOwner, billingTgOwner := pairMaxOwner, bridgeUserID
+				workspaceNotice := ""
+				if pairMaxChatID != 0 {
+					var workspaceOK bool
+					billingMaxOwner, billingTgOwner, workspaceNotice, workspaceOK =
+						b.resolvePairWorkspace(ctx, msg.Chat.ID, pairMaxChatID, bridgeUserID, pairMaxOwner, "max")
+					if !workspaceOK {
+						b.tg.SendMessage(ctx, msg.Chat.ID,
+							"Не удалось определить рабочее пространство. Повторите попытку или напишите @bearlogin.",
+							&SendOpts{ThreadID: msg.MessageThreadID})
+						continue
+					}
+				}
+				if allowed, reason := b.pairAllowed(ctx, billingMaxOwner, billingTgOwner); !allowed {
+					if pairMaxChatID != 0 {
+						b.forgetPairWorkspace(ctx, msg.Chat.ID, pairMaxChatID)
+					}
 					b.tg.SendMessage(ctx, msg.Chat.ID, reason, &SendOpts{ThreadID: msg.MessageThreadID})
 					continue
 				}
 				paired, generatedKey, err := b.repo.Register(key, "tg", msg.Chat.ID, bridgeUserID)
 				if err != nil {
+					if pairMaxChatID != 0 {
+						b.forgetPairWorkspace(ctx, msg.Chat.ID, pairMaxChatID)
+					}
 					slog.Error("register failed", "err", err)
 					continue
 				}
 
 				if paired {
-					b.tg.SendMessage(ctx, msg.Chat.ID, "Связано! Сообщения теперь пересылаются.", &SendOpts{ThreadID: msg.MessageThreadID})
+					b.repo.SetPairOwner("tg", msg.Chat.ID, billingTgOwner)
+					b.repo.SetPairOwner("max", pairMaxChatID, billingMaxOwner)
+					reply := "Связано! Сообщения теперь пересылаются."
+					if workspaceNotice != "" {
+						reply += "\n\n" + workspaceNotice
+					}
+					b.tg.SendMessage(ctx, msg.Chat.ID, reply, &SendOpts{ThreadID: msg.MessageThreadID})
 					b.repo.SetTgThreadID(msg.Chat.ID, msg.MessageThreadID) // 0 = no topics
 					slog.Info("paired", "platform", "tg", "chat", msg.Chat.ID, "key", key)
-					// Оба владельца известны (TG-сторона + пировавший MAX-юзер) — автопривязка аккаунтов.
-					go b.autoLinkAccounts(ctx, pairMaxOwner, bridgeUserID)
 				} else if generatedKey != "" {
 					b.tg.SendMessage(ctx, msg.Chat.ID,
 						fmt.Sprintf("Ключ для связки: <code>%s</code>\n\nДобавьте MAX-бота в нужную MAX-группу, сделайте его <b>администратором с правом «Доступ к сообщениям»</b> (читать все сообщения — иначе бот не увидит команду), и отправьте <b>в ней</b> (не в ЛС бота):\n<code>/bridge %s</code>\n\nСсылка на MAX-бота (для добавления в группу): %s%s", generatedKey, generatedKey, b.cfg.MaxBotURL, b.reserveBotHint()),
 						&SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
 					slog.Info("pending", "platform", "tg", "chat", msg.Chat.ID, "key", generatedKey)
 				} else {
+					if pairMaxChatID != 0 {
+						b.forgetPairWorkspace(ctx, msg.Chat.ID, pairMaxChatID)
+					}
 					b.tg.SendMessage(ctx, msg.Chat.ID, "Ключ не найден или чат той же платформы.", &SendOpts{ThreadID: msg.MessageThreadID})
 				}
 				continue
@@ -708,7 +737,17 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				if !b.checkUserAllowed(ctx, msg.Chat.ID, tgUserID(msg), msg.MessageThreadID) {
 					continue
 				}
+				maxChatID, linked := b.repo.GetMaxChat(msg.Chat.ID)
+				if linked {
+					if allowed, reason := b.canDeletePair(ctx, "tg", tgUserID(msg), msg.Chat.ID, maxChatID); !allowed {
+						b.tg.SendMessage(ctx, msg.Chat.ID, reason, &SendOpts{ThreadID: msg.MessageThreadID})
+						continue
+					}
+				}
 				if b.repo.Unpair("tg", msg.Chat.ID) {
+					if linked {
+						b.forgetPairWorkspace(ctx, msg.Chat.ID, maxChatID)
+					}
 					b.tg.SendMessage(ctx, msg.Chat.ID, "Связка удалена.", &SendOpts{ThreadID: msg.MessageThreadID})
 				} else {
 					b.tg.SendMessage(ctx, msg.Chat.ID, "Этот чат не связан.", &SendOpts{ThreadID: msg.MessageThreadID})

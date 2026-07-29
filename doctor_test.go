@@ -120,7 +120,7 @@ func TestDoctorConnectionsOwnedMetadataOnly(t *testing.T) {
 	}
 }
 
-func TestLegacyPairClaimMakesConnectionVisibleWithoutStealingOwner(t *testing.T) {
+func TestLegacyPairOwnerMakesConnectionVisible(t *testing.T) {
 	repo := testRepo(t)
 	const (
 		tgChat   = int64(-100500)
@@ -133,14 +133,11 @@ func TestLegacyPairClaimMakesConnectionVisibleWithoutStealingOwner(t *testing.T)
 		VALUES (?,?,0,0,0,0,0)`, tgChat, maxChat); err != nil {
 		t.Fatal(err)
 	}
-	if !repo.ClaimPairOwner("tg", tgChat, tgOwner) {
-		t.Fatal("TG legacy owner was not claimed")
+	if !repo.SetPairOwner("tg", tgChat, tgOwner) {
+		t.Fatal("TG legacy owner was not set")
 	}
-	if repo.ClaimPairOwner("tg", tgChat, 999) {
-		t.Fatal("existing TG owner was overwritten")
-	}
-	if !repo.ClaimPairOwner("max", maxChat, maxOwner) {
-		t.Fatal("MAX legacy owner was not claimed")
+	if !repo.SetPairOwner("max", maxChat, maxOwner) {
+		t.Fatal("MAX legacy owner was not set")
 	}
 
 	tgConnections, err := repo.DoctorConnections("tg", tgOwner, 0)

@@ -208,6 +208,46 @@ func (b *Bridge) pairAllowed(ctx context.Context, ownerMaxID, ownerTgID int64) (
 	return b.addon.PairAllowed(ctx, ownerMaxID, ownerTgID)
 }
 
+func (b *Bridge) resolvePairWorkspace(
+	ctx context.Context,
+	tgChatID, maxChatID, tgUserID, maxUserID int64,
+	initiatorPlatform string,
+) (billingMaxID, billingTgID int64, notice string, ok bool) {
+	h, supported := b.addon.(interface {
+		ResolvePairWorkspace(context.Context, int64, int64, int64, int64, string) (int64, int64, string, bool)
+	})
+	if !supported {
+		return maxUserID, tgUserID, "", true
+	}
+	return h.ResolvePairWorkspace(ctx, tgChatID, maxChatID, tgUserID, maxUserID, initiatorPlatform)
+}
+
+func (b *Bridge) canDeletePair(ctx context.Context, platform string, userID, tgChatID, maxChatID int64) (bool, string) {
+	h, supported := b.addon.(interface {
+		CanDeletePair(context.Context, string, int64, int64, int64) (bool, string)
+	})
+	if !supported {
+		return true, ""
+	}
+	return h.CanDeletePair(ctx, platform, userID, tgChatID, maxChatID)
+}
+
+func (b *Bridge) forgetPairWorkspace(ctx context.Context, tgChatID, maxChatID int64) {
+	h, supported := b.addon.(interface {
+		ForgetPairWorkspace(context.Context, int64, int64)
+	})
+	if supported {
+		h.ForgetPairWorkspace(ctx, tgChatID, maxChatID)
+	}
+}
+
+func (b *Bridge) pairHasWorkspace(ctx context.Context, tgChatID, maxChatID int64) bool {
+	h, supported := b.addon.(interface {
+		PairHasWorkspace(context.Context, int64, int64) bool
+	})
+	return supported && h.PairHasWorkspace(ctx, tgChatID, maxChatID)
+}
+
 func (b *Bridge) pairDeliverable(ctx context.Context, tgChatID, maxChatID int64) bool {
 	if b.addon == nil {
 		return true

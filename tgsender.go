@@ -300,6 +300,9 @@ type TGSender interface {
 	GetFile(ctx context.Context, fileID string) (filePath string, err error)
 	GetFileDirectURL(filePath string) string
 	GetChatMember(ctx context.Context, chatID, userID int64) (status string, err error)
+	// GetChatAdministrators возвращает только живых пользователей-администраторов,
+	// без ботов. Используется для определения общего рабочего пространства.
+	GetChatAdministrators(ctx context.Context, chatID int64) (userIDs []int64, err error)
 	// RestrictChatMember мутит участника (запрет писать) до untilUnix (0 = навсегда).
 	RestrictChatMember(ctx context.Context, chatID, userID int64, untilUnix int) error
 	// UnrestrictChatMember снимает мут (возвращает базовые права писать) — для капчи.

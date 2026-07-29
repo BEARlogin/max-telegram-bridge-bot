@@ -596,12 +596,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				// В каналах MAX не передаёт sender userId — пропускаем проверку
 				isAdmin = true
 			}
-			if isGroup && isAdmin && msgUpd.Message.Sender.UserId != 0 {
-				if b.repo.ClaimPairOwner("max", chatID, msgUpd.Message.Sender.UserId) {
-					slog.Info("legacy pair owner claimed", "platform", "max", "chat", chatID, "user", msgUpd.Message.Sender.UserId)
-				}
-			}
-
 			// Внешняя модерация сообщения до пересылки.
 			if isGroup && msgUpd.Message.Sender.UserId != 0 {
 				hasLink := b.maxTextHasLink(text)
@@ -684,8 +678,15 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					continue
 				}
-				if _, linked := b.repo.GetTgChat(chatID); !linked {
+				tgChatID, linked := b.repo.GetTgChat(chatID)
+				if !linked {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта группа не связана с Telegram. Сначала свяжите её через /bridge.")
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
+				if b.pairHasWorkspace(ctx, tgChatID, chatID) {
+					m := maxbot.NewMessage().SetChat(chatID).
+						SetText("Эта связка уже входит в рабочее пространство. Владельца и участников меняйте в кабинете: /cabinet")
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					continue
 				}
@@ -756,40 +757,70 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						pairTgChatID = peerChat
 					}
 				}
-				if allowed, reason := b.pairAllowed(ctx, msgUpd.Message.Sender.UserId, pairTgOwner); !allowed {
+				billingMaxOwner, billingTgOwner := msgUpd.Message.Sender.UserId, pairTgOwner
+				workspaceNotice := ""
+				if pairTgChatID != 0 {
+					var workspaceOK bool
+					billingMaxOwner, billingTgOwner, workspaceNotice, workspaceOK =
+						b.resolvePairWorkspace(ctx, pairTgChatID, chatID, pairTgOwner, msgUpd.Message.Sender.UserId, "tg")
+					if !workspaceOK {
+						m := maxbot.NewMessage().SetChat(chatID).
+							SetText("Не удалось определить рабочее пространство. Повторите попытку или напишите @bearlogin.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+						continue
+					}
+				}
+				if allowed, reason := b.pairAllowed(ctx, billingMaxOwner, billingTgOwner); !allowed {
+					if pairTgChatID != 0 {
+						b.forgetPairWorkspace(ctx, pairTgChatID, chatID)
+					}
 					m := maxbot.NewMessage().SetChat(chatID).SetText(reason)
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					continue
 				}
 				if allowed, reason := b.addonPairDestinationAllowed(ctx, key, "max", chatID, msgUpd.Message.Sender.UserId); !allowed {
+					if pairTgChatID != 0 {
+						b.forgetPairWorkspace(ctx, pairTgChatID, chatID)
+					}
 					m := maxbot.NewMessage().SetChat(chatID).SetText(reason)
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					continue
 				}
 				paired, generatedKey, err := b.repo.Register(key, "max", chatID, msgUpd.Message.Sender.UserId)
 				if err != nil {
+					if pairTgChatID != 0 {
+						b.forgetPairWorkspace(ctx, pairTgChatID, chatID)
+					}
 					slog.Error("register failed", "err", err)
 					continue
 				}
 
 				if paired {
+					b.repo.SetPairOwner("tg", pairTgChatID, billingTgOwner)
+					b.repo.SetPairOwner("max", chatID, billingMaxOwner)
 					if !b.addonPairCompleted(ctx, key, pairTgChatID, chatID) {
 						b.repo.Unpair("max", chatID)
+						b.forgetPairWorkspace(ctx, pairTgChatID, chatID)
 						m := maxbot.NewMessage().SetChat(chatID).SetText("Не удалось завершить настройку зеркала. Связка отменена, попробуйте ещё раз.")
 						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 						continue
 					}
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Связано! Сообщения теперь пересылаются.")
+					reply := "Связано! Сообщения теперь пересылаются."
+					if workspaceNotice != "" {
+						reply += "\n\n" + workspaceNotice
+					}
+					m := maxbot.NewMessage().SetChat(chatID).SetText(reply)
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					slog.Info("paired", "platform", "max", "chat", chatID, "key", key)
-					// Оба владельца известны (MAX-сторона + пировавший TG-юзер) — автопривязка аккаунтов.
-					go b.autoLinkAccounts(ctx, msgUpd.Message.Sender.UserId, pairTgOwner)
 				} else if generatedKey != "" {
 					m := maxbot.NewMessage().SetChat(chatID).
 						SetText(fmt.Sprintf("Ключ для связки: %s\n\nДобавьте TG-бота в нужную Telegram-группу и отправьте в ней (не в ЛС бота):\n/bridge %s\n\nСсылка на TG-бота (для добавления в группу): %s", generatedKey, generatedKey, b.cfg.TgBotURL))
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					slog.Info("pending", "platform", "max", "chat", chatID, "key", generatedKey)
 				} else {
+					if pairTgChatID != 0 {
+						b.forgetPairWorkspace(ctx, pairTgChatID, chatID)
+					}
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Ключ не найден или чат той же платформы.")
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 				}
@@ -802,7 +833,24 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					continue
 				}
+				tgChatIDs := b.repo.GetTgChats(chatID)
+				canDelete := true
+				deleteReason := ""
+				for _, tgChatID := range tgChatIDs {
+					if allowed, reason := b.canDeletePair(ctx, "max", msgUpd.Message.Sender.UserId, tgChatID, chatID); !allowed {
+						canDelete, deleteReason = false, reason
+						break
+					}
+				}
+				if !canDelete {
+					m := maxbot.NewMessage().SetChat(chatID).SetText(deleteReason)
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
 				if b.repo.Unpair("max", chatID) {
+					for _, tgChatID := range tgChatIDs {
+						b.forgetPairWorkspace(ctx, tgChatID, chatID)
+					}
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Связка удалена.")
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 				} else {

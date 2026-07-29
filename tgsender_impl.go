@@ -382,6 +382,37 @@ func (s *tgBotSender) GetChatMember(ctx context.Context, chatID, userID int64) (
 	return string(m.Type), nil
 }
 
+func (s *tgBotSender) GetChatAdministrators(ctx context.Context, chatID int64) ([]int64, error) {
+	members, err := s.b.GetChatAdministrators(ctx, &bot.GetChatAdministratorsParams{ChatID: chatID})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	ids := make([]int64, 0, len(members))
+	seen := make(map[int64]struct{}, len(members))
+	for _, member := range members {
+		var user *models.User
+		switch member.Type {
+		case models.ChatMemberTypeOwner:
+			if member.Owner != nil {
+				user = member.Owner.User
+			}
+		case models.ChatMemberTypeAdministrator:
+			if member.Administrator != nil {
+				user = &member.Administrator.User
+			}
+		}
+		if user == nil || user.ID == 0 || user.IsBot {
+			continue
+		}
+		if _, ok := seen[user.ID]; ok {
+			continue
+		}
+		seen[user.ID] = struct{}{}
+		ids = append(ids, user.ID)
+	}
+	return ids, nil
+}
+
 // CopyMessages копирует сообщения без плашки «переслано». Один id — copyMessage,
 // несколько — copyMessages (части альбома остаются одним альбомом).
 func (s *tgBotSender) CopyMessages(ctx context.Context, dstChatID, srcChatID int64, msgIDs []int) error {

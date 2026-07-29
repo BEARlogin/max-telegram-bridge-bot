@@ -315,27 +315,6 @@ func (r *pgRepo) SetPairOwner(platform string, chatID, userID int64) bool {
 	return n > 0
 }
 
-func (r *pgRepo) ClaimPairOwner(platform string, chatID, userID int64) bool {
-	if userID <= 0 {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var res sql.Result
-	if platform == "tg" {
-		res, _ = r.db.Exec(`UPDATE pairs SET tg_owner_id=$1
-			WHERE tg_chat_id=$2 AND COALESCE(tg_owner_id,0)=0`, userID, chatID)
-	} else if platform == "max" {
-		res, _ = r.db.Exec(`UPDATE pairs SET max_owner_id=$1
-			WHERE max_chat_id=$2 AND COALESCE(max_owner_id,0)=0`, userID, chatID)
-	}
-	if res == nil {
-		return false
-	}
-	n, _ := res.RowsAffected()
-	return n > 0
-}
-
 func (r *pgRepo) SetCrosspostOwner(platform string, chatID, userID int64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
