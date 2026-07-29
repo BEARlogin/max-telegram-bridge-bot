@@ -696,6 +696,7 @@ func (b *Bridge) registerCommands(ctx context.Context) {
 	// Описание бота (экран "Что умеет этот бот"). Доп. строка от расширения (impl
 	// в loadAddon) — без расширения пусто.
 	desc := "Мост между Telegram и MAX: зеркалит сообщения в связанных группах и кросспостит каналы." + b.extraDescription +
+		"\n\n📚 База знаний: " + knowledgeBaseURL +
 		"\n\n💬 Поддержка и новости: https://t.me/+0ucbOj4wBwQzMWNi"
 	if err := b.tg.SetMyDescription(ctx, desc); err != nil {
 		slog.Error("TG setMyDescription failed", "err", err)

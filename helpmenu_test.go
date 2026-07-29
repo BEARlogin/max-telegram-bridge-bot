@@ -18,10 +18,14 @@ func TestStartMenuLinksPagedAndFullHelp(t *testing.T) {
 	_, kb := b.tgStartMenu()
 	var callbacks []string
 	var labels []string
+	var knowledgeURL string
 	for _, row := range kb.Rows {
 		for _, button := range row {
 			callbacks = append(callbacks, button.CallbackData)
 			labels = append(labels, button.Text)
+			if button.Text == "📚 База знаний" {
+				knowledgeURL = button.URL
+			}
 		}
 	}
 	joined := strings.Join(callbacks, " ")
@@ -33,6 +37,9 @@ func TestStartMenuLinksPagedAndFullHelp(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(labels, " "), "Все шаги одной инструкцией") {
 		t.Fatalf("labels = %q", labels)
+	}
+	if knowledgeURL != knowledgeBaseURL {
+		t.Fatalf("knowledge base URL = %q, want %q", knowledgeURL, knowledgeBaseURL)
 	}
 }
 

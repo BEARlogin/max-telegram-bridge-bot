@@ -1251,7 +1251,8 @@ func (b *Bridge) isSuppressedMaxDelete(mid string) bool {
 // sendMaxStart шлёт приветствие в MAX-чат (на /start и на кнопку «Начать»/bot_started).
 func (b *Bridge) sendMaxStart(ctx context.Context, chatID int64) {
 	if ch := customHelp(); ch != "" {
-		b.maxClientFor(ctx, chatID).Messages.Send(ctx, maxbot.NewMessage().SetChat(chatID).SetText(helpPlain(ch)))
+		text := helpPlain(ch) + "\n\n📚 База знаний: " + knowledgeBaseURL
+		b.maxClientFor(ctx, chatID).Messages.Send(ctx, maxbot.NewMessage().SetChat(chatID).SetText(text))
 		return
 	}
 	text := "Бот-мост между MAX и Telegram.\n\n" +
@@ -1290,6 +1291,7 @@ func (b *Bridge) sendMaxStart(ctx context.Context, chatID int64) {
 		"4. В одном из чатов отправьте /bridge\n" +
 		"5. Бот выдаст ключ — отправьте его в другом чате (в группе, не в ЛС бота)\n" +
 		"6. Готово!" + b.reserveBotHint() + "\n\n" +
+		"📚 База знаний: " + knowledgeBaseURL + "\n\n" +
 		"💬 Поддержка и новости: https://t.me/+0ucbOj4wBwQzMWNi"
 	b.maxClientFor(ctx, chatID).Messages.Send(ctx, maxbot.NewMessage().SetChat(chatID).SetText(text))
 }

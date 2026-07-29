@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const knowledgeBaseURL = "https://maxtelegrambridge.ru/guides/"
+
 // telegramStartParam распознаёт обычный /start и рекламный deep-link
 // /start <campaign_id>. Payload возвращается без интерпретации: приватный addon
 // сам принимает только существующий числовой id кампании.
@@ -43,6 +45,7 @@ func (b *Bridge) tgStartMenu() (string, *InlineKeyboardMarkup) {
 		NewInlineRow(NewInlineButton("📋 Как связать группы", "help:groups")),
 		NewInlineRow(NewInlineButton("🧵 Темы форума", "help:threads")),
 		NewInlineRow(NewInlineButton("📡 Кросспостинг каналов", "help:channels")),
+		NewInlineRow(InlineKeyboardButton{Text: "📚 База знаний", URL: knowledgeBaseURL}),
 		NewInlineRow(
 			NewInlineButton("⌨️ Команды", "help:cmds"),
 			NewInlineButton("❓ Вопросы", "help:faq"),
@@ -158,6 +161,7 @@ func (b *Bridge) helpFaqText() string {
 		"Для обычного двустороннего моста — да, и в MAX, и в Telegram. Для одностороннего зеркала Telegram-группы в MAX Telegram-боту достаточно быть обычным участником; в MAX он должен быть администратором. В каналах права администратора нужны для публикации.\n\n" +
 		"<b>Сообщения не доходят?</b>\n" +
 		"Проверьте, что бот добавлен в нужный чат и является администратором.\n\n" +
+		"📚 База знаний: " + knowledgeBaseURL + "\n\n" +
 		"💬 Поддержка: https://t.me/+0ucbOj4wBwQzMWNi"
 }
 
