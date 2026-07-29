@@ -25,8 +25,11 @@ func TestStartMenuLinksPagedAndFullHelp(t *testing.T) {
 		}
 	}
 	joined := strings.Join(callbacks, " ")
-	if !strings.Contains(joined, "help:more") || !strings.Contains(joined, "help:full") {
+	if !strings.Contains(joined, "help:pro") || !strings.Contains(joined, "help:more") || !strings.Contains(joined, "help:full") {
 		t.Fatalf("callbacks = %q", joined)
+	}
+	if !strings.Contains(strings.Join(labels, " "), "Оформить PRO") {
+		t.Fatalf("PRO CTA missing, labels = %q", labels)
 	}
 	if !strings.Contains(strings.Join(labels, " "), "Все шаги одной инструкцией") {
 		t.Fatalf("labels = %q", labels)

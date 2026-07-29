@@ -38,6 +38,7 @@ func (b *Bridge) tgStartMenu() (string, *InlineKeyboardMarkup) {
 		"Выберите действие 👇"
 
 	kb := NewInlineKeyboard(
+		NewInlineRow(NewInlineButton("⭐ Оформить PRO", "help:pro")),
 		NewInlineRow(NewInlineButton("➕ Добавить бота", "help:add")),
 		NewInlineRow(NewInlineButton("📋 Как связать группы", "help:groups")),
 		NewInlineRow(NewInlineButton("🧵 Темы форума", "help:threads")),
@@ -168,6 +169,15 @@ func (b *Bridge) handleHelpMenuCallback(ctx context.Context, query *TGCallback, 
 	}
 	chatID := query.Message.Chat.ID
 	msgID := query.Message.MessageID
+
+	if data == "help:pro" {
+		b.tg.AnswerCallback(ctx, query.ID, "")
+		if b.addon != nil && b.addon.HandleDMCommand(ctx, query.From.ID, chatID, "/pro") {
+			return true
+		}
+		_, _ = b.tg.SendMessage(ctx, chatID, "Оформление PRO временно недоступно. Попробуйте команду /pro позже.", nil)
+		return true
+	}
 
 	var text string
 	var kb *InlineKeyboardMarkup
