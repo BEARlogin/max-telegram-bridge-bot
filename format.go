@@ -9,6 +9,9 @@ import (
 )
 
 func tgName(msg *TGMessage) string {
+	if isTgAnonymousAdmin(msg) {
+		return ""
+	}
 	if msg.From == nil {
 		if msg.SenderChat != nil {
 			return msg.SenderChat.Title
@@ -24,6 +27,9 @@ func tgName(msg *TGMessage) string {
 
 // formatAttribution собирает строку "Имя: текст" или "Имя:\nтекст" в зависимости от настройки.
 func formatAttribution(name, text string, newline bool) string {
+	if strings.TrimSpace(name) == "" {
+		return text
+	}
 	if newline {
 		return name + ":\n" + text
 	}
@@ -32,6 +38,9 @@ func formatAttribution(name, text string, newline bool) string {
 
 // formatAttributionMD собирает строку с жирным именем в markdown: "**Имя**: текст".
 func formatAttributionMD(name, text string, newline bool) string {
+	if strings.TrimSpace(name) == "" {
+		return text
+	}
 	bold := "**" + name + "**"
 	if newline {
 		return bold + ":\n" + text
@@ -42,6 +51,9 @@ func formatAttributionMD(name, text string, newline bool) string {
 // formatAttributionHTML — имя жирным в HTML: "<b>Имя</b>: текст". Имя экранируется;
 // text уже должен быть HTML (прошёл через tgEntitiesToHTML).
 func formatAttributionHTML(name, text string, newline bool) string {
+	if strings.TrimSpace(name) == "" {
+		return text
+	}
 	bold := "<b>" + html.EscapeString(name) + "</b>"
 	if newline {
 		return bold + ":\n" + text
@@ -92,6 +104,9 @@ func formatTgCaption(msg *TGMessage, prefix, newline bool) string {
 	if text == "" {
 		text = tgContactText(msg)
 	}
+	if name == "" {
+		return text
+	}
 	if prefix {
 		return formatAttribution("[TG] "+name, text, newline)
 	}
@@ -111,6 +126,9 @@ func formatTgMessage(msg *TGMessage, prefix, newline bool) string {
 	if text == "" {
 		return ""
 	}
+	if name == "" {
+		return text
+	}
 	if prefix {
 		return formatAttribution("[TG] "+name, text, newline)
 	}
@@ -118,12 +136,9 @@ func formatTgMessage(msg *TGMessage, prefix, newline bool) string {
 }
 
 func maxName(upd *maxschemes.MessageCreatedUpdate) string {
-	name := strings.TrimSpace(upd.Message.Sender.Name)
-	if len(name) >= len("Group:") && strings.EqualFold(name[:len("Group:")], "Group:") {
-		name = strings.TrimSpace(name[len("Group:"):])
-	}
+	name := upd.Message.Sender.Name
 	if name == "" {
-		name = strings.TrimSpace(upd.Message.Sender.Username)
+		name = upd.Message.Sender.Username
 	}
 	return name
 }

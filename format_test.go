@@ -26,6 +26,15 @@ func TestTgName(t *testing.T) {
 			},
 			expected: "Ivan Petrov",
 		},
+		{
+			name: "anonymous admin has no attribution",
+			msg: &TGMessage{
+				Chat:       ChatInfo{ID: -100123, Type: "supergroup"},
+				From:       &UserInfo{ID: 1087968824, FirstName: "Group"},
+				SenderChat: &ChatInfo{ID: -100123, Type: "supergroup", Title: "Конференция"},
+			},
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -74,6 +83,24 @@ func TestFormatTgCaption_UsesCaption(t *testing.T) {
 	expected := "Bob: photo caption"
 	if got != expected {
 		t.Errorf("formatTgCaption() = %q, want %q", got, expected)
+	}
+}
+
+func TestFormatTgCaption_AnonymousAdminHasNoGroupPrefix(t *testing.T) {
+	msg := &TGMessage{
+		Chat:       ChatInfo{ID: -100123, Type: "supergroup"},
+		From:       &UserInfo{ID: 1087968824, FirstName: "Group"},
+		SenderChat: &ChatInfo{ID: -100123, Type: "supergroup", Title: "Конференция"},
+		Text:       "Не отключайте уведомления этого чата",
+	}
+
+	for _, prefix := range []bool{false, true} {
+		if got := formatTgCaption(msg, prefix, false); got != msg.Text {
+			t.Fatalf("formatTgCaption(prefix=%v) = %q, want %q", prefix, got, msg.Text)
+		}
+	}
+	if got := formatAttributionHTML(tgName(msg), "<b>важный текст</b>", false); got != "<b>важный текст</b>" {
+		t.Fatalf("formatAttributionHTML() = %q", got)
 	}
 }
 
@@ -156,33 +183,6 @@ func TestMaxName(t *testing.T) {
 				},
 			},
 			expected: "alex42",
-		},
-		{
-			name: "strips MAX group marker",
-			upd: &maxschemes.MessageCreatedUpdate{
-				Message: maxschemes.Message{
-					Sender: maxschemes.User{Name: "Group: Конференция"},
-				},
-			},
-			expected: "Конференция",
-		},
-		{
-			name: "strips group marker case insensitively",
-			upd: &maxschemes.MessageCreatedUpdate{
-				Message: maxschemes.Message{
-					Sender: maxschemes.User{Name: "group: Команда"},
-				},
-			},
-			expected: "Команда",
-		},
-		{
-			name: "falls back when group marker has no name",
-			upd: &maxschemes.MessageCreatedUpdate{
-				Message: maxschemes.Message{
-					Sender: maxschemes.User{Name: "Group:", Username: "community"},
-				},
-			},
-			expected: "community",
 		},
 	}
 
