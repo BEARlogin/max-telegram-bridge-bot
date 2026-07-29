@@ -1154,6 +1154,30 @@ async function saveRepl(c) {
 
       <div v-if="me && browserMode" v-show="!anyOpen" class="whoami">👤 <b>{{ me.name }}</b> · id {{ me.id }} · {{ acctPlat.toUpperCase() }}</div>
 
+      <section
+        v-if="!browserMode && !anyOpen && tab !== 'billing' && (!isPro || subStatus === 'trial')"
+        class="mini-pro-cta"
+        aria-label="Подключить PRO"
+      >
+        <div>
+          <b v-if="isPro && subStatus === 'trial'">🎁 PRO-триал до {{ fmtDate(subUntil) }}</b>
+          <b v-else-if="!trialUsed">🎁 Попробуйте PRO бесплатно</b>
+          <b v-else>⭐ Оформите PRO</b>
+          <span>5 слотов, VK, антиспам и расширенные функции.</span>
+        </div>
+        <button
+          v-if="!isPro && !trialUsed"
+          type="button"
+          :disabled="subscribing"
+          @click="tryTrial"
+        >
+          {{ subscribing ? 'Подключаем…' : '7 дней бесплатно' }}
+        </button>
+        <button v-else type="button" @click="selectMiniSection('billing')">
+          PRO — {{ rub(proPriceKopecks) }}/мес
+        </button>
+      </section>
+
       <section v-if="browserMode" v-show="!anyOpen && currentSection === 'overview'" class="overview-grid" aria-label="Состояние кабинета">
         <article><span>Связок работает</span><strong>{{ totalConnections - pausedConnections }}</strong><small>из {{ totalConnections }}</small></article>
         <article><span>Свободных слотов</span><strong>{{ freeSlots }}</strong><small>можно подключить сейчас</small></article>
@@ -2148,6 +2172,13 @@ async function saveRepl(c) {
 .mini-menu-button:active { transform: scale(.96); box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 24%, transparent); }
 .icon-btn:active { background: var(--surface); }
 .mini-menu-button:focus-visible, .icon-btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: -2px; }
+.mini-pro-cta { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; margin: 0 0 16px; padding: 14px; border-radius: 14px; background: linear-gradient(135deg, var(--accent), #6d5cff); color: #fff; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 22%, transparent); }
+.mini-pro-cta div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mini-pro-cta b { color: #fff; font-size: 15px; line-height: 1.35; }
+.mini-pro-cta span { color: rgba(255,255,255,.9); font-size: 13px; line-height: 1.4; }
+.mini-pro-cta button { min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; background: #fff; color: var(--accent); font: inherit; font-size: 14px; font-weight: 750; cursor: pointer; white-space: nowrap; }
+.mini-pro-cta button:disabled { opacity: .7; cursor: default; }
+.mini-pro-cta button:focus-visible { outline: 3px solid rgba(255,255,255,.55); outline-offset: 2px; }
 .whoami { font-size: 14px; line-height: 1.5; color: var(--text-muted); margin-bottom: 18px; }
 .small { font-size: 14px; line-height: 1.5; }
 h2 { font-size: 18px; line-height: 1.3; margin: 28px 0 12px; }
@@ -2176,6 +2207,11 @@ h2 { font-size: 18px; line-height: 1.3; margin: 28px 0 12px; }
 .btn.sm { padding: 9px 14px; min-height: 44px; flex: 0 0 auto; }
 .btn.full { width: 100%; min-height: 44px; padding: 11px; margin-top: 8px; }
 .btn:disabled { opacity: .5; cursor: default; }
+
+@media (max-width: 420px) {
+  .mini-pro-cta { grid-template-columns: 1fr; }
+  .mini-pro-cta button { width: 100%; }
+}
 
 .card { border: 1px solid var(--border); border-radius: 14px; margin-bottom: 16px; overflow: hidden; background: var(--bg); box-shadow: 0 1px 2px rgba(15,23,42,.035); }
 .card-head { width: 100%; display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--surface); border: 0; cursor: pointer; text-align: left; }
