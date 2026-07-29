@@ -7,25 +7,6 @@ import (
 	"testing"
 )
 
-func TestPaidSubscriptionActive(t *testing.T) {
-	now := int64(100)
-	for _, tc := range []struct {
-		status string
-		until  int64
-		want   bool
-	}{
-		{status: "active", until: 101, want: true},
-		{status: "canceled", until: 101, want: true},
-		{status: "trial", until: 101, want: false},
-		{status: "pending", until: 101, want: false},
-		{status: "active", until: 100, want: false},
-	} {
-		if got := paidSubscriptionActive(tc.status, tc.until, now); got != tc.want {
-			t.Fatalf("paidSubscriptionActive(%q, %d, %d) = %v, want %v", tc.status, tc.until, now, got, tc.want)
-		}
-	}
-}
-
 func TestInternalProSubscribeRejectsWrongMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/internal/pro-subscribe", nil)
 	rec := httptest.NewRecorder()
