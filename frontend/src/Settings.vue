@@ -127,6 +127,7 @@ const miniSectionGroups = computed(() => [
       { id: 'channels', label: 'Каналы', count: crossposts.value.length, icon: 'M4 6h16v12H4zM8 18v2m8-2v2M8 10h8M8 14h5' },
       { id: 'groups', label: 'Группы', count: groups.value.length, icon: 'M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm13 10v-2a4 4 0 0 0-3-3.87m0-7.26a4 4 0 0 1 0 7.75' },
       { id: 'mirrors', label: 'Зеркала', count: mirrors.value.length, icon: 'M8 7h11v11H8zM5 15H3V4h11v2' },
+      { id: 'vk', label: 'VK', count: vkBindings.value.length, icon: 'M7 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm10-3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0 8a5 5 0 0 0-4 2m4-2a5 5 0 0 1 5 5M7 18a7 7 0 0 1 6-3' },
     ],
   },
   {
@@ -1907,7 +1908,7 @@ async function saveRepl(c) {
       </div>
       </div>
 
-      <div v-show="browserMode && currentSection === 'vk' && !anyOpen">
+      <div v-show="((browserMode && currentSection === 'vk') || (!browserMode && tab === 'vk')) && !anyOpen">
         <div class="page-intro">
           <div>
             <h2>VK-связки <span class="muted">({{ vkBindings.length }})</span></h2>
@@ -2142,8 +2143,10 @@ async function saveRepl(c) {
 .icon-btn svg, .mini-menu-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .mini-app-bar { position: sticky; top: 0; z-index: 60; min-height: 56px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; gap: 4px; margin: -12px -16px 14px; padding: max(4px, env(safe-area-inset-top)) 8px 4px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 96%, transparent); backdrop-filter: blur(14px); }
 .mini-app-bar h1 { overflow: hidden; margin: 0; font-size: 18px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-.mini-menu-button { width: 48px; height: 48px; display: grid; place-items: center; border: 0; border-radius: 12px; background: transparent; color: var(--text); cursor: pointer; }
-.mini-menu-button:active, .icon-btn:active { background: var(--surface); }
+.mini-menu-button { width: 44px; height: 44px; display: grid; place-items: center; justify-self: center; border: 1px solid color-mix(in srgb, var(--accent) 75%, var(--border)); border-radius: 12px; background: var(--accent); color: #fff; box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 28%, transparent); cursor: pointer; transition: background .15s ease, box-shadow .15s ease, transform .15s ease; }
+.mini-menu-button:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.mini-menu-button:active { transform: scale(.96); box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 24%, transparent); }
+.icon-btn:active { background: var(--surface); }
 .mini-menu-button:focus-visible, .icon-btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: -2px; }
 .whoami { font-size: 14px; line-height: 1.5; color: var(--text-muted); margin-bottom: 18px; }
 .small { font-size: 14px; line-height: 1.5; }

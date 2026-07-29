@@ -23,7 +23,7 @@ func (s *server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
-	log.Printf("billing subscribe ok user=%d url=%s", u.ID, url)
+	log.Printf("billing subscribe link created user=%d", u.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"url": url})
 }
 
@@ -96,7 +96,7 @@ func (s *server) handleTbankNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	log.Printf("tbank notify: %s", body)
+	log.Printf("tbank notify received bytes=%d", len(body))
 	// Покупка постов импорта (OrderId "posts-…") — начисляем посты, а не подписку.
 	if isPosts, uid, posts, amount, pid, confirmed, ok := s.billing.ClassifyNotification(body); ok && isPosts {
 		if confirmed {

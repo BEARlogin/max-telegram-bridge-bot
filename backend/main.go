@@ -135,6 +135,9 @@ func main() {
 	mux.HandleFunc("/api/blocks", srv.handleBlocks)                             // журнал заблокированных антиспамом
 	mux.HandleFunc("/api/block/unban", srv.handleUnban)                         // разбанить (TG-мут/MAX-возврат)
 	mux.HandleFunc("/api/debug", srv.handleDebug)                               // временный сбор launch-контекста мини-аппа
+
+	mux.HandleFunc("/api/internal/pro-subscribe", srv.handleInternalProSubscribe)
+
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	// Статика мини-аппа (собранный Vue). Кэш: хэшированные ассеты — навсегда (immutable),
 	// index.html — no-cache, иначе вебвью MAX/TG держит старый index с битым JS-хэшем
