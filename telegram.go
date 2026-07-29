@@ -1023,6 +1023,9 @@ func (b *Bridge) alreadyDeliveredToMax(tgChatID int64, tgMsgID int) bool {
 }
 
 func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID int64, caption string, isCrosspost bool, bypassScreen bool) {
+	if !isCrosspost && !b.pairDeliverable(ctx, msg.Chat.ID, maxChatID) {
+		return
+	}
 	// Дедуп: если это сообщение уже доставлено в MAX — не отправляем повторно.
 	if b.alreadyDeliveredToMax(msg.Chat.ID, msg.MessageID) {
 		slog.Info("skip duplicate TG→MAX", "tgChat", msg.Chat.ID, "tgMsg", msg.MessageID, "crosspost", isCrosspost)

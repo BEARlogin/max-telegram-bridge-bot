@@ -307,6 +307,11 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 		if b.repo.PairPaused(item.SrcChatID, item.DstChatID) {
 			return
 		}
+		if !b.pairDeliverable(ctx, item.SrcChatID, item.DstChatID) {
+			slog.Info("queue: drop tg2max outside post-PRO free limit", "id", item.ID, "srcChat", item.SrcChatID, "dstChat", item.DstChatID)
+			b.repo.DeleteFromQueue(item.ID)
+			return
+		}
 		if !b.pairDirectionAllows(ctx, item.SrcChatID, item.DstChatID, "tg>max") {
 			slog.Info("queue: drop tg2max blocked by pair direction", "id", item.ID, "srcChat", item.SrcChatID, "dstChat", item.DstChatID)
 			b.repo.DeleteFromQueue(item.ID)
@@ -421,6 +426,11 @@ func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now tim
 		}
 	} else {
 		if b.repo.PairPaused(item.DstChatID, item.SrcChatID) {
+			return
+		}
+		if !b.pairDeliverable(ctx, item.DstChatID, item.SrcChatID) {
+			slog.Info("queue: drop max2tg outside post-PRO free limit", "id", item.ID, "srcChat", item.SrcChatID, "dstChat", item.DstChatID)
+			b.repo.DeleteFromQueue(item.ID)
 			return
 		}
 		if !b.pairDirectionAllows(ctx, item.DstChatID, item.SrcChatID, "max>tg") {

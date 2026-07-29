@@ -61,6 +61,11 @@ type Repository interface {
 	// CountPairsByOwner — число активных связок, принадлежащих любому из владельцев
 	// (tg_owner_id=tgOwner ИЛИ max_owner_id=maxOwner; нулевые id не считаются).
 	CountPairsByOwner(maxOwner, tgOwner int64) int
+	// GetPairOwners возвращает владельцев конкретной групповой связки.
+	GetPairOwners(tgChatID, maxChatID int64) (maxOwner, tgOwner int64)
+	// PairRank — позиция групповой связки владельца по времени подключения
+	// (0 = самая первая; используется при возврате к бесплатному лимиту).
+	PairRank(maxOwner, tgOwner, tgChatID, maxChatID int64) int
 
 	GetMaxChat(tgChatID int64) (int64, bool)
 	GetTgChat(maxChatID int64) (int64, bool)
@@ -172,6 +177,7 @@ type Repository interface {
 	// FindUserByUsername — id юзера по @username из таблицы users (виденные ботом).
 	// Для модер-команд /unban @user и т.п. Регистронезависимо, username без «@».
 	FindUserByUsername(platform, username string) (int64, bool)
+	UserPlatform(userID int64) string
 	ListUsers(platform string) ([]int64, error)
 
 	// Send queue (retry при недоступности MAX/TG API)

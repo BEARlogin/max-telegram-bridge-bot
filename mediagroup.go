@@ -149,8 +149,13 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 		if b.repo.CrosspostPaused(maxChatID) {
 			return "", fmt.Errorf("crosspost to MAX chat %d is paused", maxChatID)
 		}
-	} else if b.repo.PairPaused(items[0].msg.Chat.ID, maxChatID) {
-		return "", fmt.Errorf("bridge to MAX chat %d is paused", maxChatID)
+	} else {
+		if !b.pairDeliverable(ctx, items[0].msg.Chat.ID, maxChatID) {
+			return "", nil
+		}
+		if b.repo.PairPaused(items[0].msg.Chat.ID, maxChatID) {
+			return "", fmt.Errorf("bridge to MAX chat %d is paused", maxChatID)
+		}
 	}
 	// Дуал-бот: токен бота этого чата в ctx (аплоады + sendMaxDirect альбома идут им).
 	ctx = b.withMaxToken(ctx, b.maxTokenFor(ctx, maxChatID))

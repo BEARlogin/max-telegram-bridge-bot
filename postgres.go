@@ -86,6 +86,28 @@ func (r *pgRepo) CountPairsByOwner(maxOwner, tgOwner int64) int {
 	return n
 }
 
+func (r *pgRepo) GetPairOwners(tgChatID, maxChatID int64) (maxOwner, tgOwner int64) {
+	_ = r.db.QueryRow(`SELECT max_owner_id,tg_owner_id FROM pairs
+		WHERE tg_chat_id=$1 AND max_chat_id=$2`, tgChatID, maxChatID).Scan(&maxOwner, &tgOwner)
+	return
+}
+
+func (r *pgRepo) PairRank(maxOwner, tgOwner, tgChatID, maxChatID int64) int {
+	var createdAt int64
+	if r.db.QueryRow(`SELECT created_at FROM pairs WHERE tg_chat_id=$1 AND max_chat_id=$2`,
+		tgChatID, maxChatID).Scan(&createdAt) != nil {
+		return 0
+	}
+	var n int
+	_ = r.db.QueryRow(`SELECT COUNT(*) FROM pairs
+		WHERE ((tg_owner_id=$1 AND tg_owner_id!=0) OR (max_owner_id=$2 AND max_owner_id!=0))
+		AND (created_at < $3 OR
+			(created_at = $3 AND tg_chat_id < $4) OR
+			(created_at = $3 AND tg_chat_id = $4 AND max_chat_id < $5))`,
+		tgOwner, maxOwner, createdAt, tgChatID, maxChatID).Scan(&n)
+	return n
+}
+
 func (r *pgRepo) MigrateTgChat(oldID, newID int64) error {
 	_, err := r.db.Exec("UPDATE pairs SET tg_chat_id = $1 WHERE tg_chat_id = $2", newID, oldID)
 	if err == nil {
@@ -812,6 +834,12 @@ func (r *pgRepo) FindUserByUsername(platform, username string) (int64, bool) {
 	err := r.db.QueryRow(`SELECT user_id FROM users WHERE platform = $1 AND lower(username) = lower($2) ORDER BY last_seen DESC LIMIT 1`,
 		platform, username).Scan(&id)
 	return id, err == nil
+}
+
+func (r *pgRepo) UserPlatform(userID int64) string {
+	var platform string
+	_ = r.db.QueryRow(`SELECT platform FROM users WHERE user_id=$1`, userID).Scan(&platform)
+	return platform
 }
 
 func (r *pgRepo) ListUsers(platform string) ([]int64, error) {

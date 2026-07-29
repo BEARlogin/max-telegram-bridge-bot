@@ -53,6 +53,9 @@ type Addon interface {
 	// ключа). ok=false ⇒ ядро не создаёт связку и показывает reason. Generic: ядро не
 	// знает семантику решения.
 	PairAllowed(ctx context.Context, ownerMaxID, ownerTgID int64) (ok bool, reason string)
+	// PairDeliverable вызывается перед доставкой сообщения обычной групповой связки.
+	// false означает, что связка вышла за бесплатный лимит после окончания PRO.
+	PairDeliverable(ctx context.Context, ownerMaxID, ownerTgID, tgChatID, maxChatID int64) (deliver bool)
 	// CrosspostDeliverable вызывается ПЕРЕД доставкой поста кросспоста: deliver=false ⇒
 	// ядро молча пропускает доставку. Generic: ядро не знает семантику решения.
 	CrosspostDeliverable(ctx context.Context, ownerMaxID, ownerTgID, maxChatID int64) (deliver bool)
@@ -203,6 +206,14 @@ func (b *Bridge) pairAllowed(ctx context.Context, ownerMaxID, ownerTgID int64) (
 		return true, ""
 	}
 	return b.addon.PairAllowed(ctx, ownerMaxID, ownerTgID)
+}
+
+func (b *Bridge) pairDeliverable(ctx context.Context, tgChatID, maxChatID int64) bool {
+	if b.addon == nil {
+		return true
+	}
+	maxOwner, tgOwner := b.repo.GetPairOwners(tgChatID, maxChatID)
+	return b.addon.PairDeliverable(ctx, maxOwner, tgOwner, tgChatID, maxChatID)
 }
 
 // maxAddonCommand — отдать команду MAX-диалога аддону (если подключён). true ⇒ обработано.

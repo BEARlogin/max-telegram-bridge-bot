@@ -84,6 +84,30 @@ func (r *sqliteRepo) CountPairsByOwner(maxOwner, tgOwner int64) int {
 	return n
 }
 
+func (r *sqliteRepo) GetPairOwners(tgChatID, maxChatID int64) (maxOwner, tgOwner int64) {
+	_ = r.db.QueryRow(`SELECT max_owner_id,tg_owner_id FROM pairs
+		WHERE tg_chat_id=? AND max_chat_id=?`, tgChatID, maxChatID).Scan(&maxOwner, &tgOwner)
+	return
+}
+
+func (r *sqliteRepo) PairRank(maxOwner, tgOwner, tgChatID, maxChatID int64) int {
+	var createdAt int64
+	if r.db.QueryRow(`SELECT created_at FROM pairs WHERE tg_chat_id=? AND max_chat_id=?`,
+		tgChatID, maxChatID).Scan(&createdAt) != nil {
+		return 0
+	}
+	var n int
+	_ = r.db.QueryRow(`SELECT COUNT(*) FROM pairs
+		WHERE ((tg_owner_id=? AND tg_owner_id!=0) OR (max_owner_id=? AND max_owner_id!=0))
+		AND (created_at < ? OR
+			(created_at = ? AND tg_chat_id < ?) OR
+			(created_at = ? AND tg_chat_id = ? AND max_chat_id < ?))`,
+		tgOwner, maxOwner, createdAt,
+		createdAt, tgChatID,
+		createdAt, tgChatID, maxChatID).Scan(&n)
+	return n
+}
+
 func (r *sqliteRepo) MigrateTgChat(oldID, newID int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -815,6 +839,12 @@ func (r *sqliteRepo) FindUserByUsername(platform, username string) (int64, bool)
 	err := r.db.QueryRow(`SELECT user_id FROM users WHERE platform = ? AND username = ? COLLATE NOCASE ORDER BY last_seen DESC LIMIT 1`,
 		platform, username).Scan(&id)
 	return id, err == nil
+}
+
+func (r *sqliteRepo) UserPlatform(userID int64) string {
+	var platform string
+	_ = r.db.QueryRow(`SELECT platform FROM users WHERE user_id=?`, userID).Scan(&platform)
+	return platform
 }
 
 func (r *sqliteRepo) ListUsers(platform string) ([]int64, error) {

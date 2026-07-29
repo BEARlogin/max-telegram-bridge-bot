@@ -1999,12 +1999,16 @@ func (b *Bridge) sendMaxAlbumToTg(ctx context.Context, tgChatID int64, items []m
 // forwardMaxToTg пересылает MAX-сообщение (текст/медиа) в TG-чат.
 // Если isCrosspost=true, caption используется как финальный текст (с заменами, без атрибуции).
 func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageCreatedUpdate, tgChatID int64, caption string, isCrosspost bool) {
+	maxChatID := msgUpd.Message.Recipient.ChatId
+	if !isCrosspost && !b.pairDeliverable(ctx, tgChatID, maxChatID) {
+		return
+	}
 	if b.cbBlocked(tgChatID) {
 		return
 	}
 
 	body := msgUpd.Message.Body
-	chatID := msgUpd.Message.Recipient.ChatId
+	chatID := maxChatID
 	text := strings.TrimSpace(body.Text)
 	if parsed := parseMaxRawAttachments(body.RawAttachments); len(parsed) > 0 {
 		body.Attachments = parsed
