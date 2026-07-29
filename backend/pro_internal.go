@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 )
 
-// handleInternalProSubscribe создаёт ссылку первого платежа PRO для кнопки
+// handleInternalProSubscribe сообщает об активном PRO либо создаёт ссылку оплаты
 // непосредственно в Telegram/MAX-боте. Авторизация — общий COMMENT_SYNC_SECRET.
 func (s *server) handleInternalProSubscribe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -32,6 +33,17 @@ func (s *server) handleInternalProSubscribe(w http.ResponseWriter, r *http.Reque
 	}
 
 	userID := s.billing.BillingID(in.UserID)
+	status, paidUntil := s.billing.SubStatus(userID)
+	if paidSubscriptionActive(status, paidUntil, time.Now().Unix()) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         true,
+			"active":     true,
+			"status":     status,
+			"paid_until": paidUntil,
+		})
+		return
+	}
+
 	amount := s.billing.BaseAmount(userID)
 	url, err := s.billing.Subscribe(r.Context(), userID, "")
 	if err != nil {
@@ -45,4 +57,8 @@ func (s *server) handleInternalProSubscribe(w http.ResponseWriter, r *http.Reque
 		"pay_url":        url,
 		"amount_kopecks": amount,
 	})
+}
+
+func paidSubscriptionActive(status string, paidUntil, now int64) bool {
+	return paidUntil > now && (status == "active" || status == "canceled")
 }
