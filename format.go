@@ -118,9 +118,12 @@ func formatTgMessage(msg *TGMessage, prefix, newline bool) string {
 }
 
 func maxName(upd *maxschemes.MessageCreatedUpdate) string {
-	name := upd.Message.Sender.Name
+	name := strings.TrimSpace(upd.Message.Sender.Name)
+	if len(name) >= len("Group:") && strings.EqualFold(name[:len("Group:")], "Group:") {
+		name = strings.TrimSpace(name[len("Group:"):])
+	}
 	if name == "" {
-		name = upd.Message.Sender.Username
+		name = strings.TrimSpace(upd.Message.Sender.Username)
 	}
 	return name
 }

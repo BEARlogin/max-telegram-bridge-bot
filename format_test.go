@@ -157,6 +157,33 @@ func TestMaxName(t *testing.T) {
 			},
 			expected: "alex42",
 		},
+		{
+			name: "strips MAX group marker",
+			upd: &maxschemes.MessageCreatedUpdate{
+				Message: maxschemes.Message{
+					Sender: maxschemes.User{Name: "Group: Конференция"},
+				},
+			},
+			expected: "Конференция",
+		},
+		{
+			name: "strips group marker case insensitively",
+			upd: &maxschemes.MessageCreatedUpdate{
+				Message: maxschemes.Message{
+					Sender: maxschemes.User{Name: "group: Команда"},
+				},
+			},
+			expected: "Команда",
+		},
+		{
+			name: "falls back when group marker has no name",
+			upd: &maxschemes.MessageCreatedUpdate{
+				Message: maxschemes.Message{
+					Sender: maxschemes.User{Name: "Group:", Username: "community"},
+				},
+			},
+			expected: "community",
+		},
 	}
 
 	for _, tt := range tests {
