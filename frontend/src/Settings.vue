@@ -1,7 +1,7 @@
 <script setup>
 // Кабинет мини-аппа: управление связками (комменты, синк правок, замены, удаление),
 // баланс импорта/докупка, PRO. Авторизация — по подписи initData.
-import { ref, onMounted, onBeforeUnmount, reactive, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, reactive, computed, nextTick } from 'vue'
 import {
   getSettings, subscribePro, cancelPro, resumePro, startTrial, buyPosts,
   deleteCrosspost, setComments, setReplacements, setSyncEdits,
@@ -28,8 +28,10 @@ const hasRebill = ref(false)
 const isAdmin = ref(false)
 const emit = defineEmits(['admin'])
 const proOpen = ref(false)
-const tab = ref('channels') // вкладки: channels | groups
+const tab = ref('channels')
 const mobileNavOpen = ref(false)
+const mobileNavTrigger = ref(null)
+const mobileNavClose = ref(null)
 const slotUsageOpen = ref(false)
 const crossposts = ref([])
 const groups = ref([])
@@ -118,12 +120,31 @@ const pausedConnections = computed(() =>
   vkBindings.value.filter(x => x.paused).length)
 const freeSlots = computed(() => slots.value ? Math.max(0, slots.value.limit - slots.value.used) : 0)
 const attentionCount = computed(() => pausedConnections.value + blocks.value.length + (!accLinked.value ? 1 : 0))
-const miniSections = computed(() => [
-  { id: 'channels', label: 'Каналы', count: crossposts.value.length },
-  { id: 'groups', label: 'Группы', count: groups.value.length },
-  { id: 'mirrors', label: 'Зеркала', count: mirrors.value.length },
-  { id: 'blocks', label: 'Баны', count: blocks.value.length },
+const miniSectionGroups = computed(() => [
+  {
+    label: 'Связки',
+    items: [
+      { id: 'channels', label: 'Каналы', count: crossposts.value.length, icon: 'M4 6h16v12H4zM8 18v2m8-2v2M8 10h8M8 14h5' },
+      { id: 'groups', label: 'Группы', count: groups.value.length, icon: 'M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm13 10v-2a4 4 0 0 0-3-3.87m0-7.26a4 4 0 0 1 0 7.75' },
+      { id: 'mirrors', label: 'Зеркала', count: mirrors.value.length, icon: 'M8 7h11v11H8zM5 15H3V4h11v2' },
+    ],
+  },
+  {
+    label: 'Управление',
+    items: [
+      { id: 'blocks', label: 'Модерация', count: blocks.value.length, icon: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zm-3-10 2 2 4-4' },
+      { id: 'billing', label: 'Тариф и слоты', count: slots.value ? `${slots.value.used}/${slots.value.limit}` : '', icon: 'M3 6h18v12H3zM3 10h18M7 15h3' },
+      { id: 'import', label: 'Импорт истории', count: importBalance.value || '', icon: 'M12 3v12m0 0 4-4m-4 4-4-4M5 21h14' },
+    ],
+  },
+  {
+    label: 'Аккаунт',
+    items: [
+      { id: 'account', label: 'Профиль и поддержка', count: acctPlat.value === 'max' && !accLinked.value ? '!' : '', icon: 'M20 21a8 8 0 0 0-16 0m8-11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
+    ],
+  },
 ])
+const miniSections = computed(() => miniSectionGroups.value.flatMap(group => group.items))
 const currentMiniSection = computed(() =>
   miniSections.value.find(x => x.id === tab.value) || miniSections.value[0])
 
@@ -225,7 +246,10 @@ onMounted(() => {
   if (browserMode) window.addEventListener('popstate', onCabinetPopState)
   load()
 })
-onBeforeUnmount(() => window.removeEventListener('popstate', onCabinetPopState))
+onBeforeUnmount(() => {
+  window.removeEventListener('popstate', onCabinetPopState)
+  document.documentElement.classList.remove('mini-menu-open')
+})
 
 function navigate(section) {
   const target = cabinetSections.find(x => x.id === section) || cabinetSections[0]
@@ -244,9 +268,24 @@ function onMobileSection(event) {
   navigate(event.target.value)
 }
 
-function selectMiniSection(section) {
-  tab.value = section
+async function openMiniMenu() {
+  mobileNavOpen.value = true
+  document.documentElement.classList.add('mini-menu-open')
+  await nextTick()
+  mobileNavClose.value?.focus()
+}
+
+function closeMiniMenu({ restoreFocus = true } = {}) {
   mobileNavOpen.value = false
+  document.documentElement.classList.remove('mini-menu-open')
+  if (restoreFocus) nextTick(() => mobileNavTrigger.value?.focus())
+}
+
+function selectMiniSection(section) {
+  closeAll()
+  tab.value = section
+  closeMiniMenu({ restoreFocus: false })
+  window.scrollTo({ top: 0, behavior: 'auto' })
 }
 
 async function logout() {
@@ -1040,13 +1079,52 @@ async function saveRepl(c) {
     </aside>
 
     <section class="cabinet-content">
-    <header v-if="!noAuth" id="overview" class="top">
-      <div>
+    <header v-if="!noAuth" id="overview" class="top" :class="{ 'mini-app-bar': !browserMode }">
+      <button v-if="!browserMode" ref="mobileNavTrigger" type="button" class="mini-menu-button"
+        aria-label="Открыть разделы" aria-controls="mini-navigation-drawer"
+        :aria-expanded="mobileNavOpen" @click="openMiniMenu">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="top-title">
         <p v-if="browserMode" class="eyebrow">Рабочее пространство</p>
-        <h1>{{ browserMode ? currentSectionLabel : 'Кабинет' }}</h1>
+        <h1>{{ browserMode ? currentSectionLabel : currentMiniSection.label }}</h1>
       </div>
-      <button v-if="!loading && !noAuth && !error" class="icon-btn" title="Обновить" @click="load">↻</button>
+      <button v-if="!loading && !noAuth && !error" class="icon-btn" aria-label="Обновить данные" title="Обновить" @click="load">
+        <svg v-if="!browserMode" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5m10.5-2a8 8 0 0 0-14-3M4.5 14a8 8 0 0 0 14 3"/></svg>
+        <template v-else>↻</template>
+      </button>
     </header>
+
+    <Transition name="mini-drawer">
+      <div v-if="!browserMode && mobileNavOpen" class="mini-drawer-scrim"
+        @click.self="closeMiniMenu()" @keydown.esc="closeMiniMenu()">
+        <aside id="mini-navigation-drawer" class="mini-drawer" role="dialog" aria-modal="true" aria-label="Разделы кабинета">
+          <header class="mini-drawer-head">
+            <span class="mini-drawer-brand" aria-hidden="true">М</span>
+            <span><b>Мост</b><small>Кабинет</small></span>
+            <button ref="mobileNavClose" type="button" aria-label="Закрыть меню" @click="closeMiniMenu()">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+            </button>
+          </header>
+          <nav class="mini-drawer-nav" aria-label="Разделы">
+            <section v-for="group in miniSectionGroups" :key="group.label">
+              <h2>{{ group.label }}</h2>
+              <button v-for="item in group.items" :key="item.id" type="button"
+                :class="{ active: tab === item.id }"
+                :aria-current="tab === item.id ? 'page' : undefined"
+                @click="selectMiniSection(item.id)">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path :d="item.icon"/></svg>
+                <span>{{ item.label }}</span>
+                <i v-if="item.count !== ''">{{ item.count }}</i>
+              </button>
+            </section>
+          </nav>
+          <a class="mini-drawer-support" href="https://t.me/+0ucbOj4wBwQzMWNi" target="_blank" rel="noopener">
+            Открыть поддержку
+          </a>
+        </aside>
+      </div>
+    </Transition>
 
     <p v-if="loading" class="muted">Загрузка…</p>
     <div v-else-if="noAuth" class="login-card">
@@ -1073,7 +1151,7 @@ async function saveRepl(c) {
       <!-- Назад к списку (когда открыт «экран» одного объекта) -->
       <button v-if="anyOpen" class="back-bar" @click="closeAll">← Назад к списку</button>
 
-      <div v-if="me" v-show="!anyOpen" class="whoami">👤 <b>{{ me.name }}</b> · id {{ me.id }} · {{ browserMode ? acctPlat.toUpperCase() : platform }}</div>
+      <div v-if="me && browserMode" v-show="!anyOpen" class="whoami">👤 <b>{{ me.name }}</b> · id {{ me.id }} · {{ acctPlat.toUpperCase() }}</div>
 
       <section v-if="browserMode" v-show="!anyOpen && currentSection === 'overview'" class="overview-grid" aria-label="Состояние кабинета">
         <article><span>Связок работает</span><strong>{{ totalConnections - pausedConnections }}</strong><small>из {{ totalConnections }}</small></article>
@@ -1094,10 +1172,13 @@ async function saveRepl(c) {
       </section>
 
       <!-- Вход в админку (только владелец) — отдельный экран -->
-      <button v-if="isAdmin" v-show="!anyOpen && (!browserMode || currentSection === 'overview')" class="btn ghost full admin-link" @click="emit('admin')">📊 Админка — статистика</button>
+      <button v-if="isAdmin && browserMode" v-show="!anyOpen && currentSection === 'overview'" class="btn ghost full admin-link" @click="emit('admin')">📊 Админка — статистика</button>
 
       <!-- Бесплатный тариф: яркий CTA-блок (сразу видны кнопки, без раскрытия) -->
-      <div id="billing" v-if="!isPro" v-show="!anyOpen && (!browserMode || currentSection === 'billing')" class="cta section-anchor">
+      <div id="billing"
+        v-if="!isPro && ((browserMode && currentSection === 'billing') || (!browserMode && tab === 'billing'))"
+        v-show="!anyOpen"
+        class="cta section-anchor">
         <div class="cta-title">🚀 Откройте PRO</div>
         <div class="cta-sub">5 слотов на мосты, зеркала и каналы (с докупкой), комментарии под постами, антиспам в группах, без подписи бота.</div>
         <div class="consent-terms" style="margin-bottom:10px">
@@ -1120,7 +1201,10 @@ async function saveRepl(c) {
       </div>
 
       <!-- PRO активен: раскрывающееся управление подпиской -->
-      <div id="billing" v-else v-show="!anyOpen && (!browserMode || currentSection === 'billing')" class="pro-banner active section-anchor">
+      <div id="billing"
+        v-if="isPro && ((browserMode && currentSection === 'billing') || (!browserMode && tab === 'billing'))"
+        v-show="!anyOpen"
+        class="pro-banner active section-anchor">
         <button class="pro-head" @click="proOpen = !proOpen">
           <div>
             <b>⭐ PRO активен</b>
@@ -1164,7 +1248,9 @@ async function saveRepl(c) {
       </div>
 
       <!-- Привязка MAX↔TG (баланс постов/PRO по TG-аккаунту) -->
-      <div v-if="acctPlat === 'max' && !accLinked" v-show="!anyOpen && (!browserMode || currentSection === 'overview')" class="help-card acc-card">
+      <div v-if="acctPlat === 'max' && !accLinked"
+        v-show="!anyOpen && ((browserMode && currentSection === 'overview') || (!browserMode && tab === 'account'))"
+        class="help-card acc-card">
         <div class="help-head" style="cursor:default">
           <span class="help-q">🔗</span>
           <span class="help-title">Telegram-аккаунт не привязан</span>
@@ -1185,34 +1271,30 @@ async function saveRepl(c) {
         </div>
       </div>
 
-      <div id="connections" class="mini-nav section-anchor" v-show="!anyOpen && !browserMode" @keydown.esc="mobileNavOpen = false">
-        <button type="button" class="mini-nav-trigger"
-          :aria-expanded="mobileNavOpen" aria-controls="mini-nav-menu"
-          @click="mobileNavOpen = !mobileNavOpen">
-          <svg class="mini-nav-burger" aria-hidden="true" viewBox="0 0 24 24">
-            <path d="M4 7h16M4 12h16M4 17h16"/>
-          </svg>
-          <span class="mini-nav-current">
-            <small>Разделы</small>
-            <b>{{ currentMiniSection.label }} <span>({{ currentMiniSection.count }})</span></b>
+      <section v-show="!browserMode && !anyOpen && tab === 'account'" class="mini-account-page">
+        <div class="mini-profile-card">
+          <span class="mini-profile-avatar" aria-hidden="true">{{ (me?.name || 'М').slice(0, 1).toUpperCase() }}</span>
+          <span>
+            <b>{{ me?.name || 'Аккаунт Моста' }}</b>
+            <small>{{ platform }}<template v-if="accLinked"> · аккаунты связаны</template></small>
           </span>
-          <svg class="mini-nav-chevron" :class="{ open: mobileNavOpen }" aria-hidden="true" viewBox="0 0 24 24">
-            <path d="m7 10 5 5 5-5"/>
-          </svg>
-        </button>
-        <nav v-if="mobileNavOpen" id="mini-nav-menu" class="mini-nav-menu" aria-label="Разделы мини-приложения">
-          <button v-for="item in miniSections" :key="item.id" type="button"
-            :class="{ active: tab === item.id }"
-            :aria-current="tab === item.id ? 'page' : undefined"
-            @click="selectMiniSection(item.id)">
-            <span>{{ item.label }}</span>
-            <span class="mini-nav-count">{{ item.count }}</span>
-          </button>
-        </nav>
-      </div>
+        </div>
+        <div v-if="accLinked" class="mini-account-status">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
+          <span><b>Telegram и MAX связаны</b><small>PRO, слоты и баланс доступны в обоих мессенджерах.</small></span>
+        </div>
+        <button v-if="isAdmin" class="btn ghost full" @click="emit('admin')">Админка — статистика</button>
+        <a class="btn ghost full mini-account-link" href="https://t.me/+0ucbOj4wBwQzMWNi" target="_blank" rel="noopener">
+          Поддержка
+        </a>
+        <a class="btn ghost full mini-account-link" href="/cabinet/" target="_blank" rel="noopener">
+          Открыть полный кабинет
+        </a>
+      </section>
 
       <!-- Слоты тарифа: общий счётчик мостов/зеркал/каналов + докупка -->
-      <div class="help-card" v-show="!anyOpen && slots && (!browserMode || currentSection === 'billing')">
+      <div v-if="slots && ((browserMode && currentSection === 'billing') || (!browserMode && tab === 'billing'))"
+        v-show="!anyOpen" class="help-card">
         <div class="help-body slot-summary">
           <span class="muted small"><b>Слоты: {{ slots.used }} из {{ slots.limit }}</b><small>База {{ slots.base }} + докуплено {{ slots.extra }}</small></span>
           <span class="slot-actions">
@@ -1293,13 +1375,19 @@ async function saveRepl(c) {
         </div>
       </div>
       <div v-show="(!browserMode && tab === 'channels') || (browserMode && currentSection === 'channels')">
-      <p class="muted small" style="margin-top:-4px" v-show="!anyOpen">
+      <p v-if="browserMode" class="muted small" style="margin-top:-4px" v-show="!anyOpen">
         <template v-if="isPro">Тариф PRO — 5 слотов на мосты, зеркала и каналы; доп-слоты — /slots в личке бота.</template>
         <template v-else>Бесплатно — 1 канал, PRO — 5 слотов (мосты, зеркала, каналы) с докупкой. Новый канал добавится, только если есть свободный слот (удалите лишние связки или оформите PRO).</template>
       </p>
 
+      <button v-if="!browserMode && crossposts.length && !anyOpen && !linkOpen"
+        type="button" class="mini-add-button" @click="linkOpen = true">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        Добавить канал
+      </button>
+
       <!-- Как связать канал — инструкция (линковка идёт через бота) -->
-      <div class="help-card" v-show="!anyOpen">
+      <div class="help-card" v-show="!anyOpen && (browserMode || !crossposts.length || linkOpen)">
         <button class="help-head" @click="linkOpen = !linkOpen">
           <span class="help-q">?</span>
           <span class="help-title">Как добавить новый канал?</span>
@@ -1523,9 +1611,15 @@ async function saveRepl(c) {
 
       </div>
       <div v-show="(!browserMode && tab === 'groups') || (browserMode && currentSection === 'groups')">
-      <p class="muted small" style="margin-top:-4px" v-show="!anyOpen">Зеркало сообщений между TG-группой и MAX-чатом (в обе стороны).</p>
+      <p v-if="browserMode" class="muted small" style="margin-top:-4px" v-show="!anyOpen">Зеркало сообщений между TG-группой и MAX-чатом (в обе стороны).</p>
 
-      <div class="help-card" v-show="!anyOpen">
+      <button v-if="!browserMode && groups.length && !anyOpen && !grpHelp"
+        type="button" class="mini-add-button" @click="grpHelp = true">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        Добавить группу
+      </button>
+
+      <div class="help-card" v-show="!anyOpen && (browserMode || !groups.length || grpHelp)">
         <button class="help-head" @click="grpHelp = !grpHelp">
           <span class="help-q">?</span>
           <span class="help-title">Как связать группу?</span>
@@ -1796,7 +1890,7 @@ async function saveRepl(c) {
 
       <div v-show="((!browserMode && tab === 'mirrors') || (browserMode && currentSection === 'mirrors')) && !anyOpen">
       <h2>Зеркала <span class="muted">({{ mirrors.length }})</span></h2>
-      <p class="muted small" style="margin-top:-4px">Односторонние копии постов канала в группы: MAX-канал → MAX-группы и TG-канал → TG-группы (без плашки «переслано»).</p>
+      <p v-if="browserMode || !mirrors.length" class="muted small" style="margin-top:-4px">Односторонние копии постов канала в группы: MAX-канал → MAX-группы и TG-канал → TG-группы (без плашки «переслано»).</p>
       <p v-if="!mirrors.length" class="muted small">
         Пока пусто. Подключение: в личке бота отправьте <b>/mirror</b> и перешлите пост канала-донора,
         затем в каждой группе-приёмнике — <b>/mirror &lt;id канала&gt;</b> (бот должен быть админом).
@@ -1973,7 +2067,7 @@ async function saveRepl(c) {
 
       <div v-show="((!browserMode && tab === 'blocks') || (browserMode && currentSection === 'moderation')) && !anyOpen">
       <h2>Заблокированные <span class="muted">({{ blocks.length }})</span></h2>
-      <p class="muted small" style="margin-top:-4px">Кого антиспам замьютил или забанил во всех ваших каналах и группах. Можно вернуть.</p>
+      <p v-if="browserMode || !blocks.length" class="muted small" style="margin-top:-4px">Кого антиспам замьютил или забанил во всех ваших каналах и группах. Можно вернуть.</p>
       <p v-if="!blocks.length" class="muted small">Пока пусто — здесь появятся те, кого антиспам наказал в режиме «удалять» (в «репорт»/«тест» баны не выдаются).</p>
       <div v-for="b in blocks" :key="bKey(b)" class="card">
         <div class="card-head static">
@@ -1994,7 +2088,10 @@ async function saveRepl(c) {
       </div>
       </div>
 
-      <div id="import" v-show="!anyOpen && (!browserMode || currentSection === 'import')" class="section-anchor">
+      <div id="import"
+        v-if="(browserMode && currentSection === 'import') || (!browserMode && tab === 'import')"
+        v-show="!anyOpen"
+        class="section-anchor">
       <h2>Импорт истории</h2>
       <div class="import-card">
         <div>Баланс постов: <b>{{ importBalance }}</b></div>
@@ -2039,8 +2136,15 @@ async function saveRepl(c) {
 
 <style scoped>
 .top { display: flex; align-items: center; justify-content: space-between; }
+.top-title { min-width: 0; }
 .back-bar { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; color: var(--accent); font: inherit; font-weight: 600; font-size: 15px; cursor: pointer; padding: 6px 0 12px; min-height: 44px; }
 .icon-btn { background: none; border: 0; font-size: 20px; cursor: pointer; color: var(--text-muted); min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.icon-btn svg, .mini-menu-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mini-app-bar { position: sticky; top: 0; z-index: 60; min-height: 56px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; gap: 4px; margin: -12px -16px 14px; padding: max(4px, env(safe-area-inset-top)) 8px 4px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 96%, transparent); backdrop-filter: blur(14px); }
+.mini-app-bar h1 { overflow: hidden; margin: 0; font-size: 18px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.mini-menu-button { width: 48px; height: 48px; display: grid; place-items: center; border: 0; border-radius: 12px; background: transparent; color: var(--text); cursor: pointer; }
+.mini-menu-button:active, .icon-btn:active { background: var(--surface); }
+.mini-menu-button:focus-visible, .icon-btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: -2px; }
 .whoami { font-size: 14px; line-height: 1.5; color: var(--text-muted); margin-bottom: 18px; }
 .small { font-size: 14px; line-height: 1.5; }
 h2 { font-size: 18px; line-height: 1.3; margin: 28px 0 12px; }
@@ -2066,8 +2170,8 @@ h2 { font-size: 18px; line-height: 1.3; margin: 28px 0 12px; }
 .btn.accent { background: var(--accent); color: #fff; }
 .btn.danger { background: transparent; color: #e5484d; border: 1px solid rgba(229,72,77,.4); }
 .btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn.sm { padding: 9px 14px; min-height: 40px; flex: 0 0 auto; }
-.btn.full { width: 100%; padding: 11px; margin-top: 8px; }
+.btn.sm { padding: 9px 14px; min-height: 44px; flex: 0 0 auto; }
+.btn.full { width: 100%; min-height: 44px; padding: 11px; margin-top: 8px; }
 .btn:disabled { opacity: .5; cursor: default; }
 
 .card { border: 1px solid var(--border); border-radius: 14px; margin-bottom: 16px; overflow: hidden; background: var(--bg); box-shadow: 0 1px 2px rgba(15,23,42,.035); }
@@ -2115,20 +2219,40 @@ h2 { font-size: 18px; line-height: 1.3; margin: 28px 0 12px; }
 
 .danger-zone { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-.mini-nav { position: relative; z-index: 20; margin: 18px 0 12px; }
-.mini-nav-trigger { width: 100%; min-height: 52px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 20px; align-items: center; gap: 11px; padding: 8px 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; text-align: left; }
-.mini-nav-trigger:focus-visible, .mini-nav-menu button:focus-visible, .slot-usage-head:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
-.mini-nav-burger, .mini-nav-chevron, .slot-usage-head svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.mini-nav-current { min-width: 0; display: grid; gap: 1px; }
-.mini-nav-current small { color: var(--text-muted); font-size: 11px; font-weight: 650; line-height: 1.2; }
-.mini-nav-current b { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
-.mini-nav-current b span { color: var(--text-muted); font-weight: 650; }
-.mini-nav-chevron, .slot-usage-head svg { transition: transform .18s ease; }
-.mini-nav-chevron.open, .slot-usage-head svg.open { transform: rotate(180deg); }
-.mini-nav-menu { position: absolute; top: calc(100% + 7px); left: 0; right: 0; z-index: 30; display: grid; gap: 4px; padding: 7px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 14px 35px rgba(15,23,42,.16); }
-.mini-nav-menu button { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 650; cursor: pointer; text-align: left; }
-.mini-nav-menu button.active { background: color-mix(in srgb, var(--accent) 11%, var(--surface)); color: var(--accent); }
-.mini-nav-count { min-width: 28px; padding: 3px 7px; border-radius: 999px; background: var(--border); color: var(--text-muted); font-size: 11px; font-weight: 750; text-align: center; }
+.mini-drawer-scrim { position: fixed; inset: 0; z-index: 900; display: flex; align-items: stretch; background: rgba(15,23,42,.58); overscroll-behavior: contain; }
+.mini-drawer { width: min(88vw, 340px); min-height: 100dvh; display: flex; flex-direction: column; padding: max(12px, env(safe-area-inset-top)) 12px max(16px, env(safe-area-inset-bottom)); border-right: 1px solid var(--border); background: var(--bg); color: var(--text); box-shadow: 18px 0 50px rgba(15,23,42,.24); overflow-y: auto; }
+.mini-drawer-head { min-height: 52px; display: grid; grid-template-columns: 40px minmax(0, 1fr) 48px; align-items: center; gap: 10px; padding: 0 2px 10px; border-bottom: 1px solid var(--border); }
+.mini-drawer-head > span:nth-child(2) { display: grid; line-height: 1.2; }
+.mini-drawer-head small { color: var(--text-muted); font-size: 12px; }
+.mini-drawer-head button { width: 48px; height: 48px; display: grid; place-items: center; border: 0; border-radius: 12px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.mini-drawer-head button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.mini-drawer-brand { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: var(--accent); color: #fff; font-size: 17px; font-weight: 800; }
+.mini-drawer-nav { display: grid; gap: 14px; padding: 14px 0; }
+.mini-drawer-nav section { display: grid; gap: 4px; }
+.mini-drawer-nav h2 { margin: 0 10px 4px; color: var(--text-muted); font-size: 11px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.mini-drawer-nav button { min-height: 48px; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 0 12px; border: 0; border-radius: 11px; background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 650; text-align: left; cursor: pointer; }
+.mini-drawer-nav button svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mini-drawer-nav button.active { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); }
+.mini-drawer-nav i { min-width: 28px; padding: 3px 7px; border-radius: 999px; background: var(--surface); color: var(--text-muted); font-size: 11px; font-style: normal; font-weight: 750; text-align: center; }
+.mini-drawer-nav button.active i { background: color-mix(in srgb, var(--accent) 14%, var(--bg)); color: var(--accent); }
+.mini-drawer-nav button:focus-visible, .mini-drawer-head button:focus-visible, .slot-usage-head:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
+.mini-drawer-support { min-height: 48px; display: grid; place-items: center; margin-top: auto; border: 1px solid var(--border); border-radius: 11px; color: var(--text); font-size: 14px; font-weight: 650; text-decoration: none; }
+.mini-drawer-enter-active, .mini-drawer-leave-active { transition: opacity .18s ease; }
+.mini-drawer-enter-active .mini-drawer, .mini-drawer-leave-active .mini-drawer { transition: transform .22s ease; }
+.mini-drawer-enter-from, .mini-drawer-leave-to { opacity: 0; }
+.mini-drawer-enter-from .mini-drawer, .mini-drawer-leave-to .mini-drawer { transform: translateX(-100%); }
+:global(html.mini-menu-open), :global(html.mini-menu-open body) { overflow: hidden; }
+.mini-add-button { width: max-content; min-height: 44px; display: flex; align-items: center; gap: 7px; margin: 0 0 12px auto; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--accent); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.mini-add-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.mini-account-page { display: grid; gap: 12px; }
+.mini-profile-card, .mini-account-status { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.mini-profile-card > span:last-child, .mini-account-status > span { display: grid; min-width: 0; gap: 2px; }
+.mini-profile-card small, .mini-account-status small { color: var(--text-muted); font-size: 13px; line-height: 1.4; }
+.mini-profile-avatar { width: 44px; height: 44px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 13px; background: var(--accent); color: #fff; font-size: 18px; font-weight: 800; }
+.mini-account-status svg { width: 28px; height: 28px; flex: 0 0 auto; fill: none; stroke: #15803d; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.mini-account-link { min-height: 48px; display: grid; place-items: center; margin-top: 0; text-decoration: none; }
+.slot-usage-head svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .18s ease; }
+.slot-usage-head svg.open { transform: rotate(180deg); }
 .as-warn { color: #f85149; font-size: 12px; line-height: 1.4; margin: 6px 0 0; }
 .help-card { border: 1px solid var(--border); border-radius: 14px; background: var(--bg); margin-bottom: 20px; box-shadow: 0 1px 2px rgba(15,23,42,.025); }
 .acc-card { border: 1px solid var(--accent, #2563eb); border-style: solid; }
@@ -2350,6 +2474,8 @@ code { background: var(--surface); padding: 1px 5px; border-radius: 5px; font-si
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mini-nav-chevron, .slot-usage-head svg { transition: none; }
+  .mini-drawer-enter-active, .mini-drawer-leave-active,
+  .mini-drawer-enter-active .mini-drawer, .mini-drawer-leave-active .mini-drawer,
+  .slot-usage-head svg { transition: none; }
 }
 </style>
