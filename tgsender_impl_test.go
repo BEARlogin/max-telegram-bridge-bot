@@ -74,6 +74,166 @@ func TestSendRichMediaMessageUploadsVideo(t *testing.T) {
 	}
 }
 
+func TestSendMessageUsesEphemeralCommandContext(t *testing.T) {
+	var got tgSendEphemeralMessageParams
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bot123:ABC/sendMessage" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"ephemeral_message_id":314}}`)
+	}))
+	defer server.Close()
+
+	s := &tgBotSender{token: "123:ABC", apiURL: server.URL, httpClient: server.Client()}
+	ctx := withTGEphemeralTarget(context.Background(), tgEphemeralTarget{
+		ChatID:                     -10042,
+		ReceiverUserID:             7001,
+		IncomingEphemeralMessageID: 99,
+	})
+	msgID, err := s.SendMessage(ctx, -10042, "Только для вас", &SendOpts{
+		ThreadID:  7,
+		ParseMode: "HTML",
+		ReplyMarkup: NewInlineKeyboard(NewInlineRow(
+			NewInlineButton("Готово", "done"),
+		)),
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if msgID != 0 {
+		t.Fatalf("ordinary message id = %d, want 0 for ephemeral", msgID)
+	}
+	if got.ChatID != -10042 || got.ReceiverUserID != 7001 || got.MessageThreadID != 7 {
+		t.Fatalf("target = %+v", got)
+	}
+	if got.ReplyParameters == nil || got.ReplyParameters.EphemeralMessageID != 99 {
+		t.Fatalf("reply_parameters = %+v", got.ReplyParameters)
+	}
+	if got.ReplyMarkup == nil {
+		t.Fatal("inline keyboard was lost")
+	}
+}
+
+func TestSendMessageUsesExplicitEphemeralReceiverForWelcome(t *testing.T) {
+	var receiver int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		receiver = int64(body["receiver_user_id"].(float64))
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"ephemeral_message_id":15}}`)
+	}))
+	defer server.Close()
+
+	s := &tgBotSender{token: "123:ABC", apiURL: server.URL, httpClient: server.Client()}
+	if _, err := s.SendMessage(context.Background(), -10042, "Добро пожаловать", &SendOpts{
+		ReceiverUserID: 42,
+	}); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if receiver != 42 {
+		t.Fatalf("receiver_user_id = %d", receiver)
+	}
+}
+
+func TestSetMyCommandsSendsEphemeralFlagAndGroupScope(t *testing.T) {
+	var got tgSetMyCommandsParams
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bot123:ABC/setMyCommands" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+	}))
+	defer server.Close()
+
+	s := &tgBotSender{token: "123:ABC", apiURL: server.URL, httpClient: server.Client()}
+	err := s.SetMyCommands(context.Background(), []BotCommand{{
+		Command: "bridge", Description: "Связать", IsEphemeral: true,
+	}}, &CommandScope{Type: "all_group_chats"})
+	if err != nil {
+		t.Fatalf("SetMyCommands: %v", err)
+	}
+	if got.Scope == nil || got.Scope.Type != "all_group_chats" {
+		t.Fatalf("scope = %+v", got.Scope)
+	}
+	if len(got.Commands) != 1 || !got.Commands[0].IsEphemeral {
+		t.Fatalf("commands = %+v", got.Commands)
+	}
+}
+
+func TestEphemeralCallbackMessageCanBeEditedAndDeleted(t *testing.T) {
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.URL.Path)
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got := int(body["ephemeral_message_id"].(float64)); got != 89 {
+			t.Fatalf("ephemeral_message_id = %d", got)
+		}
+		if got := int64(body["receiver_user_id"].(float64)); got != 7001 {
+			t.Fatalf("receiver_user_id = %d", got)
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+	}))
+	defer server.Close()
+
+	s := &tgBotSender{token: "123:ABC", apiURL: server.URL, httpClient: server.Client()}
+	ctx := withTGEphemeralTarget(context.Background(), tgEphemeralTarget{
+		ChatID:                     -10042,
+		ReceiverUserID:             7001,
+		IncomingEphemeralMessageID: 89,
+		CallbackQueryID:            "cb-1",
+	})
+	if err := s.EditMessageText(ctx, -10042, 0, "Новый экран", &SendOpts{
+		ReplyMarkup: NewInlineKeyboard(NewInlineRow(NewInlineButton("Дальше", "next"))),
+	}); err != nil {
+		t.Fatalf("EditMessageText: %v", err)
+	}
+	if err := s.DeleteMessage(ctx, -10042, 0); err != nil {
+		t.Fatalf("DeleteMessage: %v", err)
+	}
+	want := []string{
+		"/bot123:ABC/editEphemeralMessageText",
+		"/bot123:ABC/deleteEphemeralMessage",
+	}
+	if len(methods) != len(want) || methods[0] != want[0] || methods[1] != want[1] {
+		t.Fatalf("methods = %#v, want %#v", methods, want)
+	}
+}
+
+func TestRawWebhookEphemeralIDsArePreserved(t *testing.T) {
+	s := &tgBotSender{}
+	s.captureRawEphemeralUpdate([]byte(`{
+		"update_id": 77,
+		"message": {"ephemeral_message_id": 88}
+	}`))
+	update := TGUpdate{Message: &TGMessage{}}
+	s.applyRawEphemeralUpdate(77, &update)
+	if update.Message.EphemeralMessageID != 88 {
+		t.Fatalf("message ephemeral id = %d", update.Message.EphemeralMessageID)
+	}
+
+	s.captureRawEphemeralUpdate([]byte(`{
+		"update_id": 78,
+		"callback_query": {"message": {"ephemeral_message_id": 89}}
+	}`))
+	update = TGUpdate{CallbackQuery: &TGCallback{Message: &TGMessage{}}}
+	s.applyRawEphemeralUpdate(78, &update)
+	if update.CallbackQuery.Message.EphemeralMessageID != 89 {
+		t.Fatalf("callback ephemeral id = %d", update.CallbackQuery.Message.EphemeralMessageID)
+	}
+}
+
 // --- convertMsg ---
 
 func TestConvertMsg_Nil(t *testing.T) {

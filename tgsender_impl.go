@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -24,6 +25,9 @@ type tgBotSender struct {
 	apiURL     string
 	httpClient *http.Client
 	updates    chan TGUpdate
+
+	ephemeralMu      sync.Mutex
+	rawEphemeralByID map[int64]tgRawEphemeralUpdate
 }
 
 func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, error) {
@@ -43,6 +47,7 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 		bot.WithHTTPClient(25*time.Second, httpClient),
 		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			tgu := convertUpdate(update)
+			s.applyRawEphemeralUpdate(update.ID, &tgu)
 			select {
 			case s.updates <- tgu:
 			default:
@@ -109,6 +114,7 @@ func (s *tgBotSender) StartWebhook(ctx context.Context, path string) <-chan TGUp
 				}
 			}
 		}
+		s.captureRawEphemeralUpdate(body)
 		handler.ServeHTTP(w, r)
 	})
 	go s.b.StartWebhook(ctx) // start workers that dispatch updates to handlers
@@ -146,6 +152,9 @@ func (s *tgBotSender) SendChatAction(ctx context.Context, chatID int64, action s
 }
 
 func (s *tgBotSender) SendMessage(ctx context.Context, chatID int64, text string, opts *SendOpts) (int, error) {
+	if target, ok := tgEphemeralTargetForSend(ctx, chatID, opts); ok {
+		return s.sendEphemeralMessage(ctx, chatID, text, opts, target)
+	}
 	p := &bot.SendMessageParams{
 		ChatID: chatID,
 		Text:   text,
@@ -284,6 +293,10 @@ func (s *tgBotSender) SendMediaGroup(ctx context.Context, chatID int64, media []
 // --- Edit ---
 
 func (s *tgBotSender) EditMessageText(ctx context.Context, chatID int64, msgID int, text string, opts *SendOpts) error {
+	if target, ok := tgEphemeralTargetForSend(ctx, chatID, nil); ok &&
+		target.IncomingEphemeralMessageID != 0 {
+		return s.editEphemeralMessageText(ctx, chatID, text, opts, target)
+	}
 	p := &bot.EditMessageTextParams{
 		ChatID:    chatID,
 		MessageID: msgID,
@@ -332,6 +345,10 @@ func (s *tgBotSender) EditMessageMedia(ctx context.Context, chatID int64, msgID 
 // --- Other ---
 
 func (s *tgBotSender) DeleteMessage(ctx context.Context, chatID int64, msgID int) error {
+	if target, ok := tgEphemeralTargetForSend(ctx, chatID, nil); ok &&
+		target.IncomingEphemeralMessageID != 0 {
+		return s.deleteEphemeralMessage(ctx, chatID, target)
+	}
 	_, err := s.b.DeleteMessage(ctx, &bot.DeleteMessageParams{
 		ChatID:    chatID,
 		MessageID: msgID,
@@ -501,13 +518,25 @@ func (s *tgBotSender) KickChatMember(ctx context.Context, chatID, userID int64) 
 }
 
 func (s *tgBotSender) SetMyCommands(ctx context.Context, commands []BotCommand, scope *CommandScope) error {
+	for _, c := range commands {
+		if c.IsEphemeral {
+			return s.setMyCommandsRaw(ctx, commands, scope)
+		}
+	}
 	cmds := make([]models.BotCommand, len(commands))
 	for i, c := range commands {
 		cmds[i] = models.BotCommand{Command: c.Command, Description: c.Description}
 	}
 	p := &bot.SetMyCommandsParams{Commands: cmds}
-	if scope != nil && scope.Type == "all_chat_administrators" {
-		p.Scope = &models.BotCommandScopeAllChatAdministrators{}
+	if scope != nil {
+		switch scope.Type {
+		case "all_private_chats":
+			p.Scope = &models.BotCommandScopeAllPrivateChats{}
+		case "all_group_chats":
+			p.Scope = &models.BotCommandScopeAllGroupChats{}
+		case "all_chat_administrators":
+			p.Scope = &models.BotCommandScopeAllChatAdministrators{}
+		}
 	}
 	_, err := s.b.SetMyCommands(ctx, p)
 	return wrapErr(err)

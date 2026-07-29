@@ -67,7 +67,10 @@ type Entity struct {
 }
 
 type TGMessage struct {
-	MessageID          int
+	MessageID int
+	// EphemeralMessageID — идентификатор скрытого сообщения Bot API 10.2.
+	// У таких сообщений обычный MessageID не используется.
+	EphemeralMessageID int
 	MessageThreadID    int
 	Chat               ChatInfo
 	From               *UserInfo
@@ -167,6 +170,15 @@ type SendOpts struct {
 	ParseMode   string
 	Caption     string
 	ReplyMarkup *InlineKeyboardMarkup
+	// ReceiverUserID отправляет сообщение как Telegram whisper: его видят
+	// только указанный участник группы и бот.
+	ReceiverUserID int64
+	// EphemeralReplyID отвечает на входящую скрытую команду. Нужен, если бот
+	// не является администратором группы.
+	EphemeralReplyID int
+	// CallbackQueryID разрешает скрытый ответ в течение 15 секунд после
+	// нажатия inline-кнопки.
+	CallbackQueryID string
 	// RequestChat — если задан, к сообщению крепится reply-клавиатура с нативной
 	// кнопкой выбора группы (KeyboardButtonRequestChat). После выбора Telegram
 	// присылает chat_shared с chat_id.
@@ -235,10 +247,11 @@ type TGRichMessageSender interface {
 type BotCommand struct {
 	Command     string
 	Description string
+	IsEphemeral bool
 }
 
 type CommandScope struct {
-	Type string // "", "all_chat_administrators"
+	Type string // "", "all_private_chats", "all_group_chats", "all_chat_administrators"
 }
 
 // TGError represents a Telegram API error.

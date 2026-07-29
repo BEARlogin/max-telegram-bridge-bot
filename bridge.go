@@ -689,7 +689,14 @@ func (b *Bridge) registerCommands(ctx context.Context) {
 	if err := b.tg.SetMyCommands(ctx, cmds, nil); err != nil {
 		slog.Error("TG setMyCommands (default) failed", "err", err)
 	}
-	if err := b.tg.SetMyCommands(ctx, cmds, &CommandScope{Type: "all_chat_administrators"}); err != nil {
+	groupCmds := append([]BotCommand(nil), cmds...)
+	for i := range groupCmds {
+		groupCmds[i].IsEphemeral = true
+	}
+	if err := b.tg.SetMyCommands(ctx, groupCmds, &CommandScope{Type: "all_group_chats"}); err != nil {
+		slog.Error("TG setMyCommands (groups) failed", "err", err)
+	}
+	if err := b.tg.SetMyCommands(ctx, groupCmds, &CommandScope{Type: "all_chat_administrators"}); err != nil {
 		slog.Error("TG setMyCommands (admins) failed", "err", err)
 	}
 
