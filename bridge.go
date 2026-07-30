@@ -21,19 +21,23 @@ var internalVKHandlersOnce sync.Once
 
 // Config — настройки bridge, читаемые из env.
 type Config struct {
-	MaxToken         string  // токен MAX API (основной бот; нужен для direct-send/upload)
-	MaxTokenOld      string  // токен старого MAX-бота (резерв/failover; "" — выключено)
-	TgBotURL         string  // ссылка на TG-бота для /help
-	MaxBotURL        string  // ссылка на основного MAX-бота для /help (старый бот)
-	MaxBotURLReserve string  // ссылка на запасного MAX-бота (для failover; "" — скрыть)
-	MaxWebhookURL    string  // базовый URL для webhook MAX (если пусто — long polling)
-	MaxWebhookPort   string  // порт HTTP-сервера для MAX webhook (по умолчанию 8443)
-	TgWebhookURL     string  // базовый URL для webhook TG (если пусто — long polling)
-	TgWebhookPort    string  // порт HTTP-сервера для TG webhook (по умолчанию 8444)
-	TgAPIURL         string  // custom TG Bot API URL (если пусто — api.telegram.org)
-	AllowedUsers     []int64 // whitelist TG user IDs (empty = allow all)
-	TgMaxFileSizeMB  int     // max file size TG->MAX in MB (0 = unlimited)
-	MaxMaxFileSizeMB int     // max file size MAX->TG in MB (0 = unlimited)
+	MaxToken         string // токен MAX API (основной бот; нужен для direct-send/upload)
+	MaxTokenOld      string // токен старого MAX-бота (резерв/failover; "" — выключено)
+	TgBotURL         string // ссылка на TG-бота для /help
+	MaxBotURL        string // ссылка на основного MAX-бота для /help (старый бот)
+	MaxBotURLReserve string // ссылка на запасного MAX-бота (для failover; "" — скрыть)
+	MaxWebhookURL    string // базовый URL для webhook MAX (если пусто — long polling)
+	MaxWebhookPort   string // порт HTTP-сервера для MAX webhook (по умолчанию 8443)
+	// MaxCommentProbeMarker включает временную безопасную диагностику MAX webhook:
+	// в journal попадают только схема JSON и технические идентификаторы событий,
+	// содержащих этот маркер, но не текст сообщений.
+	MaxCommentProbeMarker string
+	TgWebhookURL          string  // базовый URL для webhook TG (если пусто — long polling)
+	TgWebhookPort         string  // порт HTTP-сервера для TG webhook (по умолчанию 8444)
+	TgAPIURL              string  // custom TG Bot API URL (если пусто — api.telegram.org)
+	AllowedUsers          []int64 // whitelist TG user IDs (empty = allow all)
+	TgMaxFileSizeMB       int     // max file size TG->MAX in MB (0 = unlimited)
+	MaxMaxFileSizeMB      int     // max file size MAX->TG in MB (0 = unlimited)
 	// MaxAllowedExts — whitelist расширений для TG→MAX (nil = не проверять локально).
 	// Если задан, файлы с не-вхождением блокируются до отправки на CDN.
 	MaxAllowedExts map[string]struct{}

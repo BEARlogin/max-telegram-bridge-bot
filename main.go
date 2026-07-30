@@ -55,16 +55,17 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()})))
 
 	cfg := Config{
-		MaxToken:         mustEnv("MAX_TOKEN"),
-		MaxTokenOld:      os.Getenv("MAX_TOKEN_OLD"),
-		TgBotURL:         envOr("TG_BOT_URL", "https://t.me/MaxTelegramBridgeBot"),
-		MaxBotURL:        envOr("MAX_BOT_URL", "https://max.ru/id710708943262_bot"),           // основной (старый разбанен)
-		MaxBotURLReserve: envOr("MAX_BOT_URL_RESERVE", "https://max.ru/id710708943262_4_bot"), // запасной (failover)
-		MaxWebhookURL:    os.Getenv("MAX_WEBHOOK_URL"),
-		MaxWebhookPort:   envOr("MAX_WEBHOOK_PORT", "8443"),
-		TgWebhookURL:     os.Getenv("TG_WEBHOOK_URL"),
-		TgWebhookPort:    envOr("TG_WEBHOOK_PORT", "8444"),
-		TgAPIURL:         os.Getenv("TG_API_URL"),
+		MaxToken:              mustEnv("MAX_TOKEN"),
+		MaxTokenOld:           os.Getenv("MAX_TOKEN_OLD"),
+		TgBotURL:              envOr("TG_BOT_URL", "https://t.me/MaxTelegramBridgeBot"),
+		MaxBotURL:             envOr("MAX_BOT_URL", "https://max.ru/id710708943262_bot"),           // основной (старый разбанен)
+		MaxBotURLReserve:      envOr("MAX_BOT_URL_RESERVE", "https://max.ru/id710708943262_4_bot"), // запасной (failover)
+		MaxWebhookURL:         os.Getenv("MAX_WEBHOOK_URL"),
+		MaxWebhookPort:        envOr("MAX_WEBHOOK_PORT", "8443"),
+		MaxCommentProbeMarker: os.Getenv("MAX_COMMENT_PROBE_MARKER"),
+		TgWebhookURL:          os.Getenv("TG_WEBHOOK_URL"),
+		TgWebhookPort:         envOr("TG_WEBHOOK_PORT", "8444"),
+		TgAPIURL:              os.Getenv("TG_API_URL"),
 	}
 
 	// Parse ALLOWED_USERS whitelist

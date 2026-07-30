@@ -118,12 +118,20 @@ func (b *Bridge) listenMax(ctx context.Context) {
 		whPath := b.maxWebhookPath()
 		whURL := strings.TrimRight(b.cfg.MaxWebhookURL, "/") + whPath
 		ch := make(chan maxschemes.UpdateInterface, 100)
-		http.HandleFunc(whPath, b.maxApi.GetHandler(ch))
+		commentProbe := newMaxCommentProbe(b.cfg.MaxCommentProbeMarker)
+		http.HandleFunc(whPath, commentProbe.Wrap(b.maxApi.GetHandler(ch)))
 		updateTypes := []string{
 			"message_created", "message_edited", "message_removed",
 			"message_callback", "bot_added", "bot_removed",
 			"user_added", "user_removed", "chat_title_changed",
 			"bot_started", // кнопка «Начать» в MAX — иначе бот молчит на старте
+		}
+		if commentProbe.Enabled() {
+			// Пустой update_types просит MAX присылать все доступные события. Это
+			// нужно только на короткое окно PoC: отдельное имя события комментария
+			// в публичном Bot API пока не описано.
+			updateTypes = nil
+			slog.Warn("MAX native-comment probe enabled; subscribing to all update types")
 		}
 		if _, err := b.maxApi.Subscriptions.Subscribe(ctx, whURL, updateTypes, ""); err != nil {
 			slog.Error("MAX webhook subscribe failed", "err", err)
@@ -137,7 +145,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			// Отдельный канал для старого бота — чтобы в диспетчере знать, КТО доставил
 			// апдейт (нужно для ответов в ЛС/группах тем же ботом, что получил сообщение).
 			chOld := make(chan maxschemes.UpdateInterface, 100)
-			http.HandleFunc(oldPath, b.maxApiOld.GetHandler(chOld))
+			http.HandleFunc(oldPath, commentProbe.Wrap(b.maxApiOld.GetHandler(chOld)))
 			if _, err := b.maxApiOld.Subscriptions.Subscribe(ctx, oldURL, updateTypes, ""); err != nil {
 				slog.Error("MAX old-bot webhook subscribe failed", "err", err)
 			} else {
