@@ -118,6 +118,16 @@ func TestSendMessageUsesEphemeralCommandContext(t *testing.T) {
 	}
 }
 
+func TestOrdinaryGroupCommandContextDoesNotForceEphemeralReply(t *testing.T) {
+	ctx := withTGEphemeralTarget(context.Background(), tgEphemeralTarget{
+		ChatID:         -10042,
+		ReceiverUserID: 7001,
+	})
+	if target, ok := tgEphemeralTargetForSend(ctx, -10042, nil); ok {
+		t.Fatalf("ordinary command unexpectedly authorized ephemeral reply: %+v", target)
+	}
+}
+
 func TestSendMessageUsesExplicitEphemeralReceiverForWelcome(t *testing.T) {
 	var receiver int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

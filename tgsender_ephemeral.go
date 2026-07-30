@@ -42,7 +42,14 @@ func tgEphemeralTargetForSend(ctx context.Context, chatID int64, opts *SendOpts)
 		return tgEphemeralTarget{}, false
 	}
 	target, ok := ctx.Value(tgEphemeralContextKey{}).(tgEphemeralTarget)
-	return target, ok && target.ChatID == chatID && target.ReceiverUserID != 0
+	// A regular manually typed group command has no ephemeral_message_id.
+	// receiver_user_id alone is not enough to authorize a private reply to it:
+	// Telegram rejects the request and the command appears to receive no answer.
+	// Use the implicit target only when Telegram supplied an ephemeral message ID
+	// or a callback query that authorizes the private response. Explicit
+	// ReceiverUserID (welcome/captcha) is handled above and keeps its own fallback.
+	authorized := target.IncomingEphemeralMessageID != 0 || target.CallbackQueryID != ""
+	return target, ok && authorized && target.ChatID == chatID && target.ReceiverUserID != 0
 }
 
 type tgEphemeralReplyParameters struct {
