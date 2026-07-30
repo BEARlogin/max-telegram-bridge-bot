@@ -144,6 +144,10 @@ func (b *Bridge) helpCmdsText() string {
 		"<code>/pause</code> — поставить связку на паузу (не зеркалить, не удаляя)\n" +
 		"<code>/unpause</code> — возобновить пересылку\n" +
 		"<code>/unbridge</code> — удалить связку\n" +
+		"<code>/ban</code> — заблокировать участника (ответом на сообщение)\n" +
+		"<code>/mute [минуты]</code> — ограничить участника, по умолчанию на сутки\n" +
+		"<code>/unban</code> — снять блокировку\n" +
+		"<code>/unmute</code> — снять ограничения\n" +
 		"<code>/thread</code> — направить MAX → текущий топик (форум)\n" +
 		"<code>/thread_bridge</code> — связать тред с отдельной MAX-группой\n" +
 		"<code>/thread_unbridge</code> — разорвать связку треда\n" +

@@ -165,3 +165,26 @@ func TestIsTgChannel(t *testing.T) {
 		})
 	}
 }
+
+func TestParseModCommand(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		cmd  string
+		arg  string
+		ok   bool
+	}{
+		{text: "/ban", cmd: "ban", ok: true},
+		{text: "/mute 30", cmd: "mute", arg: "30", ok: true},
+		{text: "/mute@MaxTelegramBridgeBot @user 60", cmd: "mute", arg: "@user 60", ok: true},
+		{text: "/unban 123", cmd: "unban", arg: "123", ok: true},
+		{text: "/unmute @user", cmd: "unmute", arg: "@user", ok: true},
+		{text: "/antispam on", ok: false},
+		{text: "mute 30", ok: false},
+	} {
+		cmd, arg, ok := parseModCommand(tc.text)
+		if cmd != tc.cmd || arg != tc.arg || ok != tc.ok {
+			t.Errorf("parseModCommand(%q)=(%q,%q,%v), want (%q,%q,%v)",
+				tc.text, cmd, arg, ok, tc.cmd, tc.arg, tc.ok)
+		}
+	}
+}

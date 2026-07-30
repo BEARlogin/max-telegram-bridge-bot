@@ -87,3 +87,12 @@ func TestExtraHelpMenuFallsBackToLegacyText(t *testing.T) {
 		t.Fatalf("text=%q rows=%+v", text, kb.Rows)
 	}
 }
+
+func TestHelpCommandsListsManualModeration(t *testing.T) {
+	text := (&Bridge{}).helpCmdsText()
+	for _, command := range []string{"/ban", "/mute", "/unban", "/unmute"} {
+		if !strings.Contains(text, "<code>"+command) {
+			t.Errorf("manual moderation command %s missing from help: %q", command, text)
+		}
+	}
+}
