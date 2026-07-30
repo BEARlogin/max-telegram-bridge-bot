@@ -25,6 +25,9 @@ type tgBotSender struct {
 	apiURL     string
 	httpClient *http.Client
 	updates    chan TGUpdate
+	// Disabled by default. Bot API 10.2 ephemeral messages must be explicitly
+	// enabled only after the production transport has passed an end-to-end test.
+	ephemeralEnabled bool
 
 	ephemeralMu      sync.Mutex
 	rawEphemeralByID map[int64]tgRawEphemeralUpdate
@@ -33,10 +36,11 @@ type tgBotSender struct {
 func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, error) {
 	httpClient := &http.Client{Timeout: 2 * time.Minute}
 	s := &tgBotSender{
-		token:      token,
-		apiURL:     apiURL,
-		httpClient: httpClient,
-		updates:    make(chan TGUpdate, 100),
+		token:            token,
+		apiURL:           apiURL,
+		httpClient:       httpClient,
+		updates:          make(chan TGUpdate, 100),
+		ephemeralEnabled: tgEphemeralEnabled(),
 	}
 
 	opts := []bot.Option{
@@ -152,8 +156,10 @@ func (s *tgBotSender) SendChatAction(ctx context.Context, chatID int64, action s
 }
 
 func (s *tgBotSender) SendMessage(ctx context.Context, chatID int64, text string, opts *SendOpts) (int, error) {
-	if target, ok := tgEphemeralTargetForSend(ctx, chatID, opts); ok {
-		return s.sendEphemeralMessage(ctx, chatID, text, opts, target)
+	if s.ephemeralEnabled {
+		if target, ok := tgEphemeralTargetForSend(ctx, chatID, opts); ok {
+			return s.sendEphemeralMessage(ctx, chatID, text, opts, target)
+		}
 	}
 	p := &bot.SendMessageParams{
 		ChatID: chatID,
@@ -293,9 +299,11 @@ func (s *tgBotSender) SendMediaGroup(ctx context.Context, chatID int64, media []
 // --- Edit ---
 
 func (s *tgBotSender) EditMessageText(ctx context.Context, chatID int64, msgID int, text string, opts *SendOpts) error {
-	if target, ok := tgEphemeralTargetForSend(ctx, chatID, nil); ok &&
-		target.IncomingEphemeralMessageID != 0 {
-		return s.editEphemeralMessageText(ctx, chatID, text, opts, target)
+	if s.ephemeralEnabled {
+		if target, ok := tgEphemeralTargetForSend(ctx, chatID, nil); ok &&
+			target.IncomingEphemeralMessageID != 0 {
+			return s.editEphemeralMessageText(ctx, chatID, text, opts, target)
+		}
 	}
 	p := &bot.EditMessageTextParams{
 		ChatID:    chatID,
@@ -345,9 +353,11 @@ func (s *tgBotSender) EditMessageMedia(ctx context.Context, chatID int64, msgID 
 // --- Other ---
 
 func (s *tgBotSender) DeleteMessage(ctx context.Context, chatID int64, msgID int) error {
-	if target, ok := tgEphemeralTargetForSend(ctx, chatID, nil); ok &&
-		target.IncomingEphemeralMessageID != 0 {
-		return s.deleteEphemeralMessage(ctx, chatID, target)
+	if s.ephemeralEnabled {
+		if target, ok := tgEphemeralTargetForSend(ctx, chatID, nil); ok &&
+			target.IncomingEphemeralMessageID != 0 {
+			return s.deleteEphemeralMessage(ctx, chatID, target)
+		}
 	}
 	_, err := s.b.DeleteMessage(ctx, &bot.DeleteMessageParams{
 		ChatID:    chatID,

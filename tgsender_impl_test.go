@@ -14,6 +14,65 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
+func TestTelegramEphemeralDisabledByDefault(t *testing.T) {
+	t.Setenv("TG_EPHEMERAL_ENABLED", "")
+	if tgEphemeralEnabled() {
+		t.Fatal("ephemeral Telegram messages must be disabled by default")
+	}
+}
+
+func TestTelegramEphemeralExplicitOptIn(t *testing.T) {
+	t.Setenv("TG_EPHEMERAL_ENABLED", "true")
+	if !tgEphemeralEnabled() {
+		t.Fatal("explicit opt-in must enable ephemeral Telegram messages")
+	}
+}
+
+func TestTelegramEphemeralDisabledSendsOrdinaryMessage(t *testing.T) {
+	t.Setenv("TG_EPHEMERAL_ENABLED", "")
+	var receiverUserID, replyParameters string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/bot123:ABC/getMe":
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"id":123,"is_bot":true,"first_name":"Test","username":"test_bot"}}`)
+		case "/bot123:ABC/sendMessage":
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("parse form: %v", err)
+			}
+			receiverUserID = r.FormValue("receiver_user_id")
+			replyParameters = r.FormValue("reply_parameters")
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":314,"date":0,"chat":{"id":-10042,"type":"supergroup"},"text":"Видимый ответ"}}`)
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	s, err := NewTGBotSender(context.Background(), "123:ABC", server.URL)
+	if err != nil {
+		t.Fatalf("NewTGBotSender: %v", err)
+	}
+	ctx := withTGEphemeralTarget(context.Background(), tgEphemeralTarget{
+		ChatID:                     -10042,
+		ReceiverUserID:             7001,
+		IncomingEphemeralMessageID: 99,
+	})
+	msgID, err := s.SendMessage(ctx, -10042, "Видимый ответ", &SendOpts{ReceiverUserID: 7001})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if msgID != 314 {
+		t.Fatalf("message_id = %d, want ordinary message 314", msgID)
+	}
+	if receiverUserID != "" {
+		t.Fatalf("disabled transport leaked receiver_user_id=%q into ordinary sendMessage", receiverUserID)
+	}
+	if replyParameters != "" {
+		t.Fatalf("disabled transport leaked reply_parameters=%q", replyParameters)
+	}
+}
+
 func TestSendRichMediaMessageUploadsVideo(t *testing.T) {
 	var gotRichHTML string
 	var gotVideo []byte
@@ -89,6 +148,7 @@ func TestSendMessageUsesEphemeralCommandContext(t *testing.T) {
 	defer server.Close()
 
 	s := &tgBotSender{token: "123:ABC", apiURL: server.URL, httpClient: server.Client()}
+	s.ephemeralEnabled = true
 	ctx := withTGEphemeralTarget(context.Background(), tgEphemeralTarget{
 		ChatID:                     -10042,
 		ReceiverUserID:             7001,
@@ -141,6 +201,7 @@ func TestSendMessageUsesExplicitEphemeralReceiverForWelcome(t *testing.T) {
 	defer server.Close()
 
 	s := &tgBotSender{token: "123:ABC", apiURL: server.URL, httpClient: server.Client()}
+	s.ephemeralEnabled = true
 	if _, err := s.SendMessage(context.Background(), -10042, "Добро пожаловать", &SendOpts{
 		ReceiverUserID: 42,
 	}); err != nil {
@@ -198,6 +259,7 @@ func TestEphemeralCallbackMessageCanBeEditedAndDeleted(t *testing.T) {
 	defer server.Close()
 
 	s := &tgBotSender{token: "123:ABC", apiURL: server.URL, httpClient: server.Client()}
+	s.ephemeralEnabled = true
 	ctx := withTGEphemeralTarget(context.Background(), tgEphemeralTarget{
 		ChatID:                     -10042,
 		ReceiverUserID:             7001,

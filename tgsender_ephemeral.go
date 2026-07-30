@@ -7,8 +7,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 )
+
+// tgEphemeralEnabled keeps the newly released Bot API feature behind an
+// explicit opt-in until it is verified against the production local Bot API
+// server and supported Telegram clients.
+func tgEphemeralEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TG_EPHEMERAL_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
 
 // tgEphemeralTarget is carried only while one Telegram group command or
 // callback is being handled. SendMessage uses it to keep every answer private
