@@ -536,6 +536,14 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 
 			// Команды MAX-диалога, обрабатываемые аддоном. Ядро не знает семантику.
+			if isDialog && (text == "/cancel" || text == "/отмена") {
+				b.maxChannelPairMu.Lock()
+				delete(b.maxChannelPairWait, msgUpd.Message.Sender.UserId)
+				b.maxChannelPairMu.Unlock()
+				b.cpWaitMu.Lock()
+				delete(b.cpWait, msgUpd.Message.Sender.UserId)
+				b.cpWaitMu.Unlock()
+			}
 			if isDialog && strings.HasPrefix(text, "/") && b.maxAddonCommand(ctx, msgUpd.Message.Sender.UserId, msgUpd.Message.Sender.UserId, text) {
 				continue
 			}
@@ -719,6 +727,34 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 				key := strings.TrimSpace(strings.TrimPrefix(text, "/bridge"))
 
+				// A TG group bridge can target a MAX channel without posting a
+				// service command into that channel. The user enters the key in
+				// the bot dialog, then forwards any post from the destination.
+				if isDialog && key != "" {
+					peerPlatform, peerChatID, peerOwnerID, found := b.repo.PeekBridgeKey(key)
+					if found && peerPlatform == "tg" && peerChatID < 0 {
+						if !b.addonPrepareMaxChannelPair(ctx, key, peerChatID, peerOwnerID) {
+							m := maxbot.NewMessage().SetChat(chatID).
+								SetText("Не удалось подготовить мост в MAX-канал. Попробуйте ещё раз.")
+							b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+							continue
+						}
+						b.maxChannelPairMu.Lock()
+						b.maxChannelPairWait[msgUpd.Message.Sender.UserId] = key
+						b.maxChannelPairMu.Unlock()
+						b.cpWaitMu.Lock()
+						delete(b.cpWait, msgUpd.Message.Sender.UserId)
+						b.cpWaitMu.Unlock()
+						m := maxbot.NewMessage().SetChat(chatID).SetText(
+							"Ключ принят.\n\n" +
+								"1. Добавьте этого бота администратором в MAX-канал-приёмник с правом публиковать.\n" +
+								"2. Перешлите сюда любой пост из этого канала.\n\n" +
+								"Служебные сообщения в канале публиковать не нужно.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+						continue
+					}
+				}
+
 				// /bridge без ключа — если чат уже связан, не создавать новый ключ
 				if key == "" {
 					if tgIDs := b.repo.GetTgChats(chatID); len(tgIDs) > 0 {
@@ -810,7 +846,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					b.repo.SetPairOwner("tg", pairTgChatID, billingTgOwner)
 					b.repo.SetPairOwner("max", chatID, billingMaxOwner)
 					if !b.addonPairCompleted(ctx, key, pairTgChatID, chatID) {
-						b.repo.Unpair("max", chatID)
+						// Удаляем только неудавшийся TG-источник. MAX-чат может уже
+						// принимать сообщения из других TG-групп.
+						b.repo.Unpair("tg", pairTgChatID)
 						b.forgetPairWorkspace(ctx, pairTgChatID, chatID)
 						m := maxbot.NewMessage().SetChat(chatID).SetText("Не удалось завершить настройку зеркала. Связка отменена, попробуйте ещё раз.")
 						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
@@ -1077,6 +1115,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				b.cpWaitMu.Lock()
 				b.cpWait[msgUpd.Message.Sender.UserId] = tgChannelID
 				b.cpWaitMu.Unlock()
+				b.maxChannelPairMu.Lock()
+				delete(b.maxChannelPairWait, msgUpd.Message.Sender.UserId)
+				b.maxChannelPairMu.Unlock()
 
 				m := maxbot.NewMessage().SetChat(chatID).SetText(
 					fmt.Sprintf("TG канал ID: %d\n\nТеперь перешлите любой пост из MAX-канала, который хотите связать.", tgChannelID))
@@ -1100,6 +1141,47 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				maxChannelID := msgUpd.Message.Link.ChatId
 
 				userId := msgUpd.Message.Sender.UserId
+
+				// `/bridge <ключ>` in the bot dialog primes a one-way
+				// TG-group → MAX-channel destination. This branch intentionally
+				// runs before crosspost: it is an ordinary bridge pair and
+				// therefore supports several TG groups targeting one channel.
+				b.maxChannelPairMu.Lock()
+				pairKey, pairWaiting := b.maxChannelPairWait[userId]
+				b.maxChannelPairMu.Unlock()
+				if pairWaiting {
+					chatType, known := b.maxChatType(ctx, maxChannelID)
+					switch {
+					case maxChannelID == 0:
+						m := maxbot.NewMessage().SetChat(chatID).
+							SetText("Не удалось определить канал. Перешлите именно пост из MAX-канала.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					case !known:
+						m := maxbot.NewMessage().SetChat(chatID).
+							SetText("Не удалось открыть канал. Сначала добавьте в него этого бота администратором, затем перешлите пост ещё раз.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					case chatType != maxschemes.CHANNEL:
+						m := maxbot.NewMessage().SetChat(chatID).
+							SetText("Для этого сценария нужен MAX-канал. Перешлите пост из канала, а не сообщение из группы.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					case !b.maxUserCanManageChat(ctx, maxChannelID, userId):
+						m := maxbot.NewMessage().SetChat(chatID).
+							SetText("Подключить канал может только его владелец или администратор.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					default:
+						reply, paired := b.completeMaxBridgeKey(ctx, pairKey, maxChannelID, userId)
+						m := maxbot.NewMessage().SetChat(chatID).SetText(reply)
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+						_, _, _, keyStillPending := b.repo.PeekBridgeKey(pairKey)
+						if paired || !keyStillPending {
+							b.maxChannelPairMu.Lock()
+							delete(b.maxChannelPairWait, userId)
+							b.maxChannelPairMu.Unlock()
+						}
+					}
+					continue
+				}
+
 				b.cpWaitMu.Lock()
 				tgChannelID, waiting := b.cpWait[userId]
 				if waiting {
@@ -1229,6 +1311,13 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 			}
 			linked := len(tgChats) > 0 || threadLinked
+			// A MAX channel used as an ordinary /bridge destination is a
+			// broadcast sink. Native posts from that channel must not fan back
+			// into its TG source groups; bidirectional channel publication is
+			// handled by the separate crosspost feature.
+			if linked && msgUpd.Message.Recipient.ChatType == maxschemes.CHANNEL {
+				continue
+			}
 			if linked && !b.isSelfMaxBot(msgUpd.Message.Sender.UserId) {
 				// Anti-loop
 				if !strings.HasPrefix(text, "[TG]") && !strings.HasPrefix(text, "[MAX]") {
@@ -1295,6 +1384,62 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// completeMaxBridgeKey consumes a TG-side /bridge key and attaches it to the
+// selected MAX channel. It mirrors the regular MAX group pairing checks while
+// replying in the user's dialog rather than publishing setup messages in the
+// destination channel.
+func (b *Bridge) completeMaxBridgeKey(ctx context.Context, key string, maxChatID, maxUserID int64) (string, bool) {
+	peerPlatform, tgChatID, tgOwnerID, found := b.repo.PeekBridgeKey(key)
+	if !found || peerPlatform != "tg" || tgChatID == 0 {
+		return "Ключ не найден или уже использован. Получите новый ключ и повторите подключение.", false
+	}
+
+	billingMaxOwner, billingTgOwner, workspaceNotice, workspaceOK :=
+		b.resolvePairWorkspace(ctx, tgChatID, maxChatID, tgOwnerID, maxUserID, "tg")
+	if !workspaceOK {
+		if workspaceNotice == "" {
+			workspaceNotice = "Не удалось определить рабочее пространство. Повторите попытку или напишите @bearlogin."
+		}
+		return workspaceNotice, false
+	}
+	if allowed, reason := b.pairAllowed(ctx, billingMaxOwner, billingTgOwner); !allowed {
+		b.forgetPairWorkspace(ctx, tgChatID, maxChatID)
+		return reason, false
+	}
+	if allowed, reason := b.addonPairDestinationAllowed(ctx, key, "max", maxChatID, maxUserID); !allowed {
+		b.forgetPairWorkspace(ctx, tgChatID, maxChatID)
+		return reason, false
+	}
+
+	paired, _, err := b.repo.Register(key, "max", maxChatID, maxUserID)
+	if err != nil {
+		b.forgetPairWorkspace(ctx, tgChatID, maxChatID)
+		slog.Error("MAX channel bridge register failed", "tg", tgChatID, "max", maxChatID, "err", err)
+		return "Не удалось создать мост. Попробуйте ещё раз.", false
+	}
+	if !paired {
+		b.forgetPairWorkspace(ctx, tgChatID, maxChatID)
+		return "Ключ не найден или уже использован. Получите новый ключ и повторите подключение.", false
+	}
+
+	b.repo.SetPairOwner("tg", tgChatID, billingTgOwner)
+	b.repo.SetPairOwner("max", maxChatID, billingMaxOwner)
+	if !b.addonPairCompleted(ctx, key, tgChatID, maxChatID) {
+		// A MAX channel can receive several TG groups. Never roll all of them
+		// back when completion of one new source fails.
+		b.repo.Unpair("tg", tgChatID)
+		b.forgetPairWorkspace(ctx, tgChatID, maxChatID)
+		return "Не удалось завершить настройку. Связка отменена — получите новый ключ и повторите попытку.", false
+	}
+
+	reply := "Готово! Новые сообщения из Telegram-группы будут публиковаться в выбранном MAX-канале."
+	if workspaceNotice != "" {
+		reply += "\n\n" + workspaceNotice
+	}
+	slog.Info("TG group paired to MAX channel", "tg", tgChatID, "max", maxChatID, "maxUser", maxUserID)
+	return reply, true
 }
 
 func (b *Bridge) maxMessageAlreadyMapped(mid string) bool {
