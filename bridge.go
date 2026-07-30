@@ -93,9 +93,6 @@ type Bridge struct {
 	cpTgOwnerMu sync.Mutex
 	cpTgOwner   map[int64]int64 // TG channel ID → TG user ID (кто переслал пост)
 
-	maxChannelPairMu   sync.Mutex
-	maxChannelPairWait map[int64]string // MAX user ID → bridge key; ждём форвард канала-приёмника
-
 	cbMu     sync.Mutex
 	breakers map[int64]*chatBreaker // destination chatID → breaker
 
@@ -164,7 +161,6 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		whSecret:           secret,
 		cpWait:             make(map[int64]int64),
 		cpTgOwner:          make(map[int64]int64),
-		maxChannelPairWait: make(map[int64]string),
 		breakers:           make(map[int64]*chatBreaker),
 		doctorLast:         make(map[string]time.Time),
 		queueInFlight:      make(map[int64]struct{}),

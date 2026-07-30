@@ -611,19 +611,6 @@ func (b *Bridge) addonPairDestinationAllowed(ctx context.Context, key, platform 
 	return h.PairDestinationAllowed(ctx, key, platform, chatID, userID)
 }
 
-// addonPrepareMaxChannelPair marks an ordinary TG bridge key as a one-way
-// TG-group → MAX-channel bridge. The private addon persists the direction;
-// public builds keep the regular bridge behaviour.
-func (b *Bridge) addonPrepareMaxChannelPair(ctx context.Context, key string, tgChatID, tgOwnerID int64) bool {
-	h, ok := b.addon.(interface {
-		PrepareMaxChannelPair(context.Context, string, int64, int64) bool
-	})
-	if !ok {
-		return true
-	}
-	return h.PrepareMaxChannelPair(ctx, key, tgChatID, tgOwnerID)
-}
-
 // maxAddonCallbackMessage передаёт расширению callback вместе с исходным mid.
 // Узкий optional-интерфейс сохраняет совместимость со сторонними Addon.
 func (b *Bridge) maxAddonCallbackMessage(ctx context.Context, userID, chatID int64, callbackID, data, mid string) bool {

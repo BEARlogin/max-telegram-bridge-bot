@@ -724,7 +724,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					slog.Info("paired", "platform", "tg", "chat", msg.Chat.ID, "key", key)
 				} else if generatedKey != "" {
 					b.tg.SendMessage(ctx, msg.Chat.ID,
-						fmt.Sprintf("Ключ для связки: <code>%s</code>\n\n<b>Если приёмник — MAX-группа:</b>\nдобавьте MAX-бота администратором с доступом к сообщениям и отправьте в группе:\n<code>/bridge %s</code>\n\n<b>Если приёмник — MAX-канал:</b>\nдобавьте MAX-бота администратором канала, отправьте этот же <code>/bridge %s</code> в личку MAX-бота, затем перешлите ему любой пост из канала.\n\nСсылка на MAX-бота: %s%s", generatedKey, generatedKey, generatedKey, b.cfg.MaxBotURL, b.reserveBotHint()),
+						fmt.Sprintf("Ключ для связки: <code>%s</code>\n\nДобавьте MAX-бота в нужную MAX-группу, сделайте его <b>администратором с правом «Доступ к сообщениям»</b> (читать все сообщения — иначе бот не увидит команду), и отправьте <b>в ней</b> (не в ЛС бота):\n<code>/bridge %s</code>\n\nСсылка на MAX-бота (для добавления в группу): %s%s", generatedKey, generatedKey, b.cfg.MaxBotURL, b.reserveBotHint()),
 						&SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
 					slog.Info("pending", "platform", "tg", "chat", msg.Chat.ID, "key", generatedKey)
 				} else {
