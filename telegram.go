@@ -200,16 +200,6 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 			// Обработка inline-кнопок (crosspost management)
 			if update.CallbackQuery != nil {
-				query := update.CallbackQuery
-				if query.Message != nil && query.From != nil && !query.From.IsBot &&
-					isTgGroup(query.Message.Chat.Type) {
-					ctx = withTGEphemeralTarget(ctx, tgEphemeralTarget{
-						ChatID:                     query.Message.Chat.ID,
-						ReceiverUserID:             query.From.ID,
-						IncomingEphemeralMessageID: query.Message.EphemeralMessageID,
-						CallbackQueryID:            query.ID,
-					})
-				}
 				b.handleTgCallback(ctx, update.CallbackQuery)
 				continue
 			}
@@ -240,14 +230,6 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						text = text[:at]
 					}
 				}
-			}
-			if strings.HasPrefix(text, "/") && msg.From != nil && !msg.From.IsBot &&
-				isTgGroup(msg.Chat.Type) {
-				ctx = withTGEphemeralTarget(ctx, tgEphemeralTarget{
-					ChatID:                     msg.Chat.ID,
-					ReceiverUserID:             msg.From.ID,
-					IncomingEphemeralMessageID: msg.EphemeralMessageID,
-				})
 			}
 			slog.Debug("TG msg received", "uid", tgUserID(msg), "chat", msg.Chat.ID, "type", msg.Chat.Type)
 			startPayload, isStart := telegramStartParam(text)

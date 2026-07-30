@@ -694,11 +694,6 @@ func (b *Bridge) registerCommands(ctx context.Context) {
 		slog.Error("TG setMyCommands (default) failed", "err", err)
 	}
 	groupCmds := append([]BotCommand(nil), cmds...)
-	if tgEphemeralEnabled() {
-		for i := range groupCmds {
-			groupCmds[i].IsEphemeral = true
-		}
-	}
 	if err := b.tg.SetMyCommands(ctx, groupCmds, &CommandScope{Type: "all_group_chats"}); err != nil {
 		slog.Error("TG setMyCommands (groups) failed", "err", err)
 	}
