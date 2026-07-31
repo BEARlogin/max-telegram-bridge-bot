@@ -26,13 +26,28 @@ type tgBotSender struct {
 	updates    chan TGUpdate
 }
 
+const tgUpdatesBuffer = 4096
+
+// enqueueUpdate never silently drops an update. Telegram can deliver a burst much
+// faster than the bridge's ordered dispatcher can consume it (especially while a
+// moderation/API call is in flight). The bot library invokes handlers in separate
+// goroutines, so applying backpressure here is safe: the handler waits for room or
+// stops with the application context instead of losing a message/command forever.
+func (s *tgBotSender) enqueueUpdate(ctx context.Context, update TGUpdate) {
+	select {
+	case s.updates <- update:
+	case <-ctx.Done():
+		slog.Warn("TG update canceled with application context")
+	}
+}
+
 func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, error) {
 	httpClient := &http.Client{Timeout: 2 * time.Minute}
 	s := &tgBotSender{
 		token:      token,
 		apiURL:     apiURL,
 		httpClient: httpClient,
-		updates:    make(chan TGUpdate, 100),
+		updates:    make(chan TGUpdate, tgUpdatesBuffer),
 	}
 
 	opts := []bot.Option{
@@ -43,11 +58,7 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 		bot.WithHTTPClient(25*time.Second, httpClient),
 		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			tgu := convertUpdate(update)
-			select {
-			case s.updates <- tgu:
-			default:
-				slog.Warn("TG update channel full, dropping update")
-			}
+			s.enqueueUpdate(ctx, tgu)
 		}),
 	}
 	if apiURL != "" {
