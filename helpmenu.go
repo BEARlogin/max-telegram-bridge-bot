@@ -155,6 +155,7 @@ func (b *Bridge) helpCmdsText() string {
 		"<code>/thread_bridge</code> — связать тред с отдельной MAX-группой\n" +
 		"<code>/thread_unbridge</code> — разорвать связку треда\n" +
 		"<code>/crosspost</code> — связки каналов и управление\n" +
+		"<code>/workspace</code> — выбрать рабочее пространство и его общий тариф\n" +
 		"<code>/doctor</code> — приватный отчёт по всем вашим подключениям"
 }
 

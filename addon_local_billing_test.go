@@ -4,12 +4,43 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestSwitchWorkspaceUsesInternalCommenterEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/workspace/switch" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var in struct {
+			UserID      int64  `json:"user_id"`
+			Platform    string `json:"platform"`
+			WorkspaceID int64  `json:"workspace_id"`
+			Secret      string `json:"secret"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Fatal(err)
+		}
+		if in.UserID != 123 || in.Platform != "tg" || in.WorkspaceID != 77 || in.Secret != "test-secret" {
+			t.Fatalf("payload=%+v", in)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"workspace_id":77,"workspace_name":"Команда"}`)
+	}))
+	defer server.Close()
+	t.Setenv("COMMENTER_URL", server.URL)
+	t.Setenv("COMMENT_SYNC_SECRET", "test-secret")
+
+	name, err := (&Bridge{}).switchWorkspace(context.Background(), 123, "tg", 77)
+	if err != nil || name != "Команда" {
+		t.Fatalf("name=%q err=%v", name, err)
+	}
+}
 
 func TestBuyMirrorSlotsShowsActualNextPeriodPrice(t *testing.T) {
 	tests := []struct {
