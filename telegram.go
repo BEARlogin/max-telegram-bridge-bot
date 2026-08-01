@@ -131,7 +131,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 				// Если маппинг не найден и есть медиа — отправляем как новое сообщение (fallback)
 				if hasMedia && !hasMapping {
-					name := b.pairRelayName(ctx, "tg", edited.Chat.ID, maxChatID, b.tgRelayName(edited))
+					name := b.pairRelayName(ctx, edited.Chat.ID, maxChatID, b.tgRelayName(edited))
 					caption := formatTgCaptionWithName(edited, name, false, b.cfg.MessageNewline)
 					go b.forwardTgToMax(ctx, edited, maxChatID, caption, false, false)
 					continue
@@ -156,7 +156,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						continue
 					}
 					mdText := tgEntitiesToHTML(rawText, editEntities)
-					name := b.pairRelayName(ctx, "tg", edited.Chat.ID, maxChatID, b.tgRelayName(edited))
+					name := b.pairRelayName(ctx, edited.Chat.ID, maxChatID, b.tgRelayName(edited))
 					fwd := formatAttributionHTML(name, mdText, b.cfg.MessageNewline)
 					if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, fwd, "html"); err != nil {
 						slog.Error("TG→MAX album caption edit failed", "err", err, "uid", tgUserID(edited), "tgChat", edited.Chat.ID, "maxMsgID", maxMsgID)
@@ -168,7 +168,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 				if hasMedia {
 					// Edit с медиа — редактируем сообщение в MAX с новым вложением
-					name := b.pairRelayName(ctx, "tg", edited.Chat.ID, maxChatID, b.tgRelayName(edited))
+					name := b.pairRelayName(ctx, edited.Chat.ID, maxChatID, b.tgRelayName(edited))
 					caption := formatTgCaptionWithName(edited, name, false, b.cfg.MessageNewline)
 					go b.editTgMediaInMax(ctx, edited, maxChatID, maxMsgID, caption)
 					continue
@@ -185,7 +185,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 				mdText := tgEntitiesToHTML(rawText, editEntities)
-				name := b.pairRelayName(ctx, "tg", edited.Chat.ID, maxChatID, b.tgRelayName(edited))
+				name := b.pairRelayName(ctx, edited.Chat.ID, maxChatID, b.tgRelayName(edited))
 				fwd := formatAttributionHTML(name, mdText, b.cfg.MessageNewline)
 				m := maxbot.NewMessage().SetChat(maxChatID).SetText(fwd)
 				m.SetFormat("html")
@@ -555,28 +555,6 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				continue
 			}
 
-			// /bridge prefix on/off
-			if text == "/bridge prefix on" || text == "/bridge prefix off" {
-				if !b.checkUserAllowed(ctx, msg.Chat.ID, tgUserID(msg), msg.MessageThreadID) {
-					continue
-				}
-				if isGroup && !isAdmin {
-					b.tg.SendMessage(ctx, msg.Chat.ID, adminDeniedText, &SendOpts{ThreadID: msg.MessageThreadID})
-					continue
-				}
-				on := text == "/bridge prefix on"
-				if b.repo.SetPrefix("tg", msg.Chat.ID, on) {
-					if on {
-						b.tg.SendMessage(ctx, msg.Chat.ID, "Префикс [TG]/[MAX] включён.", &SendOpts{ThreadID: msg.MessageThreadID})
-					} else {
-						b.tg.SendMessage(ctx, msg.Chat.ID, "Префикс [TG]/[MAX] выключен.", &SendOpts{ThreadID: msg.MessageThreadID})
-					}
-				} else {
-					b.tg.SendMessage(ctx, msg.Chat.ID, "Чат не связан. Сначала выполните /bridge.", &SendOpts{ThreadID: msg.MessageThreadID})
-				}
-				continue
-			}
-
 			// /bridge names [on|off] — подпись автора обычного bridge (PRO).
 			if text == "/bridge names" || text == "/bridge names on" || text == "/bridge names off" {
 				if !b.checkUserAllowed(ctx, msg.Chat.ID, tgUserID(msg), msg.MessageThreadID) {
@@ -605,7 +583,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				} else {
 					reply := "Имя отправителя будет показываться в пересланных сообщениях."
 					if !on {
-						reply = "Имя отправителя больше не добавляется. Если включён префикс, останется только [TG]/[MAX]."
+						reply = "Имя отправителя больше не добавляется — пересылается только содержимое сообщения."
 					}
 					b.tg.SendMessage(ctx, msg.Chat.ID, reply, &SendOpts{ThreadID: msg.MessageThreadID})
 				}
@@ -1044,7 +1022,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 			b.observeTgMessageAuthor(msg)
 
-			name := b.pairRelayName(ctx, "tg", msg.Chat.ID, maxChatID, b.tgRelayName(msg))
+			name := b.pairRelayName(ctx, msg.Chat.ID, maxChatID, b.tgRelayName(msg))
 			caption := formatTgCaptionWithName(msg, name, false, b.cfg.MessageNewline)
 
 			// Проверяем anti-loop
@@ -1234,7 +1212,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 			if fl := tgForwardLine(msg); fl != "" {
 				mdText = fl + mdText
 			}
-			name := b.pairRelayName(ctx, "tg", msg.Chat.ID, maxChatID, b.tgRelayName(msg))
+			name := b.pairRelayName(ctx, msg.Chat.ID, maxChatID, b.tgRelayName(msg))
 			mdCaption = formatAttributionHTML(name, mdText, b.cfg.MessageNewline)
 		}
 		m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
@@ -1535,7 +1513,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 	if isCrosspost {
 		mdCaption = mdText
 	} else {
-		name := b.pairRelayName(ctx, "tg", msg.Chat.ID, maxChatID, b.tgRelayName(msg))
+		name := b.pairRelayName(ctx, msg.Chat.ID, maxChatID, b.tgRelayName(msg))
 		mdCaption = formatAttributionHTML(name, mdText, b.cfg.MessageNewline)
 	}
 
@@ -1603,7 +1581,7 @@ func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID
 		editEntities = msg.Entities
 	}
 	mdText := tgEntitiesToHTML(rawText, editEntities)
-	name := b.pairRelayName(ctx, "tg", msg.Chat.ID, maxChatID, b.tgRelayName(msg))
+	name := b.pairRelayName(ctx, msg.Chat.ID, maxChatID, b.tgRelayName(msg))
 	mdCaption := formatAttributionHTML(name, mdText, b.cfg.MessageNewline)
 	m.SetText(mdCaption)
 	m.SetFormat("html")

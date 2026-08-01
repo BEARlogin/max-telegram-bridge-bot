@@ -313,7 +313,7 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 				cap = formatTgCrosspostCaptionRepl(it.msg, repl.TgToMax)
 				cap = collapseWhitespace(cap)
 			} else {
-				name := b.pairRelayName(ctx, "tg", it.msg.Chat.ID, maxChatID, b.tgRelayName(it.msg))
+				name := b.pairRelayName(ctx, it.msg.Chat.ID, maxChatID, b.tgRelayName(it.msg))
 				cap = formatTgCaptionWithName(it.msg, name, false, b.cfg.MessageNewline)
 			}
 			go b.forwardTgToMax(ctx, it.msg, maxChatID, cap, isCrosspost, false)

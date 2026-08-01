@@ -223,24 +223,20 @@ func TestFormatMaxCaption(t *testing.T) {
 	}
 }
 
-func TestRelayAttributionName(t *testing.T) {
+func TestSenderAttributionName(t *testing.T) {
 	tests := []struct {
 		name       string
-		platform   string
 		author     string
-		prefix     bool
 		showAuthor bool
 		want       string
 	}{
-		{name: "legacy", platform: "tg", author: "Анна", showAuthor: true, want: "Анна"},
-		{name: "author and prefix", platform: "max", author: "Иван", prefix: true, showAuthor: true, want: "[MAX] Иван"},
-		{name: "hidden author", platform: "tg", author: "Анна", showAuthor: false, want: ""},
-		{name: "hidden author keeps prefix", platform: "tg", author: "Анна", prefix: true, showAuthor: false, want: "[TG]"},
+		{name: "visible author", author: "Анна", showAuthor: true, want: "Анна"},
+		{name: "hidden author", author: "Анна", showAuthor: false, want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := relayAttributionName(tt.platform, tt.author, tt.prefix, tt.showAuthor); got != tt.want {
-				t.Fatalf("relayAttributionName() = %q, want %q", got, tt.want)
+			if got := senderAttributionName(tt.author, tt.showAuthor); got != tt.want {
+				t.Fatalf("senderAttributionName() = %q, want %q", got, tt.want)
 			}
 		})
 	}

@@ -140,7 +140,6 @@ func (b *Bridge) helpCmdsText() string {
 	return "⌨️ <b>Команды</b>\n\n" +
 		"<code>/bridge</code> — создать ключ для связки групп\n" +
 		"<code>/bridge ключ</code> — связать эту группу по ключу\n" +
-		"<code>/bridge prefix on|off</code> — префикс [TG]/[MAX]\n" +
 		"<code>/bridge names on|off</code> — показывать имя отправителя (PRO)\n" +
 		"<code>/bridge direction tg&gt;max|max&gt;tg|both</code> — направление bridge\n" +
 		"<code>/pause</code> — поставить связку на паузу (не зеркалить, не удаляя)\n" +

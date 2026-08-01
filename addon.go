@@ -715,15 +715,10 @@ func (b *Bridge) setPairSenderNameEnabled(ctx context.Context, userID, tgChatID,
 	return b.addon.SetPairSenderNameEnabled(ctx, userID, tgChatID, maxChatID, enabled)
 }
 
-// pairRelayName собирает только атрибуцию обычного bridge. При отключённом имени
-// отдельный платформенный префикс сохраняется, если он включён для связки.
-func (b *Bridge) pairRelayName(ctx context.Context, platform string, tgChatID, maxChatID int64, name string) string {
-	chatID := tgChatID
-	if platform == "max" {
-		chatID = maxChatID
-	}
-	return relayAttributionName(platform, name, b.hasPrefix(platform, chatID),
-		b.pairSenderNameEnabled(ctx, tgChatID, maxChatID))
+// pairRelayName возвращает имя автора обычного bridge либо пустую строку,
+// когда подпись автора отключена для связки.
+func (b *Bridge) pairRelayName(ctx context.Context, tgChatID, maxChatID int64, name string) string {
+	return senderAttributionName(name, b.pairSenderNameEnabled(ctx, tgChatID, maxChatID))
 }
 
 // crosspostFooter запрашивает у расширения дополнительный footer.

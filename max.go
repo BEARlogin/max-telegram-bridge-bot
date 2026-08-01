@@ -333,7 +333,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					name = editUpd.Message.Sender.Username
 				}
 				name = b.maxUserRelayName(editUpd.Message.Recipient.ChatId, editUpd.Message.Sender.UserId, name)
-				name = b.pairRelayName(ctx, "max", tgChatID, editUpd.Message.Recipient.ChatId, name)
+				name = b.pairRelayName(ctx, tgChatID, editUpd.Message.Recipient.ChatId, name)
 				text := editUpd.Message.Body.Text
 				if strings.HasPrefix(text, "[TG]") || strings.HasPrefix(text, "[MAX]") {
 					continue
@@ -633,28 +633,6 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 			}
 
-			// /bridge prefix on/off
-			if text == "/bridge prefix on" || text == "/bridge prefix off" {
-				if isGroup && !isAdmin {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
-					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
-					continue
-				}
-				on := text == "/bridge prefix on"
-				if b.repo.SetPrefix("max", chatID, on) {
-					reply := "Префикс [TG]/[MAX] включён."
-					if !on {
-						reply = "Префикс [TG]/[MAX] выключен."
-					}
-					m := maxbot.NewMessage().SetChat(chatID).SetText(reply)
-					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
-				} else {
-					m := maxbot.NewMessage().SetChat(chatID).SetText("Чат не связан. Сначала выполните /bridge.")
-					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
-				}
-				continue
-			}
-
 			// /bridge names [on|off] — подпись автора обычного bridge (PRO).
 			if text == "/bridge names" || text == "/bridge names on" || text == "/bridge names off" {
 				if isGroup && !isAdmin {
@@ -683,7 +661,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				} else {
 					reply := "Имя отправителя будет показываться в пересланных сообщениях."
 					if !on {
-						reply = "Имя отправителя больше не добавляется. Если включён префикс, останется только [TG]/[MAX]."
+						reply = "Имя отправителя больше не добавляется — пересылается только содержимое сообщения."
 					}
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, maxbot.NewMessage().SetChat(chatID).SetText(reply))
 				}
@@ -1280,7 +1258,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				b.observeMaxMessageAuthor(msgUpd)
 				// Anti-loop
 				if !strings.HasPrefix(text, "[TG]") && !strings.HasPrefix(text, "[MAX]") {
-					caption := formatMaxCaptionWithName(msgUpd, b.maxRelayName(msgUpd), b.hasPrefix("max", chatID), b.cfg.MessageNewline)
+					caption := formatMaxCaptionWithName(msgUpd, b.maxRelayName(msgUpd), false, b.cfg.MessageNewline)
 					if threadLinked {
 						go b.forwardMaxToTg(ctx, msgUpd, threadTg, caption, false)
 					} else {
@@ -1382,7 +1360,6 @@ func (b *Bridge) sendMaxStart(ctx context.Context, chatID int64) {
 		"Команды (группы):\n" +
 		"/bridge — создать ключ для связки чатов\n" +
 		"/bridge <ключ> — связать этот чат с Telegram-чатом по ключу\n" +
-		"/bridge prefix on/off — включить/выключить префикс [TG]/[MAX]\n" +
 		"/bridge names on/off — показывать/скрывать имя отправителя (PRO)\n" +
 		"/bridge direction tg>max|max>tg|both — направление bridge\n" +
 		"/unbridge — удалить связку\n" +
@@ -2274,7 +2251,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			htmlCaption = htmlText
 		} else {
 			// Bridge: caption с атрибуцией — жирное имя
-			name := b.pairRelayName(ctx, "max", tgChatID, chatID, b.maxRelayName(msgUpd))
+			name := b.pairRelayName(ctx, tgChatID, chatID, b.maxRelayName(msgUpd))
 			htmlCaption = formatAttributionHTML(name, htmlText, b.cfg.MessageNewline)
 		}
 	}
