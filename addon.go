@@ -66,6 +66,11 @@ type Addon interface {
 	PairDirection(ctx context.Context, tgChatID, maxChatID int64) string
 	// SetPairDirection меняет направление обычного bridge.
 	SetPairDirection(ctx context.Context, userID, tgChatID, maxChatID int64, direction string) (ok bool, reason string)
+	// PairSenderNameEnabled сообщает, нужно ли добавлять имя автора в сообщения
+	// обычного bridge. Отсутствующая настройка означает true.
+	PairSenderNameEnabled(ctx context.Context, tgChatID, maxChatID int64) bool
+	// SetPairSenderNameEnabled меняет PRO-настройку подписи автора.
+	SetPairSenderNameEnabled(ctx context.Context, userID, tgChatID, maxChatID int64, enabled bool) (ok bool, reason string)
 	// HandleMaxCommand — команда из MAX-диалога. true ⇒ обработано аддоном.
 	HandleMaxCommand(ctx context.Context, userID, chatID int64, text string) (handled bool)
 	// HandleChatShared — пользователь выбрал чат нативной кнопкой (chat_shared в личке).
@@ -694,6 +699,31 @@ func (b *Bridge) setPairDirection(ctx context.Context, userID, tgChatID, maxChat
 		return false, "Изменение направления недоступно в этой сборке."
 	}
 	return b.addon.SetPairDirection(ctx, userID, tgChatID, maxChatID, direction)
+}
+
+func (b *Bridge) pairSenderNameEnabled(ctx context.Context, tgChatID, maxChatID int64) bool {
+	if b.addon == nil {
+		return true
+	}
+	return b.addon.PairSenderNameEnabled(ctx, tgChatID, maxChatID)
+}
+
+func (b *Bridge) setPairSenderNameEnabled(ctx context.Context, userID, tgChatID, maxChatID int64, enabled bool) (bool, string) {
+	if b.addon == nil {
+		return false, "Настройка имени отправителя недоступна в этой сборке."
+	}
+	return b.addon.SetPairSenderNameEnabled(ctx, userID, tgChatID, maxChatID, enabled)
+}
+
+// pairRelayName собирает только атрибуцию обычного bridge. При отключённом имени
+// отдельный платформенный префикс сохраняется, если он включён для связки.
+func (b *Bridge) pairRelayName(ctx context.Context, platform string, tgChatID, maxChatID int64, name string) string {
+	chatID := tgChatID
+	if platform == "max" {
+		chatID = maxChatID
+	}
+	return relayAttributionName(platform, name, b.hasPrefix(platform, chatID),
+		b.pairSenderNameEnabled(ctx, tgChatID, maxChatID))
 }
 
 // crosspostFooter запрашивает у расширения дополнительный footer.

@@ -61,6 +61,23 @@ func formatAttributionHTML(name, text string, newline bool) string {
 	return bold + ": " + text
 }
 
+// relayAttributionName формирует левую часть подписи bridge-сообщения.
+// Имя и платформенный префикс управляются независимо: если имя скрыто, но
+// префикс включён, остаётся только [TG] или [MAX].
+func relayAttributionName(platform, name string, prefix, showName bool) string {
+	if !showName {
+		name = ""
+	}
+	if !prefix {
+		return name
+	}
+	tag := "[" + strings.ToUpper(platform) + "]"
+	if strings.TrimSpace(name) == "" {
+		return tag
+	}
+	return tag + " " + name
+}
+
 // tgForwardLine — метка «↪️ Переслано из X\n» (HTML, italic) для зеркалируемых форвардов.
 // "" если сообщение не форвард. Подмешивается в начало тела (после атрибуции автора).
 func tgForwardLine(msg *TGMessage) string {

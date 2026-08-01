@@ -162,8 +162,6 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 	mc := b.maxClientFor(ctx, maxChatID) // SDK-клиент бота этого чата (дуал)
 
 	uid := tgUserID(items[0].msg)
-	prefix := !isCrosspost && b.hasPrefix("tg", items[0].msg.Chat.ID)
-
 	// Опциональная кнопка мини-аппа под кросспостом-альбомом.
 	var openApp *maxOpenApp
 	if isCrosspost {
@@ -315,7 +313,8 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 				cap = formatTgCrosspostCaptionRepl(it.msg, repl.TgToMax)
 				cap = collapseWhitespace(cap)
 			} else {
-				cap = formatTgCaptionWithName(it.msg, b.tgRelayName(it.msg), prefix, b.cfg.MessageNewline)
+				name := b.pairRelayName(ctx, "tg", it.msg.Chat.ID, maxChatID, b.tgRelayName(it.msg))
+				cap = formatTgCaptionWithName(it.msg, name, false, b.cfg.MessageNewline)
 			}
 			go b.forwardTgToMax(ctx, it.msg, maxChatID, cap, isCrosspost, false)
 		}

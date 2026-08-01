@@ -328,12 +328,12 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						continue
 					}
 				}
-				prefix := b.hasPrefix("max", editUpd.Message.Recipient.ChatId)
 				name := editUpd.Message.Sender.Name
 				if name == "" {
 					name = editUpd.Message.Sender.Username
 				}
 				name = b.maxUserRelayName(editUpd.Message.Recipient.ChatId, editUpd.Message.Sender.UserId, name)
+				name = b.pairRelayName(ctx, "max", tgChatID, editUpd.Message.Recipient.ChatId, name)
 				text := editUpd.Message.Body.Text
 				if strings.HasPrefix(text, "[TG]") || strings.HasPrefix(text, "[MAX]") {
 					continue
@@ -349,15 +349,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					} else {
 						htmlText = html.EscapeString(text)
 					}
-					escapedName := html.EscapeString(name)
-					if prefix {
-						escapedName = "[MAX] " + escapedName
-					}
-					if b.cfg.MessageNewline {
-						fwd = "<b>" + escapedName + "</b>:\n" + htmlText
-					} else {
-						fwd = "<b>" + escapedName + "</b>: " + htmlText
-					}
+					fwd = formatAttributionHTML(name, htmlText, b.cfg.MessageNewline)
 					editParseMode = "HTML"
 				}
 
@@ -659,6 +651,41 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				} else {
 					m := maxbot.NewMessage().SetChat(chatID).SetText("Чат не связан. Сначала выполните /bridge.")
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+				}
+				continue
+			}
+
+			// /bridge names [on|off] — подпись автора обычного bridge (PRO).
+			if text == "/bridge names" || text == "/bridge names on" || text == "/bridge names off" {
+				if isGroup && !isAdmin {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
+				tgChatID, linked := b.repo.GetTgChat(chatID)
+				if !linked {
+					m := maxbot.NewMessage().SetChat(chatID).SetText("Чат не связан. Сначала выполните /bridge.")
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
+				if text == "/bridge names" {
+					state := "включено"
+					if !b.pairSenderNameEnabled(ctx, tgChatID, chatID) {
+						state = "выключено"
+					}
+					reply := "Имя отправителя: " + state + ".\nИзменить: /bridge names on или /bridge names off (PRO)."
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, maxbot.NewMessage().SetChat(chatID).SetText(reply))
+					continue
+				}
+				on := text == "/bridge names on"
+				if ok, reason := b.setPairSenderNameEnabled(ctx, msgUpd.Message.Sender.UserId, tgChatID, chatID, on); !ok {
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, maxbot.NewMessage().SetChat(chatID).SetText(reason))
+				} else {
+					reply := "Имя отправителя будет показываться в пересланных сообщениях."
+					if !on {
+						reply = "Имя отправителя больше не добавляется. Если включён префикс, останется только [TG]/[MAX]."
+					}
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, maxbot.NewMessage().SetChat(chatID).SetText(reply))
 				}
 				continue
 			}
@@ -1253,8 +1280,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				b.observeMaxMessageAuthor(msgUpd)
 				// Anti-loop
 				if !strings.HasPrefix(text, "[TG]") && !strings.HasPrefix(text, "[MAX]") {
-					prefix := b.hasPrefix("max", chatID)
-					caption := formatMaxCaptionWithName(msgUpd, b.maxRelayName(msgUpd), prefix, b.cfg.MessageNewline)
+					caption := formatMaxCaptionWithName(msgUpd, b.maxRelayName(msgUpd), b.hasPrefix("max", chatID), b.cfg.MessageNewline)
 					if threadLinked {
 						go b.forwardMaxToTg(ctx, msgUpd, threadTg, caption, false)
 					} else {
@@ -1357,6 +1383,7 @@ func (b *Bridge) sendMaxStart(ctx context.Context, chatID int64) {
 		"/bridge — создать ключ для связки чатов\n" +
 		"/bridge <ключ> — связать этот чат с Telegram-чатом по ключу\n" +
 		"/bridge prefix on/off — включить/выключить префикс [TG]/[MAX]\n" +
+		"/bridge names on/off — показывать/скрывать имя отправителя (PRO)\n" +
 		"/bridge direction tg>max|max>tg|both — направление bridge\n" +
 		"/unbridge — удалить связку\n" +
 		"/name Имя — подписывать участника своим именем (ответом на сообщение, только админ)\n" +
@@ -2247,16 +2274,8 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			htmlCaption = htmlText
 		} else {
 			// Bridge: caption с атрибуцией — жирное имя
-			name := b.maxRelayName(msgUpd)
-			if b.hasPrefix("max", msgUpd.Message.Recipient.ChatId) {
-				name = "[MAX] " + name
-			}
-			escapedName := html.EscapeString(name)
-			if b.cfg.MessageNewline {
-				htmlCaption = "<b>" + escapedName + "</b>:\n" + htmlText
-			} else {
-				htmlCaption = "<b>" + escapedName + "</b>: " + htmlText
-			}
+			name := b.pairRelayName(ctx, "max", tgChatID, chatID, b.maxRelayName(msgUpd))
+			htmlCaption = formatAttributionHTML(name, htmlText, b.cfg.MessageNewline)
 		}
 	}
 
