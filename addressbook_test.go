@@ -145,3 +145,46 @@ func TestMessageMappingsAndAuthorsAreKeptForThirtyDays(t *testing.T) {
 		t.Fatal("29-day-old message mapping was removed")
 	}
 }
+
+func TestPinnedTgMessageMappingsSurviveCleanup(t *testing.T) {
+	repo := testRepo(t)
+	bridge := &Bridge{repo: repo}
+	now := time.Now().Unix()
+
+	// Telegram can report the pin while asynchronous TG→MAX delivery is still
+	// in flight. The marker must therefore be accepted before the route exists.
+	bridge.retainTgPinnedMessage(&TGMessage{
+		Chat:               ChatInfo{ID: -1001},
+		PinnedMessageID:    31,
+		PinnedMediaGroupID: "album-1",
+	})
+	repo.SaveMsgOrigin(-1001, 31, -2001, "pinned-mid", 0, "tg")
+	repo.SaveTgMediaState(-1001, TgMediaState{TgMsgID: 31, MediaGroupID: "album-1", Fingerprint: "photo:1"})
+	repo.SaveMsgOrigin(-1001, 32, -2001, "pinned-mid", 0, "tg")
+	repo.SaveTgMediaState(-1001, TgMediaState{TgMsgID: 32, MediaGroupID: "album-1", Fingerprint: "photo:2"})
+	repo.SaveMessageAuthor("tg", -1001, "31", MessageAuthor{Platform: "tg", ChatID: -1001, UserID: 42})
+	repo.SaveMessageAuthor("tg", -1001, "32", MessageAuthor{Platform: "tg", ChatID: -1001, UserID: 42})
+	repo.SaveMessageAuthor("max", -2001, "pinned-mid", MessageAuthor{Platform: "tg", ChatID: -1001, UserID: 42})
+
+	old := now - 31*24*3600
+	_, _ = repo.db.Exec("UPDATE messages SET created_at=? WHERE tg_chat_id=? AND tg_msg_id IN (?,?)", old, -1001, 31, 32)
+	_, _ = repo.db.Exec("UPDATE message_authors SET created_at=? WHERE message_id IN (?,?,?)", old, "31", "32", "pinned-mid")
+	_, _ = repo.db.Exec("UPDATE pinned_tg_messages SET pinned_at=? WHERE tg_chat_id=? AND tg_msg_id=?", old, -1001, 31)
+
+	repo.CleanOldMessages()
+	if got, ok := repo.LookupMaxMsgID(-1001, 31); !ok || got != "pinned-mid" {
+		t.Fatalf("pinned message mapping = %q, %v; want retained route", got, ok)
+	}
+	if got, ok := repo.LookupMaxMsgID(-1001, 32); !ok || got != "pinned-mid" {
+		t.Fatalf("pinned album item mapping = %q, %v; want retained route", got, ok)
+	}
+	if _, ok := repo.LookupMessageAuthor("tg", -1001, "31"); !ok {
+		t.Fatal("pinned Telegram author mapping was removed")
+	}
+	if _, ok := repo.LookupMessageAuthor("max", -2001, "pinned-mid"); !ok {
+		t.Fatal("pinned MAX mirror author mapping was removed")
+	}
+	if _, ok := repo.LookupMessageAuthor("tg", -1001, "32"); !ok {
+		t.Fatal("pinned Telegram album author mapping was removed")
+	}
+}

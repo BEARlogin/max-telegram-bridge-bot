@@ -100,6 +100,10 @@ type TGMessage struct {
 	// IsService — служебное сообщение (вступил/вышел из чата, смена названия,
 	// закреп и т.п.). Такие не зеркалим в MAX (иначе летит пустое сообщение).
 	IsService bool
+	// PinnedMessageID is set on Telegram's service message about a newly pinned
+	// message. The bridge keeps that message route beyond the normal 30-day TTL.
+	PinnedMessageID    int
+	PinnedMediaGroupID string
 	// IsAutomaticForward — авто-форвард поста канала в его группу обсуждения
 	// (Telegram ставит is_automatic_forward). По нему строим маппинг пост↔тред.
 	IsAutomaticForward bool

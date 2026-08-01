@@ -66,6 +66,12 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				continue
 			}
 
+			// Telegram sends pinning as a service message. Record it before the
+			// normal service-message skip and before asynchronous delivery can
+			// race with creation of the message mapping.
+			b.retainTgPinnedMessage(update.Message)
+			b.retainTgPinnedMessage(update.ChannelPost)
+
 			// Обработка channel posts (crosspost forwarding only)
 			if update.EditedChannelPost != nil {
 				b.handleTgEditedChannelPost(ctx, update.EditedChannelPost)
@@ -1049,6 +1055,17 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			go b.forwardTgToMax(ctx, msg, maxChatID, caption, false, false)
 		}
 	}
+}
+
+func (b *Bridge) retainTgPinnedMessage(msg *TGMessage) {
+	if msg == nil || msg.PinnedMessageID <= 0 {
+		return
+	}
+	if err := b.repo.RetainTgMessage(msg.Chat.ID, msg.PinnedMessageID, msg.PinnedMediaGroupID); err != nil {
+		slog.Error("retain pinned TG message failed", "err", err, "tgChat", msg.Chat.ID, "tgMsg", msg.PinnedMessageID)
+		return
+	}
+	slog.Info("retained pinned TG message mapping", "tgChat", msg.Chat.ID, "tgMsg", msg.PinnedMessageID)
 }
 
 func shouldSkipDiscussionRelay(threadLinked, groupLinked bool) bool {

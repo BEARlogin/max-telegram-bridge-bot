@@ -952,6 +952,14 @@ func convertMsg(m *models.Message) *TGMessage {
 		m.BoostAdded != nil || m.WriteAccessAllowed != nil || m.ProximityAlertTriggered != nil {
 		msg.IsService = true
 	}
+	if m.PinnedMessage != nil {
+		if m.PinnedMessage.Message != nil {
+			msg.PinnedMessageID = m.PinnedMessage.Message.ID
+			msg.PinnedMediaGroupID = m.PinnedMessage.Message.MediaGroupID
+		} else if m.PinnedMessage.InaccessibleMessage != nil {
+			msg.PinnedMessageID = m.PinnedMessage.InaccessibleMessage.MessageID
+		}
+	}
 	msg.IsAutomaticForward = m.IsAutomaticForward
 
 	if m.ChatShared != nil {

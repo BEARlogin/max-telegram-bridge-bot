@@ -92,6 +92,10 @@ type Repository interface {
 	LookupMessageRouteByMax(maxMsgID string) (tgChatID int64, tgMsgID int, maxChatID int64, origin string, ok bool)
 	ListTgMsgIDs(maxMsgID string, tgChatID int64) []int
 	DeleteTgMsgMapping(tgChatID int64, tgMsgID int)
+	// RetainTgMessage records a Telegram pin event. The marker is stored even
+	// when delivery is still in flight, so the later message mapping survives
+	// the normal 30-day cleanup.
+	RetainTgMessage(tgChatID int64, tgMsgID int, mediaGroupID string) error
 	LookupTgMsgOrigin(maxMsgID string) (origin string, ok bool)
 	// MaxMsgDeliveredTo — было ли это MAX-сообщение уже доставлено именно в этот TG-чат
 	// (пер-чат дедуп: при фан-ауте одного MAX-сообщения в несколько TG-групп нельзя

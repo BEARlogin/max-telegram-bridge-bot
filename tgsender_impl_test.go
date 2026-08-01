@@ -53,6 +53,44 @@ func TestTelegramSendMessageUsesOnlyOrdinaryBotAPI(t *testing.T) {
 	}
 }
 
+func TestConvertMsgCapturesPinnedMessageID(t *testing.T) {
+	tests := []struct {
+		name   string
+		pinned *models.MaybeInaccessibleMessage
+		want   int
+	}{
+		{
+			name: "accessible",
+			pinned: &models.MaybeInaccessibleMessage{
+				Message: &models.Message{ID: 41, MediaGroupID: "album-1"},
+			},
+			want: 41,
+		},
+		{
+			name: "inaccessible",
+			pinned: &models.MaybeInaccessibleMessage{
+				InaccessibleMessage: &models.InaccessibleMessage{MessageID: 42},
+			},
+			want: 42,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertMsg(&models.Message{
+				ID:            100,
+				Chat:          models.Chat{ID: -1001, Type: models.ChatTypeSupergroup},
+				PinnedMessage: tt.pinned,
+			})
+			if got == nil || !got.IsService || got.PinnedMessageID != tt.want {
+				t.Fatalf("converted pinned message = %+v, want service with id %d", got, tt.want)
+			}
+			if tt.name == "accessible" && got.PinnedMediaGroupID != "album-1" {
+				t.Fatalf("pinned media group = %q, want album-1", got.PinnedMediaGroupID)
+			}
+		})
+	}
+}
+
 func TestSendWelcomeEphemeralUsesExplicitReceiverOnly(t *testing.T) {
 	var got struct {
 		ChatID         int64  `json:"chat_id"`

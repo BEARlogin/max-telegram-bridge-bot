@@ -252,6 +252,20 @@ func (r *pgRepo) DeleteTgMsgMapping(tgChatID int64, tgMsgID int) {
 	_, _ = r.db.Exec("DELETE FROM messages WHERE tg_chat_id=$1 AND tg_msg_id=$2", tgChatID, tgMsgID)
 }
 
+func (r *pgRepo) RetainTgMessage(tgChatID int64, tgMsgID int, mediaGroupID string) error {
+	if tgChatID == 0 || tgMsgID <= 0 {
+		return nil
+	}
+	_, err := r.db.Exec(`INSERT INTO pinned_tg_messages (tg_chat_id,tg_msg_id,media_group_id,pinned_at)
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT(tg_chat_id,tg_msg_id) DO UPDATE SET
+			media_group_id=CASE
+				WHEN EXCLUDED.media_group_id!='' THEN EXCLUDED.media_group_id
+				ELSE pinned_tg_messages.media_group_id
+			END`, tgChatID, tgMsgID, mediaGroupID, time.Now().Unix())
+	return err
+}
+
 func (r *pgRepo) LookupTgMsgOrigin(maxMsgID string) (string, bool) {
 	var origin string
 	err := r.db.QueryRow("SELECT COALESCE(origin, '') FROM messages WHERE max_msg_id = $1", maxMsgID).Scan(&origin)
@@ -319,8 +333,39 @@ func (r *pgRepo) DeleteUserAlias(platform string, chatID, userID int64) bool {
 
 func (r *pgRepo) CleanOldMessages() {
 	cutoff := time.Now().Add(-30 * 24 * time.Hour).Unix()
-	r.db.Exec("DELETE FROM messages WHERE created_at < $1", cutoff)
-	r.db.Exec("DELETE FROM message_authors WHERE created_at < $1", cutoff)
+	r.db.Exec(`DELETE FROM message_authors
+		WHERE created_at < $1
+		AND NOT EXISTS (
+			SELECT 1
+			FROM messages m
+			JOIN pinned_tg_messages p
+			  ON p.tg_chat_id=m.tg_chat_id
+			 AND (p.tg_msg_id=m.tg_msg_id
+			      OR (p.media_group_id!='' AND p.media_group_id=m.media_group_id))
+			WHERE (message_authors.platform='tg'
+			       AND message_authors.chat_id=m.tg_chat_id
+			       AND message_authors.message_id=CAST(m.tg_msg_id AS TEXT))
+			   OR (message_authors.platform='max'
+			       AND message_authors.chat_id=m.max_chat_id
+			       AND message_authors.message_id=m.max_msg_id)
+		)`, cutoff)
+	r.db.Exec(`DELETE FROM messages
+		WHERE created_at < $1
+		AND NOT EXISTS (
+			SELECT 1 FROM pinned_tg_messages p
+			WHERE p.tg_chat_id=messages.tg_chat_id
+			  AND (p.tg_msg_id=messages.tg_msg_id
+			       OR (p.media_group_id!='' AND p.media_group_id=messages.media_group_id))
+		)`, cutoff)
+	r.db.Exec(`DELETE FROM pinned_tg_messages
+		WHERE pinned_at < $1
+		AND NOT EXISTS (
+			SELECT 1 FROM messages m
+			WHERE m.tg_chat_id=pinned_tg_messages.tg_chat_id
+			  AND (m.tg_msg_id=pinned_tg_messages.tg_msg_id
+			       OR (pinned_tg_messages.media_group_id!=''
+			           AND m.media_group_id=pinned_tg_messages.media_group_id))
+		)`, cutoff)
 	r.db.Exec("DELETE FROM pending WHERE created_at > 0 AND created_at < $1", time.Now().Unix()-3600)
 }
 
