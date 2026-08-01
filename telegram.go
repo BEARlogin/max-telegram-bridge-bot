@@ -1330,20 +1330,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 			return
 		}
 	} else if msg.Document != nil {
-		name := msg.Document.FileName
-		uploadType := maxschemes.FILE
-		attType := "file"
-		// Документ с video MIME → загружаем как видео
-		if strings.HasPrefix(msg.Document.MimeType, "video/") {
-			uploadType = maxschemes.VIDEO
-			attType = "video"
-			if name == "" {
-				name = mimeToFilename("video", msg.Document.MimeType)
-			}
-		}
-		if name == "" {
-			name = mimeToFilename("document", msg.Document.MimeType)
-		}
+		name, uploadType, attType := tgDocumentMaxSpec(msg.Document.FileName, msg.Document.MimeType)
 		if checkSize(msg.Document.FileSize, name) {
 			return
 		}
@@ -1615,29 +1602,14 @@ func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID
 		}
 		m.AddVideo(uploaded)
 	} else if msg.Document != nil {
-		name := msg.Document.FileName
-		uploadType := maxschemes.FILE
-		isVideo := strings.HasPrefix(msg.Document.MimeType, "video/")
-		if isVideo {
-			uploadType = maxschemes.VIDEO
-			if name == "" {
-				name = mimeToFilename("video", msg.Document.MimeType)
-			}
-		}
-		if name == "" {
-			name = mimeToFilename("document", msg.Document.MimeType)
-		}
+		name, uploadType, _ := tgDocumentMaxSpec(msg.Document.FileName, msg.Document.MimeType)
 		uploaded, err := b.uploadTgMediaToMax(ctx, msg.Document.FileID, uploadType, name)
 		if err != nil {
 			slog.Error("TG→MAX edit document upload failed", "err", err)
 			b.tg.SendMessage(ctx, msg.Chat.ID, uploadErrMsg(fmt.Sprintf("Не удалось обновить файл \"%s\" в MAX", name), err), nil)
 			return
 		}
-		if isVideo {
-			m.AddVideo(uploaded)
-		} else {
-			m.AddFile(uploaded)
-		}
+		m.AddFile(uploaded)
 	} else if msg.Audio != nil {
 		name := "audio.mp3"
 		if msg.Audio.FileName != "" {

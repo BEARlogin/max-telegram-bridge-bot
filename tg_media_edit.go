@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
@@ -90,24 +89,13 @@ func (b *Bridge) editTgCrosspostMediaInMax(
 			}
 			m.AddVideo(uploaded)
 		case "document":
-			name := state.FileName
-			if name == "" {
-				name = mimeToFilename("document", state.MimeType)
-			}
-			uploadType := maxschemes.FILE
-			if strings.HasPrefix(state.MimeType, "video/") {
-				uploadType = maxschemes.VIDEO
-			}
+			name, uploadType, _ := tgDocumentMaxSpec(state.FileName, state.MimeType)
 			uploaded, err := b.uploadTgMediaToMax(ctx, state.FileID, uploadType, name)
 			if err != nil {
 				slog.Error("TG→MAX edit document replacement failed", "err", err, "tgChat", msg.Chat.ID)
 				return
 			}
-			if uploadType == maxschemes.VIDEO {
-				m.AddVideo(uploaded)
-			} else {
-				m.AddFile(uploaded)
-			}
+			m.AddFile(uploaded)
 		case "audio":
 			name := state.FileName
 			if name == "" {

@@ -16,9 +16,27 @@ import (
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
 
-// mediaMaxBytes — потолок размера перезаливаемого медиа. Больше — отказ с внятной
-// ошибкой вместо OOM (локальный Bot API отдаёт файлы до 2GB).
-const mediaMaxBytes = 512 << 20 // 512MB
+// mediaMaxBytes limits paths that may still buffer a complete media object in RAM.
+// Generic TG→MAX documents use a separate streaming limit below.
+const mediaMaxBytes int64 = 512 << 20 // 512 MiB
+
+// maxFileUploadBytes is safe for the streaming TG→MAX path: customUploadToMax
+// spools multipart data to disk instead of keeping the complete document in RAM.
+const maxFileUploadBytes int64 = 1 << 30 // 1 GiB
+
+func maxUploadLimit(uploadType maxschemes.UploadType) int64 {
+	if uploadType == maxschemes.FILE {
+		return maxFileUploadBytes
+	}
+	return mediaMaxBytes
+}
+
+func maxUploadTimeout(uploadType maxschemes.UploadType) time.Duration {
+	if uploadType == maxschemes.FILE {
+		return 30 * time.Minute
+	}
+	return 5 * time.Minute
+}
 
 // mediaUpSem ограничивает ПАРАЛЛЕЛЬНЫЕ перезаливы медиа в MAX: несколько больших
 // видео одновременно давали пик памяти и OOM-kill процесса.
@@ -121,8 +139,9 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	// Детачим от родительской отмены: в webhook-режиме ctx привязан к HTTP-запросу апдейта и
 	// отменяется, как только хендлер ответил 200 — а загрузка большого фото/видео в MAX CDN ещё
 	// идёт → «context canceled», кросспост падал (жалоба «не удалось отправить в MAX»). Values
-	// (dual-бот токен из ctx) сохраняем через WithoutCancel; свой таймаут 5 мин ограничивает.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	// (dual-бот токен из ctx) сохраняем через WithoutCancel; свой таймаут ограничивает
+	// зависшую загрузку (для больших файлов он длиннее, чем для обычных медиа).
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), maxUploadTimeout(uploadType))
 	defer cancel()
 
 	// 1. Получаем URL и token от MAX API
@@ -185,11 +204,12 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	if err != nil {
 		return nil, fmt.Errorf("create form file: %w", err)
 	}
-	n, err := io.Copy(part, io.LimitReader(reader, mediaMaxBytes+1))
+	uploadLimit := maxUploadLimit(uploadType)
+	n, err := io.Copy(part, io.LimitReader(reader, uploadLimit+1))
 	if err != nil {
 		return nil, fmt.Errorf("copy to form: %w", err)
 	}
-	if n > mediaMaxBytes {
+	if n > uploadLimit {
 		return nil, &ErrFileTooLarge{Size: n, Name: fileName}
 	}
 	writer.Close()
@@ -396,7 +416,7 @@ func (b *Bridge) uploadTgMediaToMax(ctx context.Context, fileID string, uploadTy
 	}
 
 	// Слишком большой файл — отказ ДО перекачки (иначе зря гоняем сотни МБ).
-	if resp.ContentLength > mediaMaxBytes {
+	if resp.ContentLength > maxUploadLimit(uploadType) {
 		return nil, &ErrFileTooLarge{Size: resp.ContentLength, Name: fileName}
 	}
 
