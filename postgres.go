@@ -112,6 +112,9 @@ func (r *pgRepo) MigrateTgChat(oldID, newID int64) error {
 	_, err := r.db.Exec("UPDATE pairs SET tg_chat_id = $1 WHERE tg_chat_id = $2", newID, oldID)
 	if err == nil {
 		r.db.Exec("UPDATE messages SET tg_chat_id = $1 WHERE tg_chat_id = $2", newID, oldID)
+		r.db.Exec("UPDATE message_authors SET chat_id = $1 WHERE platform = 'tg' AND chat_id = $2", newID, oldID)
+		r.db.Exec("UPDATE message_authors SET source_chat_id = $1 WHERE source_platform = 'tg' AND source_chat_id = $2", newID, oldID)
+		r.db.Exec("UPDATE user_aliases SET chat_id = $1 WHERE platform = 'tg' AND chat_id = $2", newID, oldID)
 	}
 	return err
 }
@@ -153,7 +156,7 @@ func (r *pgRepo) SaveMsgOrigin(tgChatID int64, tgMsgID int, maxChatID int64, max
 		`INSERT INTO messages (tg_chat_id, tg_msg_id, max_chat_id, max_msg_id, tg_thread_id, origin, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 ON CONFLICT (tg_chat_id, tg_msg_id) DO UPDATE
-		 SET max_chat_id = EXCLUDED.max_chat_id, max_msg_id = EXCLUDED.max_msg_id, tg_thread_id = EXCLUDED.tg_thread_id, origin = EXCLUDED.origin, created_at = EXCLUDED.created_at`,
+			 SET max_chat_id = EXCLUDED.max_chat_id, max_msg_id = EXCLUDED.max_msg_id, tg_thread_id = EXCLUDED.tg_thread_id, origin = EXCLUDED.origin, created_at = EXCLUDED.created_at`,
 		tgChatID, tgMsgID, maxChatID, maxMsgID, tgThreadID, origin, time.Now().Unix())
 }
 
@@ -209,6 +212,25 @@ func (r *pgRepo) LookupTgMsgID(maxMsgID string) (int64, int, int, bool) {
 	return chatID, msgID, threadID, err == nil
 }
 
+func (r *pgRepo) LookupMessageRouteByTg(tgChatID int64, tgMsgID int) (int64, string, string, bool) {
+	var maxChatID int64
+	var maxMsgID, origin string
+	err := r.db.QueryRow(`SELECT max_chat_id,max_msg_id,COALESCE(origin,'')
+		FROM messages WHERE tg_chat_id=$1 AND tg_msg_id=$2`, tgChatID, tgMsgID).
+		Scan(&maxChatID, &maxMsgID, &origin)
+	return maxChatID, maxMsgID, origin, err == nil
+}
+
+func (r *pgRepo) LookupMessageRouteByMax(maxMsgID string) (int64, int, int64, string, bool) {
+	var tgChatID, maxChatID int64
+	var tgMsgID int
+	var origin string
+	err := r.db.QueryRow(`SELECT tg_chat_id,tg_msg_id,max_chat_id,COALESCE(origin,'')
+		FROM messages WHERE max_msg_id=$1 LIMIT 1`, maxMsgID).
+		Scan(&tgChatID, &tgMsgID, &maxChatID, &origin)
+	return tgChatID, tgMsgID, maxChatID, origin, err == nil
+}
+
 func (r *pgRepo) ListTgMsgIDs(maxMsgID string, tgChatID int64) []int {
 	rows, err := r.db.Query(`SELECT tg_msg_id FROM messages
 		WHERE max_msg_id=$1 AND tg_chat_id=$2 ORDER BY tg_msg_id`, maxMsgID, tgChatID)
@@ -245,8 +267,60 @@ func (r *pgRepo) MaxMsgDeliveredTo(maxMsgID string, tgChatID int64) bool {
 	return err == nil
 }
 
+func (r *pgRepo) SaveMessageAuthor(platform string, chatID int64, messageID string, author MessageAuthor) {
+	if (platform != "tg" && platform != "max") || messageID == "" || chatID == 0 ||
+		(author.Platform != "tg" && author.Platform != "max") || author.ChatID == 0 || author.UserID <= 0 {
+		return
+	}
+	_, _ = r.db.Exec(`INSERT INTO message_authors
+		(platform,chat_id,message_id,source_platform,source_chat_id,source_user_id,created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT(platform,chat_id,message_id) DO UPDATE SET
+			source_platform=excluded.source_platform,
+			source_chat_id=excluded.source_chat_id,
+			source_user_id=excluded.source_user_id,
+			created_at=excluded.created_at`,
+		platform, chatID, messageID, author.Platform, author.ChatID, author.UserID, time.Now().Unix())
+}
+
+func (r *pgRepo) LookupMessageAuthor(platform string, chatID int64, messageID string) (MessageAuthor, bool) {
+	var author MessageAuthor
+	err := r.db.QueryRow(`SELECT source_platform,source_chat_id,source_user_id
+		FROM message_authors WHERE platform=$1 AND chat_id=$2 AND message_id=$3`,
+		platform, chatID, messageID).Scan(&author.Platform, &author.ChatID, &author.UserID)
+	return author, err == nil
+}
+
+func (r *pgRepo) SetUserAlias(platform string, chatID, userID int64, alias string, updatedBy int64) error {
+	_, err := r.db.Exec(`INSERT INTO user_aliases (platform,chat_id,user_id,alias,updated_by,updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT(platform,chat_id,user_id) DO UPDATE SET
+			alias=excluded.alias,updated_by=excluded.updated_by,updated_at=excluded.updated_at`,
+		platform, chatID, userID, alias, updatedBy, time.Now().Unix())
+	return err
+}
+
+func (r *pgRepo) GetUserAlias(platform string, chatID, userID int64) (string, bool) {
+	var alias string
+	err := r.db.QueryRow(`SELECT alias FROM user_aliases WHERE platform=$1 AND chat_id=$2 AND user_id=$3`,
+		platform, chatID, userID).Scan(&alias)
+	return alias, err == nil
+}
+
+func (r *pgRepo) DeleteUserAlias(platform string, chatID, userID int64) bool {
+	res, err := r.db.Exec(`DELETE FROM user_aliases WHERE platform=$1 AND chat_id=$2 AND user_id=$3`,
+		platform, chatID, userID)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
 func (r *pgRepo) CleanOldMessages() {
-	r.db.Exec("DELETE FROM messages WHERE created_at < $1", time.Now().Unix()-48*3600)
+	cutoff := time.Now().Add(-30 * 24 * time.Hour).Unix()
+	r.db.Exec("DELETE FROM messages WHERE created_at < $1", cutoff)
+	r.db.Exec("DELETE FROM message_authors WHERE created_at < $1", cutoff)
 	r.db.Exec("DELETE FROM pending WHERE created_at > 0 AND created_at < $1", time.Now().Unix()-3600)
 }
 

@@ -96,7 +96,10 @@ func tgHasContent(msg *TGMessage) bool {
 
 // formatTgCaption — для пересылки (текст или caption)
 func formatTgCaption(msg *TGMessage, prefix, newline bool) string {
-	name := tgName(msg)
+	return formatTgCaptionWithName(msg, tgName(msg), prefix, newline)
+}
+
+func formatTgCaptionWithName(msg *TGMessage, name string, prefix, newline bool) string {
 	text := msg.Text
 	if text == "" {
 		text = msg.Caption
@@ -145,7 +148,10 @@ func maxName(upd *maxschemes.MessageCreatedUpdate) string {
 
 // formatMaxCaption — для пересылки
 func formatMaxCaption(upd *maxschemes.MessageCreatedUpdate, prefix, newline bool) string {
-	name := maxName(upd)
+	return formatMaxCaptionWithName(upd, maxName(upd), prefix, newline)
+}
+
+func formatMaxCaptionWithName(upd *maxschemes.MessageCreatedUpdate, name string, prefix, newline bool) string {
 	text := upd.Message.Body.Text
 	if prefix {
 		return formatAttribution("[MAX] "+name, text, newline)

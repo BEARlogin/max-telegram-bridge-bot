@@ -114,6 +114,9 @@ func (r *sqliteRepo) MigrateTgChat(oldID, newID int64) error {
 	_, err := r.db.Exec("UPDATE pairs SET tg_chat_id = ? WHERE tg_chat_id = ?", newID, oldID)
 	if err == nil {
 		r.db.Exec("UPDATE messages SET tg_chat_id = ? WHERE tg_chat_id = ?", newID, oldID)
+		r.db.Exec("UPDATE message_authors SET chat_id = ? WHERE platform = 'tg' AND chat_id = ?", newID, oldID)
+		r.db.Exec("UPDATE message_authors SET source_chat_id = ? WHERE source_platform = 'tg' AND source_chat_id = ?", newID, oldID)
+		r.db.Exec("UPDATE user_aliases SET chat_id = ? WHERE platform = 'tg' AND chat_id = ?", newID, oldID)
 	}
 	return err
 }
@@ -207,6 +210,25 @@ func (r *sqliteRepo) LookupTgMsgID(maxMsgID string) (int64, int, int, bool) {
 	return chatID, msgID, threadID, err == nil
 }
 
+func (r *sqliteRepo) LookupMessageRouteByTg(tgChatID int64, tgMsgID int) (int64, string, string, bool) {
+	var maxChatID int64
+	var maxMsgID, origin string
+	err := r.db.QueryRow(`SELECT max_chat_id,max_msg_id,COALESCE(origin,'')
+		FROM messages WHERE tg_chat_id=? AND tg_msg_id=?`, tgChatID, tgMsgID).
+		Scan(&maxChatID, &maxMsgID, &origin)
+	return maxChatID, maxMsgID, origin, err == nil
+}
+
+func (r *sqliteRepo) LookupMessageRouteByMax(maxMsgID string) (int64, int, int64, string, bool) {
+	var tgChatID, maxChatID int64
+	var tgMsgID int
+	var origin string
+	err := r.db.QueryRow(`SELECT tg_chat_id,tg_msg_id,max_chat_id,COALESCE(origin,'')
+		FROM messages WHERE max_msg_id=? LIMIT 1`, maxMsgID).
+		Scan(&tgChatID, &tgMsgID, &maxChatID, &origin)
+	return tgChatID, tgMsgID, maxChatID, origin, err == nil
+}
+
 func (r *sqliteRepo) ListTgMsgIDs(maxMsgID string, tgChatID int64) []int {
 	rows, err := r.db.Query(`SELECT tg_msg_id FROM messages
 		WHERE max_msg_id=? AND tg_chat_id=? ORDER BY tg_msg_id`, maxMsgID, tgChatID)
@@ -243,8 +265,60 @@ func (r *sqliteRepo) MaxMsgDeliveredTo(maxMsgID string, tgChatID int64) bool {
 	return err == nil
 }
 
+func (r *sqliteRepo) SaveMessageAuthor(platform string, chatID int64, messageID string, author MessageAuthor) {
+	if (platform != "tg" && platform != "max") || messageID == "" || chatID == 0 ||
+		(author.Platform != "tg" && author.Platform != "max") || author.ChatID == 0 || author.UserID <= 0 {
+		return
+	}
+	_, _ = r.db.Exec(`INSERT INTO message_authors
+		(platform,chat_id,message_id,source_platform,source_chat_id,source_user_id,created_at)
+		VALUES (?,?,?,?,?,?,?)
+		ON CONFLICT(platform,chat_id,message_id) DO UPDATE SET
+			source_platform=excluded.source_platform,
+			source_chat_id=excluded.source_chat_id,
+			source_user_id=excluded.source_user_id,
+			created_at=excluded.created_at`,
+		platform, chatID, messageID, author.Platform, author.ChatID, author.UserID, time.Now().Unix())
+}
+
+func (r *sqliteRepo) LookupMessageAuthor(platform string, chatID int64, messageID string) (MessageAuthor, bool) {
+	var author MessageAuthor
+	err := r.db.QueryRow(`SELECT source_platform,source_chat_id,source_user_id
+		FROM message_authors WHERE platform=? AND chat_id=? AND message_id=?`,
+		platform, chatID, messageID).Scan(&author.Platform, &author.ChatID, &author.UserID)
+	return author, err == nil
+}
+
+func (r *sqliteRepo) SetUserAlias(platform string, chatID, userID int64, alias string, updatedBy int64) error {
+	_, err := r.db.Exec(`INSERT INTO user_aliases (platform,chat_id,user_id,alias,updated_by,updated_at)
+		VALUES (?,?,?,?,?,?)
+		ON CONFLICT(platform,chat_id,user_id) DO UPDATE SET
+			alias=excluded.alias,updated_by=excluded.updated_by,updated_at=excluded.updated_at`,
+		platform, chatID, userID, alias, updatedBy, time.Now().Unix())
+	return err
+}
+
+func (r *sqliteRepo) GetUserAlias(platform string, chatID, userID int64) (string, bool) {
+	var alias string
+	err := r.db.QueryRow(`SELECT alias FROM user_aliases WHERE platform=? AND chat_id=? AND user_id=?`,
+		platform, chatID, userID).Scan(&alias)
+	return alias, err == nil
+}
+
+func (r *sqliteRepo) DeleteUserAlias(platform string, chatID, userID int64) bool {
+	res, err := r.db.Exec(`DELETE FROM user_aliases WHERE platform=? AND chat_id=? AND user_id=?`,
+		platform, chatID, userID)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
 func (r *sqliteRepo) CleanOldMessages() {
-	r.db.Exec("DELETE FROM messages WHERE created_at < ?", time.Now().Unix()-48*3600)
+	cutoff := time.Now().Add(-30 * 24 * time.Hour).Unix()
+	r.db.Exec("DELETE FROM messages WHERE created_at < ?", cutoff)
+	r.db.Exec("DELETE FROM message_authors WHERE created_at < ?", cutoff)
 	r.db.Exec("DELETE FROM pending WHERE created_at > 0 AND created_at < ?", time.Now().Unix()-3600)
 }
 

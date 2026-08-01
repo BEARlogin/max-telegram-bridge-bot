@@ -46,6 +46,14 @@ type TgMediaState struct {
 	Fingerprint  string
 }
 
+// MessageAuthor identifies the original participant behind a native or mirrored
+// message. It deliberately contains no message text or attachment data.
+type MessageAuthor struct {
+	Platform string
+	ChatID   int64
+	UserID   int64
+}
+
 // Repository — абстракция хранилища для bridge.
 type Repository interface {
 	// Register обрабатывает /bridge команду.
@@ -80,6 +88,8 @@ type Repository interface {
 	ListTgMediaStates(tgChatID int64, maxMsgID string) []TgMediaState
 	LookupMaxMsgID(tgChatID int64, tgMsgID int) (string, bool)
 	LookupTgMsgID(maxMsgID string) (tgChatID int64, tgMsgID int, tgThreadID int, ok bool)
+	LookupMessageRouteByTg(tgChatID int64, tgMsgID int) (maxChatID int64, maxMsgID, origin string, ok bool)
+	LookupMessageRouteByMax(maxMsgID string) (tgChatID int64, tgMsgID int, maxChatID int64, origin string, ok bool)
 	ListTgMsgIDs(maxMsgID string, tgChatID int64) []int
 	DeleteTgMsgMapping(tgChatID int64, tgMsgID int)
 	LookupTgMsgOrigin(maxMsgID string) (origin string, ok bool)
@@ -87,6 +97,11 @@ type Repository interface {
 	// (пер-чат дедуп: при фан-ауте одного MAX-сообщения в несколько TG-групп нельзя
 	// глушить доставку глобально по mid).
 	MaxMsgDeliveredTo(maxMsgID string, tgChatID int64) bool
+	SaveMessageAuthor(platform string, chatID int64, messageID string, author MessageAuthor)
+	LookupMessageAuthor(platform string, chatID int64, messageID string) (MessageAuthor, bool)
+	SetUserAlias(platform string, chatID, userID int64, alias string, updatedBy int64) error
+	GetUserAlias(platform string, chatID, userID int64) (string, bool)
+	DeleteUserAlias(platform string, chatID, userID int64) bool
 	CleanOldMessages()
 
 	HasPrefix(platform string, chatID int64) bool

@@ -126,7 +126,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				// Если маппинг не найден и есть медиа — отправляем как новое сообщение (fallback)
 				if hasMedia && !hasMapping {
 					prefix := b.hasPrefix("tg", edited.Chat.ID)
-					caption := formatTgCaption(edited, prefix, b.cfg.MessageNewline)
+					caption := formatTgCaptionWithName(edited, b.tgRelayName(edited), prefix, b.cfg.MessageNewline)
 					go b.forwardTgToMax(ctx, edited, maxChatID, caption, false, false)
 					continue
 				}
@@ -152,7 +152,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						continue
 					}
 					mdText := tgEntitiesToHTML(rawText, editEntities)
-					name := tgName(edited)
+					name := b.tgRelayName(edited)
 					if prefix {
 						name = "[TG] " + name
 					}
@@ -167,7 +167,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 				if hasMedia {
 					// Edit с медиа — редактируем сообщение в MAX с новым вложением
-					caption := formatTgCaption(edited, prefix, b.cfg.MessageNewline)
+					caption := formatTgCaptionWithName(edited, b.tgRelayName(edited), prefix, b.cfg.MessageNewline)
 					go b.editTgMediaInMax(ctx, edited, maxChatID, maxMsgID, caption)
 					continue
 				}
@@ -183,7 +183,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 				mdText := tgEntitiesToHTML(rawText, editEntities)
-				name := tgName(edited)
+				name := b.tgRelayName(edited)
 				if prefix {
 					name = "[TG] " + name
 				}
@@ -465,6 +465,24 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			adminDeniedText := "Эта команда доступна только админам группы."
 			if botNotAdmin {
 				adminDeniedText = "Бот не может проверить ваши права — сделайте бота админом группы и повторите команду."
+			}
+
+			// /name — локальная адресная книга чата. Команда применяется к автору
+			// сообщения в reply и никогда не пересылается на другую платформу.
+			if isGroup {
+				if mode, alias, ok := parseNameCommand(text); ok {
+					if !isAdmin {
+						b.tg.SendMessage(ctx, msg.Chat.ID, adminDeniedText, &SendOpts{ThreadID: msg.MessageThreadID})
+						continue
+					}
+					target, found := b.resolveTgNameTarget(msg)
+					reply := "Ответьте на сообщение участника или на сообщение, которое перенёс «Мост», и повторите команду."
+					if found {
+						reply = b.applyNameCommand(target, mode, alias, tgUserID(msg))
+					}
+					b.tg.SendMessage(ctx, msg.Chat.ID, reply, &SendOpts{ThreadID: msg.MessageThreadID})
+					continue
+				}
 			}
 
 			// Расширение получает групповые команды до встроенного роутинга.
@@ -990,9 +1008,10 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			if !threadLinked && !b.pairDirectionAllows(ctx, msg.Chat.ID, maxChatID, "tg>max") {
 				continue
 			}
+			b.observeTgMessageAuthor(msg)
 
 			prefix := b.hasPrefix("tg", msg.Chat.ID)
-			caption := formatTgCaption(msg, prefix, b.cfg.MessageNewline)
+			caption := formatTgCaptionWithName(msg, b.tgRelayName(msg), prefix, b.cfg.MessageNewline)
 
 			// Проверяем anti-loop
 			checkText := msg.Text
@@ -1170,7 +1189,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 			if fl := tgForwardLine(msg); fl != "" {
 				mdText = fl + mdText
 			}
-			name := tgName(msg)
+			name := b.tgRelayName(msg)
 			if b.hasPrefix("tg", msg.Chat.ID) {
 				name = "[TG] " + name
 			}
@@ -1474,7 +1493,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 	if isCrosspost {
 		mdCaption = mdText
 	} else {
-		name := tgName(msg)
+		name := b.tgRelayName(msg)
 		if b.hasPrefix("tg", msg.Chat.ID) {
 			name = "[TG] " + name
 		}
@@ -1545,7 +1564,7 @@ func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID
 		editEntities = msg.Entities
 	}
 	mdText := tgEntitiesToHTML(rawText, editEntities)
-	name := tgName(msg)
+	name := b.tgRelayName(msg)
 	if b.hasPrefix("tg", msg.Chat.ID) {
 		name = "[TG] " + name
 	}

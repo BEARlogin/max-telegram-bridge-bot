@@ -680,6 +680,7 @@ func (b *Bridge) registerCommands(ctx context.Context) {
 		{Command: "pause", Description: "Поставить связку на паузу"},
 		{Command: "unpause", Description: "Возобновить пересылку"},
 		{Command: "unbridge", Description: "Удалить связку чатов"},
+		{Command: "name", Description: "Задать понятное имя участнику (reply)"},
 		{Command: "thread", Description: "Установить топик для сообщений из MAX"},
 		{Command: "thread_bridge", Description: "Связать тред с отдельным MAX-чатом"},
 		{Command: "thread_unbridge", Description: "Удалить связку треда"},

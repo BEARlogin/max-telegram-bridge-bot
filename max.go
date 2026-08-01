@@ -333,6 +333,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if name == "" {
 					name = editUpd.Message.Sender.Username
 				}
+				name = b.maxUserRelayName(editUpd.Message.Recipient.ChatId, editUpd.Message.Sender.UserId, name)
 				text := editUpd.Message.Body.Text
 				if strings.HasPrefix(text, "[TG]") || strings.HasPrefix(text, "[MAX]") {
 					continue
@@ -603,6 +604,25 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			} else if isGroup {
 				// В каналах MAX не передаёт sender userId — пропускаем проверку
 				isAdmin = true
+			}
+			// /name — локальная адресная книга чата. Команда применяется к автору
+			// сообщения в reply и никогда не пересылается на другую платформу.
+			if isGroup {
+				if mode, alias, ok := parseNameCommand(text); ok {
+					if !isAdmin || msgUpd.Message.Sender.UserId == 0 {
+						m := maxbot.NewMessage().SetChat(chatID).SetText("Эта команда доступна только админам группы.")
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+						continue
+					}
+					target, found := b.resolveMaxNameTarget(msgUpd)
+					reply := "Ответьте на сообщение участника или на сообщение, которое перенёс «Мост», и повторите команду."
+					if found {
+						reply = b.applyNameCommand(target, mode, alias, msgUpd.Message.Sender.UserId)
+					}
+					m := maxbot.NewMessage().SetChat(chatID).SetText(reply)
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
 			}
 			// Внешняя модерация сообщения до пересылки.
 			if isGroup && msgUpd.Message.Sender.UserId != 0 {
@@ -1230,10 +1250,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 			linked := len(tgChats) > 0 || threadLinked
 			if linked && !b.isSelfMaxBot(msgUpd.Message.Sender.UserId) {
+				b.observeMaxMessageAuthor(msgUpd)
 				// Anti-loop
 				if !strings.HasPrefix(text, "[TG]") && !strings.HasPrefix(text, "[MAX]") {
 					prefix := b.hasPrefix("max", chatID)
-					caption := formatMaxCaption(msgUpd, prefix, b.cfg.MessageNewline)
+					caption := formatMaxCaptionWithName(msgUpd, b.maxRelayName(msgUpd), prefix, b.cfg.MessageNewline)
 					if threadLinked {
 						go b.forwardMaxToTg(ctx, msgUpd, threadTg, caption, false)
 					} else {
@@ -1338,6 +1359,8 @@ func (b *Bridge) sendMaxStart(ctx context.Context, chatID int64) {
 		"/bridge prefix on/off — включить/выключить префикс [TG]/[MAX]\n" +
 		"/bridge direction tg>max|max>tg|both — направление bridge\n" +
 		"/unbridge — удалить связку\n" +
+		"/name Имя — подписывать участника своим именем (ответом на сообщение, только админ)\n" +
+		"/name reset — удалить сохранённое имя (ответом на сообщение)\n" +
 		"/thread_bridge <ключ> — связать этот MAX-чат с отдельным TG-тредом (форум)\n" +
 		"/thread_unbridge — разорвать связку треда\n\n" +
 		"Кросспостинг каналов (в личке бота):\n" +
@@ -2223,7 +2246,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			htmlCaption = htmlText
 		} else {
 			// Bridge: caption с атрибуцией — жирное имя
-			name := maxName(msgUpd)
+			name := b.maxRelayName(msgUpd)
 			if b.hasPrefix("max", msgUpd.Message.Recipient.ChatId) {
 				name = "[MAX] " + name
 			}
