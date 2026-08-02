@@ -47,6 +47,17 @@ func TestTgName(t *testing.T) {
 	}
 }
 
+func TestTgForwardLineSkipsAutomaticChannelForward(t *testing.T) {
+	msg := &TGMessage{
+		IsAutomaticForward: true,
+		ForwardFrom:        "Новости школы",
+		SenderChat:         &ChatInfo{ID: -100500, Type: "channel", Title: "Новости школы"},
+	}
+	if got := tgForwardLine(msg); got != "" {
+		t.Fatalf("automatic forward line=%q, want empty", got)
+	}
+}
+
 func TestFormatTgCaption(t *testing.T) {
 	msg := &TGMessage{
 		Text: "hello world",

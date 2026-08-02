@@ -73,7 +73,9 @@ func senderAttributionName(name string, showName bool) string {
 // tgForwardLine — метка «↪️ Переслано из X\n» (HTML, italic) для зеркалируемых форвардов.
 // "" если сообщение не форвард. Подмешивается в начало тела (после атрибуции автора).
 func tgForwardLine(msg *TGMessage) string {
-	if msg.ForwardFrom == "" {
+	// Авто-форвард поста в связанную группу уже подписан именем SenderChat.
+	// Повторная строка «Переслано из того же канала» только дублирует атрибуцию.
+	if msg.ForwardFrom == "" || msg.IsAutomaticForward {
 		return ""
 	}
 	return "↪️ <i>Переслано из " + html.EscapeString(msg.ForwardFrom) + "</i>\n"

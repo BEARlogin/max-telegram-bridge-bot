@@ -908,15 +908,21 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 				if msg.IsAutomaticForward {
-					// Авто-форвард поста канала в группу обсуждения (корень треда) — НИКОГДА
-					// не модерируем и не зеркалим. Маппинг пост↔тред сохраняем, только если
-					// есть данные origin (иначе просто пропускаем — это контент канала, не спам).
+					// Авто-форвард поста канала в группу обсуждения (корень треда) никогда
+					// не модерируем. Маппинг пост↔тред сохраняем для комментариев. Если
+					// владелец явно связал всю группу или этот тред с MAX, видимый в группе
+					// пост должен пройти дальше по обычному bridge-маршруту. Без явной
+					// bridge-связки оставляем прежнее поведение и не дублируем пост.
 					if msg.ForwardOriginChat != nil && msg.ForwardOriginMsgID != 0 {
 						if err := b.repo.SaveDiscussionMessage(msg.ForwardOriginChat.ID, msg.ForwardOriginMsgID, msg.Chat.ID, msg.MessageID); err != nil {
 							slog.Warn("save discussion map failed", "err", err)
 						}
 					}
-					continue
+					_, threadLinked := b.repo.GetThreadMaxChat(msg.Chat.ID, msg.MessageThreadID)
+					_, groupLinked := b.repo.GetMaxChat(msg.Chat.ID)
+					if shouldSkipAutomaticForwardRelay(threadLinked, groupLinked) {
+						continue
+					}
 				}
 				// Внешняя обработка выполняется до передачи сообщения обсуждения.
 				// SenderChat != nil — сообщение «от имени канала» (пост связанного канала,
@@ -952,8 +958,13 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						}
 					}
 				}
-				go b.addonTgVKMessage(ctx, msg)
-				if msg.MessageThreadID != 0 && msg.From != nil && !b.isSelfTgBot(msg.From) && !msg.IsService {
+				// Авто-форварды и раньше не попадали в VK-обработчик и не считались
+				// комментариями. Сохраняем эти две семантики, разрешая только явный
+				// TG→MAX bridge ниже.
+				if !msg.IsAutomaticForward {
+					go b.addonTgVKMessage(ctx, msg)
+				}
+				if !msg.IsAutomaticForward && msg.MessageThreadID != 0 && msg.From != nil && !b.isSelfTgBot(msg.From) && !msg.IsService {
 					chCh, chMsg, ok := b.repo.LookupChannelByDiscussion(msg.Chat.ID, msg.MessageThreadID)
 					slog.Info("discussion reply seen", "discChat", msg.Chat.ID, "thread", msg.MessageThreadID, "mapped", ok, "channelPost", fmt.Sprintf("%d_%d", chCh, chMsg))
 					if ok {
@@ -1058,7 +1069,9 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				continue
 			}
 
-			go b.forwardTgToMax(ctx, msg, maxChatID, caption, false, false)
+			// Пост канала в группе обсуждения — доверенный контент канала, а не
+			// пользовательское сообщение. Его нельзя отправлять в relay-антиспам.
+			go b.forwardTgToMax(ctx, msg, maxChatID, caption, false, msg.IsAutomaticForward)
 		}
 	}
 }
@@ -1075,6 +1088,10 @@ func (b *Bridge) retainTgPinnedMessage(msg *TGMessage) {
 }
 
 func shouldSkipDiscussionRelay(threadLinked, groupLinked bool) bool {
+	return !threadLinked && !groupLinked
+}
+
+func shouldSkipAutomaticForwardRelay(threadLinked, groupLinked bool) bool {
 	return !threadLinked && !groupLinked
 }
 
