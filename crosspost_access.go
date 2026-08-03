@@ -23,6 +23,13 @@ func (b *Bridge) validateTgCrosspostSource(ctx context.Context, channelID, reque
 		slog.Warn("TG crosspost source unavailable", "tgChannel", channelID, "err", err)
 		return "", errTgCrosspostBotNoAccess
 	}
+	botID := b.tg.BotID()
+	botStatus, botErr := b.tg.GetChatMember(ctx, channelID, botID)
+	if botID == 0 || botErr != nil || !isTgAdmin(botStatus) {
+		slog.Warn("TG crosspost bot is not admin", "tgChannel", channelID,
+			"botStatus", botStatus, "err", botErr)
+		return title, errTgCrosspostBotNoAccess
+	}
 	if requesterID != 0 {
 		status, memberErr := b.tg.GetChatMember(ctx, channelID, requesterID)
 		if memberErr != nil || !isTgAdmin(status) {

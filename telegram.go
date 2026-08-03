@@ -390,6 +390,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						} else {
 							statusText += fmt.Sprintf("\nTG: «%s» (%d)\nMAX: %d", tgTitle, l.TgChatID, l.MaxChatID)
 						}
+						statusText = b.appendCrosspostRuntimeStatus(ctx, statusText, l.TgChatID, l.MaxChatID)
 						b.tg.SendMessage(ctx, msg.Chat.ID, statusText, &SendOpts{ReplyMarkup: kb, ThreadID: msg.MessageThreadID})
 					}
 					b.tg.SendMessage(ctx, msg.Chat.ID,
@@ -405,25 +406,10 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				}
 				channelID := msg.ForwardOriginChat.ID
 				channelTitle := msg.ForwardOriginChat.Title
-				verifiedTitle, accessErr := b.validateTgCrosspostSource(ctx, channelID, msg.From.ID)
-				if accessErr != nil {
-					b.tg.SendMessage(ctx, msg.Chat.ID, b.tgCrosspostAccessText(channelID, accessErr),
-						&SendOpts{ThreadID: msg.MessageThreadID})
-					continue
-				}
-				if strings.TrimSpace(channelTitle) == "" {
-					channelTitle = verifiedTitle
-				}
-
-				// Запоминаем TG user ID для этого канала (для owner при pairing)
-				b.cpTgOwnerMu.Lock()
-				b.cpTgOwner[channelID] = msg.From.ID
-				b.cpTgOwnerMu.Unlock()
-				slog.Info("TG crosspost forward", "tgUser", msg.From.ID, "tgChannel", channelID)
-
-				// Проверяем, уже связан ли канал
+				// Для существующей связки всегда показываем карточку управления, даже
+				// если бот потерял права: сама карточка объяснит, почему доставка не работает.
 				if maxChatID, direction, ok := b.repo.GetCrosspostMaxChat(channelID); ok {
-					text := tgCrosspostStatusText(channelTitle, direction)
+					text := b.appendCrosspostRuntimeStatus(ctx, tgCrosspostStatusText(channelTitle, direction), channelID, maxChatID)
 					// Клейм владельца для старых связок без tg_owner_id (аналог /bridge_update
 					// для каналов): форвард поста админом канала проставляет владельца,
 					// чтобы связка появилась в /crosspost и кабинете.
@@ -439,6 +425,21 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					b.tg.SendMessage(ctx, msg.Chat.ID, text, &SendOpts{ReplyMarkup: kb, ThreadID: msg.MessageThreadID})
 					continue
 				}
+				verifiedTitle, accessErr := b.validateTgCrosspostSource(ctx, channelID, msg.From.ID)
+				if accessErr != nil {
+					b.tg.SendMessage(ctx, msg.Chat.ID, b.tgCrosspostAccessText(channelID, accessErr),
+						&SendOpts{ThreadID: msg.MessageThreadID})
+					continue
+				}
+				if strings.TrimSpace(channelTitle) == "" {
+					channelTitle = verifiedTitle
+				}
+
+				// Запоминаем TG user ID для этого канала (для owner при pairing)
+				b.cpTgOwnerMu.Lock()
+				b.cpTgOwner[channelID] = msg.From.ID
+				b.cpTgOwnerMu.Unlock()
+				slog.Info("TG crosspost forward", "tgUser", msg.From.ID, "tgChannel", channelID)
 
 				b.tg.SendMessage(ctx, msg.Chat.ID,
 					fmt.Sprintf("TG-канал «%s»\nID: <code>%d</code>\n\nВ личке MAX-бота напишите:\n<code>/crosspost %d</code>\n\nMAX-бот: %s\n\nЗатем перешлите пост из MAX-канала в личку MAX-бота.%s", channelTitle, channelID, channelID, b.cfg.MaxBotURL, b.reserveBotHint()),
@@ -1909,7 +1910,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 
 		// Получаем title канала (из текста сообщения)
 		title := parseTgCrosspostTitle(query.Message.Text)
-		text := tgCrosspostStatusText(title, dir)
+		tgChatID, _, _ := b.repo.GetCrosspostTgChat(maxChatID)
+		text := b.appendCrosspostRuntimeStatus(ctx, tgCrosspostStatusText(title, dir), tgChatID, maxChatID)
 		kb := tgCrosspostKeyboard(dir, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ReplyMarkup: kb})
 		b.tg.AnswerCallback(ctx, query.ID, "Готово")
@@ -1929,8 +1931,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		cur := b.repo.GetCrosspostSyncEdits(maxChatID)
 		b.repo.SetCrosspostSyncEdits(maxChatID, !cur)
 		title := parseTgCrosspostTitle(query.Message.Text)
-		_, direction, _ := b.repo.GetCrosspostTgChat(maxChatID)
-		text := tgCrosspostStatusText(title, direction)
+		tgChatID, direction, _ := b.repo.GetCrosspostTgChat(maxChatID)
+		text := b.appendCrosspostRuntimeStatus(ctx, tgCrosspostStatusText(title, direction), tgChatID, maxChatID)
 		kb := tgCrosspostKeyboard(direction, maxChatID, !cur, b.repo.CrosspostPaused(maxChatID))
 		b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ReplyMarkup: kb})
 		if !cur {
@@ -1962,7 +1964,7 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 			b.cbSuccess(tgChatID)
 		}
 		title := parseTgCrosspostTitle(query.Message.Text)
-		text := tgCrosspostStatusText(title, direction)
+		text := b.appendCrosspostRuntimeStatus(ctx, tgCrosspostStatusText(title, direction), tgChatID, maxChatID)
 		kb := tgCrosspostKeyboard(direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), paused)
 		b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ReplyMarkup: kb})
 		note := "Кросспостинг поставлен на паузу"
@@ -2161,12 +2163,13 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		if err != nil {
 			return
 		}
-		_, direction, ok := b.repo.GetCrosspostTgChat(maxChatID)
+		tgChatID, direction, ok := b.repo.GetCrosspostTgChat(maxChatID)
 		if !ok {
 			return
 		}
 		title := parseTgCrosspostTitle(query.Message.Text)
 		text := tgCrosspostStatusText(title, direction) + fmt.Sprintf("\nTG: ↔ MAX: %d", maxChatID)
+		text = b.appendCrosspostRuntimeStatus(ctx, text, tgChatID, maxChatID)
 		kb := tgCrosspostKeyboard(direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ReplyMarkup: kb})
 		b.tg.AnswerCallback(ctx, query.ID, "")
@@ -2198,14 +2201,14 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 			return
 		}
 		// Lookup current direction
-		_, direction, ok := b.repo.GetCrosspostTgChat(maxChatID)
+		tgChatID, direction, ok := b.repo.GetCrosspostTgChat(maxChatID)
 		if !ok {
 			b.tg.EditMessageText(ctx, chatID, msgID, "Кросспостинг не найден.", nil)
 			b.tg.AnswerCallback(ctx, query.ID, "")
 			return
 		}
 		title := parseTgCrosspostTitle(query.Message.Text)
-		text := tgCrosspostStatusText(title, direction)
+		text := b.appendCrosspostRuntimeStatus(ctx, tgCrosspostStatusText(title, direction), tgChatID, maxChatID)
 		kb := tgCrosspostKeyboard(direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ReplyMarkup: kb})
 		b.tg.AnswerCallback(ctx, query.ID, "")

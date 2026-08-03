@@ -40,6 +40,7 @@ type DoctorConnection struct {
 	PendingMaxToTg int
 	OldestPending  int64
 	MaxAttempts    int
+	RuntimeStatus  string
 }
 
 func doctorDayStart(now time.Time) int64 {
@@ -96,6 +97,9 @@ func doctorDirectionLabel(direction string) string {
 }
 
 func doctorConnectionStatus(c DoctorConnection) string {
+	if c.RuntimeStatus != "" {
+		return c.RuntimeStatus
+	}
 	if c.Paused {
 		return "⏸ на паузе"
 	}
@@ -177,6 +181,8 @@ func (b *Bridge) doctorReport(ctx context.Context, platform string, userID int64
 	for i := range connections {
 		if connections[i].Kind == "bridge" {
 			connections[i].Direction = b.pairDirection(ctx, connections[i].TgChatID, connections[i].MaxChatID)
+		} else if connections[i].Kind == "crosspost" {
+			connections[i].RuntimeStatus = b.crosspostRuntimeStatus(ctx, connections[i].TgChatID, connections[i].MaxChatID)
 		}
 	}
 	sort.SliceStable(connections, func(i, j int) bool {

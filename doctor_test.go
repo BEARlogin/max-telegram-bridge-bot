@@ -230,6 +230,16 @@ func TestFormatDoctorReportLegacyConnectionHasUnknownDate(t *testing.T) {
 	}
 }
 
+func TestFormatDoctorReportUsesRuntimeCrosspostStatus(t *testing.T) {
+	report := formatDoctorReport(time.Unix(1, 0), []DoctorConnection{{
+		Kind: "crosspost", TgChatID: -1001, MaxChatID: -2001,
+		RuntimeStatus: "⚠️ Telegram-бот не администратор TG-канала",
+	}})
+	if !strings.Contains(report, "Статус: ⚠️ Telegram-бот не администратор TG-канала") {
+		t.Fatalf("runtime status missing: %q", report)
+	}
+}
+
 func TestDoctorRateLimitIsPerPlatformAndUser(t *testing.T) {
 	b := &Bridge{}
 	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)

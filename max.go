@@ -1067,7 +1067,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						for _, l := range links {
 							kb := maxCrosspostKeyboard(b.maxApi, l.Direction, l.MaxChatID, b.repo.GetCrosspostSyncEdits(l.MaxChatID), b.repo.CrosspostPaused(l.MaxChatID))
 							tgTitle := b.tgChatTitle(ctx, l.TgChatID)
-							statusText := maxCrosspostStatusText(l.TgChatID, l.Direction)
+							statusText := b.maxCrosspostCardText(ctx, l.TgChatID, l.Direction, l.MaxChatID)
 							if tgTitle != "" {
 								statusText = fmt.Sprintf("TG: «%s» (%d)\n", tgTitle, l.TgChatID) + statusText
 							}
@@ -1181,6 +1181,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					// Показать статус + клавиатуру после паринга
 					kb := maxCrosspostKeyboard(b.maxApi, "both", maxChannelID, false, false)
 					statusText := fmt.Sprintf("Кросспостинг настроен!\nTG: %d ↔ MAX: %d\nНаправление: ⟷ оба", tgChannelID, maxChannelID)
+					statusText = b.appendCrosspostRuntimeStatus(ctx, statusText, tgChannelID, maxChannelID)
 					if workspaceNotice != "" {
 						statusText += "\n\n" + workspaceNotice
 					}
@@ -1195,7 +1196,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				// Нет cpWait — проверяем, связан ли канал → показать управление
 				if maxChannelID != 0 {
 					if tgID, direction, ok := b.repo.GetCrosspostTgChat(maxChannelID); ok {
-						statusText := maxCrosspostStatusText(tgID, direction)
+						statusText := b.maxCrosspostCardText(ctx, tgID, direction, maxChannelID)
 						// Клейм владельца для старых связок без owner_id (аналог /bridge_update
 						// для каналов): форвард поста админом канала проставляет владельца,
 						// чтобы связка появилась в /crosspost и кабинете.
@@ -1455,7 +1456,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		b.repo.SetCrosspostDirection(maxChatID, dir)
 
 		tgID, _, _ := b.repo.GetCrosspostTgChat(maxChatID)
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, dir), dir, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), b.maxCrosspostCardText(ctx, tgID, dir, maxChatID), dir, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
 			Message:      body,
 			Notification: "Готово",
@@ -1478,7 +1479,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		cur := b.repo.GetCrosspostSyncEdits(maxChatID)
 		b.repo.SetCrosspostSyncEdits(maxChatID, !cur)
 		tgID, direction, _ := b.repo.GetCrosspostTgChat(maxChatID)
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, !cur, b.repo.CrosspostPaused(maxChatID))
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), b.maxCrosspostCardText(ctx, tgID, direction, maxChatID), direction, maxChatID, !cur, b.repo.CrosspostPaused(maxChatID))
 		note := "Синхронизация правок выключена"
 		if !cur {
 			note = "Синхронизация правок включена"
@@ -1512,7 +1513,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 			b.cbSuccess(maxChatID)
 			b.cbSuccess(tgChatID)
 		}
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgChatID, direction), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), paused)
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), b.maxCrosspostCardText(ctx, tgChatID, direction, maxChatID), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), paused)
 		note := "Кросспостинг поставлен на паузу"
 		if !paused {
 			note = "Кросспостинг возобновлён"
@@ -1761,7 +1762,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 		if !ok {
 			return
 		}
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), b.maxCrosspostCardText(ctx, tgID, direction, maxChatID), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{Message: body})
 		return
 	}
@@ -1780,7 +1781,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 			})
 			return
 		}
-		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), maxCrosspostStatusText(tgID, direction), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
+		body := maxCrosspostMessageBody(b.maxClientFor(ctx, 0), b.maxCrosspostCardText(ctx, tgID, direction, maxChatID), direction, maxChatID, b.repo.GetCrosspostSyncEdits(maxChatID), b.repo.CrosspostPaused(maxChatID))
 		b.maxClientFor(ctx, 0).Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
 			Message: body,
 		})

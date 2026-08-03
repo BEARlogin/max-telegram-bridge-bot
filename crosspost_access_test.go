@@ -9,22 +9,28 @@ import (
 
 type crosspostAccessTGSender struct {
 	TGSender
-	title        string
-	chatErr      error
-	memberStatus string
-	memberErr    error
-	username     string
+	title           string
+	chatErr         error
+	botID           int64
+	botStatus       string
+	requesterStatus string
+	memberErr       error
+	username        string
 }
 
 func (s crosspostAccessTGSender) GetChat(context.Context, int64) (string, error) {
 	return s.title, s.chatErr
 }
 
-func (s crosspostAccessTGSender) GetChatMember(context.Context, int64, int64) (string, error) {
-	return s.memberStatus, s.memberErr
+func (s crosspostAccessTGSender) GetChatMember(_ context.Context, _ int64, userID int64) (string, error) {
+	if userID == s.botID {
+		return s.botStatus, s.memberErr
+	}
+	return s.requesterStatus, s.memberErr
 }
 
 func (s crosspostAccessTGSender) BotUsername() string { return s.username }
+func (s crosspostAccessTGSender) BotID() int64        { return s.botID }
 
 func TestValidateTgCrosspostSource(t *testing.T) {
 	for _, tc := range []struct {
@@ -33,10 +39,11 @@ func TestValidateTgCrosspostSource(t *testing.T) {
 		requester int64
 		wantErr   error
 	}{
-		{name: "available admin", sender: crosspostAccessTGSender{title: "Source", memberStatus: "administrator"}, requester: 42},
-		{name: "bot has no access", sender: crosspostAccessTGSender{chatErr: errors.New("telegram 403")}, requester: 42, wantErr: errTgCrosspostBotNoAccess},
-		{name: "requester is not admin", sender: crosspostAccessTGSender{title: "Source", memberStatus: "member"}, requester: 42, wantErr: errTgCrosspostUserNotAdmin},
-		{name: "legacy access check", sender: crosspostAccessTGSender{title: "Source"}, requester: 0},
+		{name: "available admin", sender: crosspostAccessTGSender{title: "Source", botID: 7, botStatus: "administrator", requesterStatus: "administrator"}, requester: 42},
+		{name: "bot has no access", sender: crosspostAccessTGSender{chatErr: errors.New("telegram 403"), botID: 7}, requester: 42, wantErr: errTgCrosspostBotNoAccess},
+		{name: "bot is not admin", sender: crosspostAccessTGSender{title: "Source", botID: 7, botStatus: "member", requesterStatus: "administrator"}, requester: 42, wantErr: errTgCrosspostBotNoAccess},
+		{name: "requester is not admin", sender: crosspostAccessTGSender{title: "Source", botID: 7, botStatus: "administrator", requesterStatus: "member"}, requester: 42, wantErr: errTgCrosspostUserNotAdmin},
+		{name: "legacy access check", sender: crosspostAccessTGSender{title: "Source", botID: 7, botStatus: "administrator"}, requester: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := &Bridge{tg: tc.sender}

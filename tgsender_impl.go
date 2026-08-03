@@ -20,6 +20,7 @@ import (
 type tgBotSender struct {
 	b          *bot.Bot
 	token      string
+	botID      int64
 	username   string
 	apiURL     string
 	httpClient *http.Client
@@ -76,6 +77,7 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 	if err != nil {
 		return nil, fmt.Errorf("TG getMe: %w", err)
 	}
+	s.botID = me.ID
 	s.username = me.Username
 	slog.Info("Telegram bot started", "username", me.Username)
 
@@ -83,6 +85,7 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 }
 
 func (s *tgBotSender) BotUsername() string { return s.username }
+func (s *tgBotSender) BotID() int64        { return s.botID }
 func (s *tgBotSender) BotToken() string    { return s.token }
 
 func (s *tgBotSender) GetBusinessConnection(ctx context.Context, connectionID string) (*TGBusinessConnection, error) {

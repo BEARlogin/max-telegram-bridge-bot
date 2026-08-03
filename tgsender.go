@@ -337,5 +337,6 @@ type TGSender interface {
 	StartPolling(ctx context.Context) <-chan TGUpdate
 
 	BotUsername() string
+	BotID() int64
 	BotToken() string
 }
