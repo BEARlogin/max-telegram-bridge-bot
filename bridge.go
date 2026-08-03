@@ -176,6 +176,7 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		http.HandleFunc("/internal/vk-connect", b.handleInternalVKConnect)
 		http.HandleFunc("/internal/vk-chats", b.handleInternalVKChats)
 		http.HandleFunc("/internal/vk-chat-bind", b.handleInternalVKChatBind)
+		http.HandleFunc("/internal/vk-channel-bind", b.handleInternalVKChannelBind)
 		http.HandleFunc("/internal/vk-wall-bind", b.handleInternalVKWallBind)
 	})
 	return b
@@ -251,6 +252,46 @@ func (b *Bridge) handleInternalVKChatBind(w http.ResponseWriter, r *http.Request
 	}
 	endpointID, created, reason := creator.CreateVKCabinetChatBinding(
 		r.Context(), in.ActorID, in.Platform, in.SourceChatID, in.AccountID, in.PeerID)
+	status := http.StatusOK
+	if !created {
+		status = http.StatusUnprocessableEntity
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": created, "endpoint_id": endpointID, "error": reason,
+	})
+}
+
+func (b *Bridge) handleInternalVKChannelBind(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Secret       string `json:"secret"`
+		ActorID      int64  `json:"actor_id"`
+		SourceChatID int64  `json:"source_chat_id"`
+		AccountID    int64  `json:"account_id"`
+		PeerID       int64  `json:"peer_id"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&in) != nil ||
+		in.ActorID <= 0 || in.SourceChatID == 0 || in.AccountID <= 0 ||
+		in.PeerID < 2000000000 || in.PeerID > 2999999999 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !validInternalSecret(in.Secret) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	creator, ok := b.addon.(interface {
+		CreateVKCabinetChannelBinding(context.Context, int64, int64, int64, int64) (int64, bool, string)
+	})
+	if !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	endpointID, created, reason := creator.CreateVKCabinetChannelBinding(
+		r.Context(), in.ActorID, in.SourceChatID, in.AccountID, in.PeerID)
 	status := http.StatusOK
 	if !created {
 		status = http.StatusUnprocessableEntity

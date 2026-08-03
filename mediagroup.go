@@ -168,16 +168,7 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 		openApp = b.crosspostOpenApp(ctx, items[0].msg.Chat.ID, items[0].msg.MessageID, maxChatID)
 	}
 
-	// Caption и entities берём из первого элемента, у которого caption не пустой
-	var caption string
-	var entities []Entity
-	for _, it := range items {
-		if it.caption != "" {
-			caption = it.caption
-			entities = it.entities
-			break
-		}
-	}
+	mdCaption, captionFormatted := b.formatTgMediaGroupCaption(ctx, items, maxChatID, isCrosspost)
 
 	// Reply ID из первого элемента с reply
 	var replyTo string
@@ -190,17 +181,8 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 		}
 	}
 
-	// Форматируем caption.
-	// Для crosspost caption уже в markdown (см. formatTgCrosspostCaption),
-	// повторно конвертировать нельзя — entities ссылаются на offsets сырого текста.
-	mdCaption := caption
-	if entities != nil && !isCrosspost {
-		mdCaption = tgEntitiesToHTML(caption, entities)
-	}
-
 	m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
-	// Для crosspost caption уже markdown; для bridge — markdown если были entities.
-	if isCrosspost || mdCaption != caption {
+	if captionFormatted && mdCaption != "" {
 		m.SetFormat("html")
 	}
 	if replyTo != "" {
@@ -334,7 +316,7 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 		}
 		if maxAlbumCaptionMissing(mdCaption, result, persisted, getErr) {
 			format := ""
-			if isCrosspost || mdCaption != caption {
+			if captionFormatted {
 				format = "html"
 			}
 			if editErr := b.editMaxTextOnly(ctx, maxChatID, result.Body.Mid, mdCaption, format); editErr != nil {
@@ -354,7 +336,7 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 		// Повторно проверяем объект после стабилизации и при необходимости
 		// редактируем только text/format, не затрагивая attachments.
 		format := ""
-		if isCrosspost || mdCaption != caption {
+		if captionFormatted {
 			format = "html"
 		}
 		go b.verifyMaxAlbumCaptionEventually(ctx, mc, maxChatID, result.Body.Mid, mdCaption, format)
@@ -372,6 +354,40 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 		b.saveTgMediaState(it.msg)
 	}
 	return result.Body.Mid, nil
+}
+
+// formatTgMediaGroupCaption keeps album captions consistent with ordinary
+// TG→MAX messages: Telegram entities become MAX HTML and the visible sender
+// name is bold. Crossposts already arrive as prepared HTML and have no author
+// attribution.
+func (b *Bridge) formatTgMediaGroupCaption(ctx context.Context, items []mediaGroupItem, maxChatID int64, isCrosspost bool) (string, bool) {
+	if len(items) == 0 {
+		return "", false
+	}
+	captionMessage := items[0].msg
+	caption := ""
+	var entities []Entity
+	for _, item := range items {
+		if item.caption != "" {
+			caption = item.caption
+			entities = item.entities
+			captionMessage = item.msg
+			break
+		}
+	}
+	if isCrosspost {
+		return caption, caption != ""
+	}
+	body := tgEntitiesToHTML(caption, entities)
+	if forwardLine := tgForwardLine(captionMessage); forwardLine != "" {
+		body = forwardLine + body
+	}
+	name := ""
+	if captionMessage != nil {
+		name = b.pairRelayName(ctx, captionMessage.Chat.ID, maxChatID, b.tgRelayName(captionMessage))
+	}
+	formatted := formatAttributionHTML(name, body, b.cfg.MessageNewline)
+	return formatted, formatted != ""
 }
 
 func (b *Bridge) verifyMaxAlbumCaptionEventually(

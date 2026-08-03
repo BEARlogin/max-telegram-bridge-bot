@@ -66,6 +66,32 @@ func TestStaleMediaGroupTimerCannotDetachNewerCaption(t *testing.T) {
 	}
 }
 
+func TestBridgeMediaGroupCaptionUsesBoldSenderName(t *testing.T) {
+	b := &Bridge{}
+	msg := &TGMessage{
+		Chat:       ChatInfo{ID: -1001, Type: "supergroup"},
+		SenderChat: &ChatInfo{ID: -2002, Type: "channel", Title: "Александр"},
+	}
+	caption, formatted := b.formatTgMediaGroupCaption(context.Background(), []mediaGroupItem{
+		{msg: msg},
+		{msg: msg, caption: "В том числе можно фото пересылать."},
+	}, -3003, false)
+	if !formatted || caption != "<b>Александр</b>: В том числе можно фото пересылать." {
+		t.Fatalf("caption=%q formatted=%v", caption, formatted)
+	}
+}
+
+func TestCrosspostMediaGroupCaptionDoesNotAddSender(t *testing.T) {
+	b := &Bridge{}
+	msg := &TGMessage{Chat: ChatInfo{ID: -1001}, SenderChat: &ChatInfo{Title: "Александр"}}
+	caption, formatted := b.formatTgMediaGroupCaption(context.Background(), []mediaGroupItem{
+		{msg: msg, caption: "<b>Готовый пост</b>"},
+	}, -3003, true)
+	if !formatted || caption != "<b>Готовый пост</b>" {
+		t.Fatalf("caption=%q formatted=%v", caption, formatted)
+	}
+}
+
 func TestMaxAlbumCaptionMissing(t *testing.T) {
 	message := func(text string) *maxschemes.Message {
 		return &maxschemes.Message{Body: maxschemes.MessageBody{Text: text}}
