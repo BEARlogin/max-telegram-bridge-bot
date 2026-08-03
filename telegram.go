@@ -405,6 +405,15 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				}
 				channelID := msg.ForwardOriginChat.ID
 				channelTitle := msg.ForwardOriginChat.Title
+				verifiedTitle, accessErr := b.validateTgCrosspostSource(ctx, channelID, msg.From.ID)
+				if accessErr != nil {
+					b.tg.SendMessage(ctx, msg.Chat.ID, b.tgCrosspostAccessText(channelID, accessErr),
+						&SendOpts{ThreadID: msg.MessageThreadID})
+					continue
+				}
+				if strings.TrimSpace(channelTitle) == "" {
+					channelTitle = verifiedTitle
+				}
 
 				// Запоминаем TG user ID для этого канала (для owner при pairing)
 				b.cpTgOwnerMu.Lock()

@@ -1098,6 +1098,14 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
 					continue
 				}
+				b.cpTgOwnerMu.Lock()
+				tgOwnerID := b.cpTgOwner[tgChannelID]
+				b.cpTgOwnerMu.Unlock()
+				if _, accessErr := b.validateTgCrosspostSource(ctx, tgChannelID, tgOwnerID); accessErr != nil {
+					m := maxbot.NewMessage().SetChat(chatID).SetText(b.tgCrosspostAccessText(tgChannelID, accessErr))
+					b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+					continue
+				}
 				// Сохраняем ожидание: userId → tgChannelID
 				b.cpWaitMu.Lock()
 				b.cpWait[msgUpd.Message.Sender.UserId] = tgChannelID
@@ -1137,6 +1145,11 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					b.cpTgOwnerMu.Lock()
 					tgOwnerID := b.cpTgOwner[tgChannelID]
 					b.cpTgOwnerMu.Unlock()
+					if _, accessErr := b.validateTgCrosspostSource(ctx, tgChannelID, tgOwnerID); accessErr != nil {
+						m := maxbot.NewMessage().SetChat(chatID).SetText(b.tgCrosspostAccessText(tgChannelID, accessErr))
+						b.maxClientFor(ctx, chatID).Messages.Send(ctx, m)
+						continue
+					}
 
 					billingMaxID, billingTgID, workspaceNotice, workspaceOK :=
 						b.resolveCrosspostWorkspace(

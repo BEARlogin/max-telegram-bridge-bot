@@ -1,10 +1,20 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 )
+
+type workspaceDoctorAddon struct {
+	Addon
+	ownerIDs []int64
+}
+
+func (a workspaceDoctorAddon) DoctorBillingOwnerIDs(context.Context, string, int64) []int64 {
+	return a.ownerIDs
+}
 
 func TestDoctorConnectionsOwnedMetadataOnly(t *testing.T) {
 	repo := testRepo(t)
@@ -164,6 +174,32 @@ func TestDoctorConnectionsRejectInvalidPrincipal(t *testing.T) {
 		if _, err := repo.DoctorConnections(tc.platform, tc.userID, 0); err == nil {
 			t.Fatalf("DoctorConnections(%q,%d) accepted invalid principal", tc.platform, tc.userID)
 		}
+	}
+}
+
+func TestDoctorReportIncludesWorkspaceOwnedConnections(t *testing.T) {
+	repo := testRepo(t)
+	const (
+		personalID = int64(101)
+		billingID  = int64(7000000000000000042)
+		tgChatID   = int64(-10042)
+		maxChatID  = int64(-20042)
+	)
+	if _, err := repo.db.Exec(`INSERT INTO crossposts
+		(tg_chat_id,max_chat_id,direction,created_at,owner_id,tg_owner_id,paused)
+		VALUES (?,?,?,?,?,?,0)`, tgChatID, maxChatID, "both", 123, billingID, billingID); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{repo: repo, addon: workspaceDoctorAddon{ownerIDs: []int64{billingID, billingID}}}
+	report, err := b.doctorReport(context.Background(), "tg", personalID, time.Unix(456, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(report, "Каналы") || !strings.Contains(report, "-10042") {
+		t.Fatalf("workspace connection missing: %q", report)
+	}
+	if strings.Count(report, "-10042") != 1 {
+		t.Fatalf("workspace connection was duplicated: %q", report)
 	}
 }
 

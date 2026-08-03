@@ -144,9 +144,35 @@ func formatDoctorReport(now time.Time, connections []DoctorConnection) string {
 }
 
 func (b *Bridge) doctorReport(ctx context.Context, platform string, userID int64, now time.Time) (string, error) {
-	connections, err := b.repo.DoctorConnections(platform, userID, doctorDayStart(now))
-	if err != nil {
-		return "", err
+	ownerIDs := []int64{userID}
+	if h, ok := b.addon.(interface {
+		DoctorBillingOwnerIDs(context.Context, string, int64) []int64
+	}); ok {
+		ownerIDs = append(ownerIDs, h.DoctorBillingOwnerIDs(ctx, platform, userID)...)
+	}
+	connections := make([]DoctorConnection, 0)
+	seenOwners := make(map[int64]struct{}, len(ownerIDs))
+	seenConnections := make(map[string]struct{})
+	for _, ownerID := range ownerIDs {
+		if ownerID <= 0 {
+			continue
+		}
+		if _, seen := seenOwners[ownerID]; seen {
+			continue
+		}
+		seenOwners[ownerID] = struct{}{}
+		owned, err := b.repo.DoctorConnections(platform, ownerID, doctorDayStart(now))
+		if err != nil {
+			return "", err
+		}
+		for _, connection := range owned {
+			key := fmt.Sprintf("%s:%d:%d", connection.Kind, connection.TgChatID, connection.MaxChatID)
+			if _, seen := seenConnections[key]; seen {
+				continue
+			}
+			seenConnections[key] = struct{}{}
+			connections = append(connections, connection)
+		}
 	}
 	for i := range connections {
 		if connections[i].Kind == "bridge" {
