@@ -174,6 +174,7 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 	internalVKHandlersOnce.Do(func() {
 		http.HandleFunc("/internal/vk-reload", b.handleInternalVKReload)
 		http.HandleFunc("/internal/vk-connect", b.handleInternalVKConnect)
+		http.HandleFunc("/internal/vk-publisher-connect", b.handleInternalVKPublisherConnect)
 		http.HandleFunc("/internal/vk-chats", b.handleInternalVKChats)
 		http.HandleFunc("/internal/vk-chat-bind", b.handleInternalVKChatBind)
 		http.HandleFunc("/internal/vk-channel-bind", b.handleInternalVKChannelBind)
@@ -398,6 +399,43 @@ func (b *Bridge) handleInternalVKConnect(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		slog.Warn("vk cabinet connect link failed", "owner", in.OwnerID, "err", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"url": link})
+}
+
+// handleInternalVKPublisherConnect starts the separate user OAuth required to
+// restore wall publishing for an already connected community. It never changes
+// the community messaging token used by chats and Long Poll.
+func (b *Bridge) handleInternalVKPublisherConnect(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Secret    string `json:"secret"`
+		OwnerID   int64  `json:"owner_id"`
+		AccountID int64  `json:"account_id"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&in) != nil ||
+		in.OwnerID <= 0 || in.AccountID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !validInternalSecret(in.Secret) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	starter, ok := b.addon.(interface {
+		CreateVKCabinetPublisherLink(context.Context, int64, int64) (string, error)
+	})
+	if !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	link, err := starter.CreateVKCabinetPublisherLink(r.Context(), in.OwnerID, in.AccountID)
+	if err != nil {
+		slog.Warn("vk cabinet publisher link failed", "owner", in.OwnerID, "account", in.AccountID, "err", err)
+		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
