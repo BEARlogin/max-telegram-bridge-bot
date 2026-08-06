@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,18 +67,51 @@ func TestStaleMediaGroupTimerCannotDetachNewerCaption(t *testing.T) {
 	}
 }
 
+// Album items are buffered the way telegram.go builds them: item.caption already
+// carries the sender attribution, so even a part without a caption is non-empty.
+func bridgeAlbumItem(chat ChatInfo, sender *ChatInfo, tgCaption string) mediaGroupItem {
+	msg := &TGMessage{Chat: chat, SenderChat: sender, Caption: tgCaption}
+	return mediaGroupItem{msg: msg, caption: formatTgCaptionWithName(msg, sender.Title, false, false)}
+}
+
 func TestBridgeMediaGroupCaptionUsesBoldSenderName(t *testing.T) {
 	b := &Bridge{}
-	msg := &TGMessage{
-		Chat:       ChatInfo{ID: -1001, Type: "supergroup"},
-		SenderChat: &ChatInfo{ID: -2002, Type: "channel", Title: "Александр"},
-	}
+	chat := ChatInfo{ID: -1001, Type: "supergroup"}
+	sender := &ChatInfo{ID: -2002, Type: "channel", Title: "Александр"}
 	caption, formatted := b.formatTgMediaGroupCaption(context.Background(), []mediaGroupItem{
-		{msg: msg},
-		{msg: msg, caption: "В том числе можно фото пересылать."},
+		bridgeAlbumItem(chat, sender, ""),
+		bridgeAlbumItem(chat, sender, "В том числе можно фото пересылать."),
 	}, -3003, false)
 	if !formatted || caption != "<b>Александр</b>: В том числе можно фото пересылать." {
 		t.Fatalf("caption=%q formatted=%v", caption, formatted)
+	}
+}
+
+// Telegram attaches the album caption to an arbitrary part — usually the first one,
+// but clients are free to put it on a later photo.
+func TestBridgeMediaGroupCaptionSurvivesOnLaterPhoto(t *testing.T) {
+	b := &Bridge{}
+	chat := ChatInfo{ID: -1001, Type: "supergroup"}
+	sender := &ChatInfo{ID: -2002, Type: "channel", Title: "Александр"}
+	caption, formatted := b.formatTgMediaGroupCaption(context.Background(), []mediaGroupItem{
+		bridgeAlbumItem(chat, sender, ""),
+		bridgeAlbumItem(chat, sender, "подпись на втором фото"),
+	}, -3003, false)
+	if !formatted || caption != "<b>Александр</b>: подпись на втором фото" {
+		t.Fatalf("caption=%q formatted=%v", caption, formatted)
+	}
+}
+
+func TestBridgeMediaGroupCaptionDoesNotRepeatSenderName(t *testing.T) {
+	b := &Bridge{}
+	chat := ChatInfo{ID: -1001, Type: "supergroup"}
+	sender := &ChatInfo{ID: -2002, Type: "channel", Title: "Александр"}
+	caption, _ := b.formatTgMediaGroupCaption(context.Background(), []mediaGroupItem{
+		bridgeAlbumItem(chat, sender, ""),
+		bridgeAlbumItem(chat, sender, ""),
+	}, -3003, false)
+	if strings.Count(caption, sender.Title) > 1 {
+		t.Fatalf("sender name repeated in caption=%q", caption)
 	}
 }
 

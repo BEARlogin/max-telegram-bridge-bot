@@ -364,19 +364,31 @@ func (b *Bridge) formatTgMediaGroupCaption(ctx context.Context, items []mediaGro
 	if len(items) == 0 {
 		return "", false
 	}
+	if isCrosspost {
+		// Crossposts arrive as prepared HTML in item.caption and carry no author name.
+		for _, item := range items {
+			if item.caption != "" {
+				return item.caption, true
+			}
+		}
+		return "", false
+	}
+	// Bridge items reach the buffer with the author attribution already applied, so
+	// item.caption is non-empty even for album parts that carry no caption at all.
+	// Selecting by it therefore always picked the first part — losing a caption
+	// attached to a later photo — and adding the attribution here a second time
+	// rendered as "Name: Name:". The raw Telegram caption is the only sound source:
+	// entities are offsets into it, not into the attributed string.
 	captionMessage := items[0].msg
 	caption := ""
 	var entities []Entity
 	for _, item := range items {
-		if item.caption != "" {
-			caption = item.caption
+		if text := tgMessageBody(item.msg); text != "" {
+			caption = text
 			entities = item.entities
 			captionMessage = item.msg
 			break
 		}
-	}
-	if isCrosspost {
-		return caption, caption != ""
 	}
 	body := tgEntitiesToHTML(caption, entities)
 	if forwardLine := tgForwardLine(captionMessage); forwardLine != "" {

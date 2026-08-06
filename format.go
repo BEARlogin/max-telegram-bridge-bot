@@ -110,14 +110,23 @@ func formatTgCaption(msg *TGMessage, prefix, newline bool) string {
 	return formatTgCaptionWithName(msg, tgName(msg), prefix, newline)
 }
 
+// tgMessageBody — сырое содержимое сообщения: текст, подпись или представление
+// контакта. Без атрибуции автора: она накладывается вызывающей стороной ровно раз.
+func tgMessageBody(msg *TGMessage) string {
+	if msg == nil {
+		return ""
+	}
+	if msg.Text != "" {
+		return msg.Text
+	}
+	if msg.Caption != "" {
+		return msg.Caption
+	}
+	return tgContactText(msg)
+}
+
 func formatTgCaptionWithName(msg *TGMessage, name string, prefix, newline bool) string {
-	text := msg.Text
-	if text == "" {
-		text = msg.Caption
-	}
-	if text == "" {
-		text = tgContactText(msg)
-	}
+	text := tgMessageBody(msg)
 	if name == "" {
 		return text
 	}
