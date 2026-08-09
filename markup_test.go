@@ -59,10 +59,34 @@ func TestTgEntitiesToHTML_CodeAndBlockquote(t *testing.T) {
 	// pre → <pre>, blockquote → <blockquote>; то, что MAX-markdown не рендерит.
 	text := "code:\nfn()\nquote"
 	got := tgEntitiesToHTML(text, []Entity{
-		{Type: "pre", Offset: 6, Length: 4},        // "fn()"
+		{Type: "pre", Offset: 6, Length: 4},         // "fn()"
 		{Type: "blockquote", Offset: 11, Length: 5}, // "quote"
 	})
 	want := "code:\n<pre>fn()</pre>\n<blockquote>quote</blockquote>"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToHTML_BlockquoteWrapsBoldRegardlessOfEntityOrder(t *testing.T) {
+	// Telegram не гарантирует, что внешняя цитата придёт раньше вложенного bold.
+	// Невалидное <b><blockquote> MAX может разобрать как обычный текст без разметки.
+	got := tgEntitiesToHTML("важная цитата", []Entity{
+		{Type: "bold", Offset: 0, Length: 6},
+		{Type: "blockquote", Offset: 0, Length: 13},
+	})
+	want := "<blockquote><b>важная</b> цитата</blockquote>"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToHTML_BlockquoteWinsIdenticalRange(t *testing.T) {
+	got := tgEntitiesToHTML("цитата", []Entity{
+		{Type: "bold", Offset: 0, Length: 6},
+		{Type: "blockquote", Offset: 0, Length: 6},
+	})
+	want := "<blockquote><b>цитата</b></blockquote>"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

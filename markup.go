@@ -134,6 +134,23 @@ func tgEntitiesToHTML(text string, entities []Entity) string {
 		return html.EscapeString(text)
 	}
 
+	// Telegram не обещает порядок entities с одинаковыми границами. Для HTML это
+	// важно: блочный <blockquote> должен оборачивать inline-разметку, а не попадать
+	// внутрь <b>/<i>. Сначала выстраиваем entities от внешних к внутренним; stable
+	// сохраняет исходный порядок для равноценных inline-тегов.
+	ordered := append([]Entity(nil), entities...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Offset != ordered[j].Offset {
+			return ordered[i].Offset < ordered[j].Offset
+		}
+		iEnd := ordered[i].Offset + ordered[i].Length
+		jEnd := ordered[j].Offset + ordered[j].Length
+		if iEnd != jEnd {
+			return iEnd > jEnd
+		}
+		return htmlEntityOuterRank(ordered[i].Type) < htmlEntityOuterRank(ordered[j].Type)
+	})
+
 	runes := []rune(text)
 	utf16units := utf16.Encode(runes)
 
@@ -150,7 +167,7 @@ func tgEntitiesToHTML(text string, entities []Entity) string {
 	}
 
 	var tags []tag
-	for i, e := range entities {
+	for i, e := range ordered {
 		if e.Type == "custom_emoji" {
 			end := e.Offset + e.Length
 			if end > len(utf16units) {
@@ -234,6 +251,17 @@ func tgEntitiesToHTML(text string, entities []Entity) string {
 		}
 	}
 	return sb.String()
+}
+
+func htmlEntityOuterRank(entityType string) int {
+	switch entityType {
+	case "blockquote", "expandable_blockquote":
+		return 0
+	case "pre":
+		return 1
+	default:
+		return 2
+	}
 }
 
 // isMarkupSpace — пробельный UTF-16 код-юнит (ASCII whitespace), который нельзя
