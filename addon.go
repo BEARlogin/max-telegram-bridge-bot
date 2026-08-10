@@ -33,9 +33,10 @@ type Addon interface {
 	// сигнатура совпадала между main.Addon и приватным пакетом аддона (Go требует
 	// идентичности типов в методах интерфейса). Возвращает true, если сообщение
 	// обработано как нежелательное (удалено) — ядру для остановки дальнейшей пересылки.
-	// viaBot — сообщение через инлайн-бота/переслано от бота ("@username"/id, "" если нет):
-	// типовой способ вкидывать скам-карточки (фейковые опросы) — аддон учитывает как сигнал.
-	Moderate(ctx context.Context, platform string, chatID, userID int64, userName string, tgMsgID int, maxMid, text, viaBot string, hasLink, isAdmin, extReply bool) (handled bool)
+	// botForward — сообщение переслано от аккаунта-бота ("@username"/id, "" если
+	// нет): отдельный структурный сигнал антиспама для скам-карточек. Telegram
+	// via_bot сюда не попадает: inline-результат отправляет живой пользователь.
+	Moderate(ctx context.Context, platform string, chatID, userID int64, userName string, tgMsgID int, maxMid, text, botForward string, hasLink, isAdmin, extReply bool) (handled bool)
 	// WantImageCheck — нужно ли ядру скачивать картинку для внешней проверки.
 	WantImageCheck(platform string, chatID int64) bool
 	// DeleteServiceMsgs — удалять ли служебные сообщения (вошёл/вышел/смена названия/
@@ -125,17 +126,17 @@ type Addon interface {
 
 // GroupMessage — удобная обёртка для вызова Moderate из ядра (call-site читаемость).
 type GroupMessage struct {
-	Platform string // "tg" | "max"
-	ChatID   int64
-	UserID   int64
-	UserName string
-	TgMsgID  int
-	MaxMid   string
-	Text     string
-	ViaBot   string // через инлайн-бота / переслано от бота ("@username"/id), "" если нет
-	HasLink  bool
-	IsAdmin  bool
-	ExtReply bool // сообщение цитирует пост из другого чата/канала (external_reply)
+	Platform   string // "tg" | "max"
+	ChatID     int64
+	UserID     int64
+	UserName   string
+	TgMsgID    int
+	MaxMid     string
+	Text       string
+	BotForward string // переслано от аккаунта-бота ("@username"/id), "" если нет
+	HasLink    bool
+	IsAdmin    bool
+	ExtReply   bool // сообщение цитирует пост из другого чата/канала (external_reply)
 }
 
 // isTgServiceSender — служебные/каналовые отправители Telegram: это КОНТЕНТ КАНАЛА или
@@ -154,7 +155,7 @@ func (b *Bridge) moderateGroupMessage(ctx context.Context, m GroupMessage) bool 
 	if m.Platform == "tg" && isTgServiceSender(m.UserID) {
 		return false
 	}
-	return b.addon.Moderate(ctx, m.Platform, m.ChatID, m.UserID, m.UserName, m.TgMsgID, m.MaxMid, m.Text, m.ViaBot, m.HasLink, m.IsAdmin, m.ExtReply)
+	return b.addon.Moderate(ctx, m.Platform, m.ChatID, m.UserID, m.UserName, m.TgMsgID, m.MaxMid, m.Text, m.BotForward, m.HasLink, m.IsAdmin, m.ExtReply)
 }
 
 // screenRelay — relay-гейт: блокирует пересылку запрещённого/обфусцированного контента

@@ -1019,11 +1019,14 @@ func convertMsg(m *models.Message) *TGMessage {
 		}
 	}
 
-	// Через/от бота: via_bot либо forward_origin от юзера-бота (скам-карточки «опрос за 2000₽»).
+	// Inline-результат Telegram отправляет от имени пользователя. Сохраняем его
+	// отдельно для диагностики, но не передаём антиспаму как «сообщение от бота».
 	if m.ViaBot != nil {
-		msg.BotForward = tgUserRef(m.ViaBot.Username, m.ViaBot.ID)
+		msg.ViaInlineBot = tgUserRef(m.ViaBot.Username, m.ViaBot.ID)
 	}
-	if msg.BotForward == "" && m.ForwardOrigin != nil && m.ForwardOrigin.MessageOriginUser != nil &&
+	// Настоящий forward_origin от аккаунта-бота остаётся структурным сигналом:
+	// так распространяются готовые скам-карточки с кнопками и безобидной подписью.
+	if m.ForwardOrigin != nil && m.ForwardOrigin.MessageOriginUser != nil &&
 		m.ForwardOrigin.MessageOriginUser.SenderUser.IsBot {
 		u := m.ForwardOrigin.MessageOriginUser.SenderUser
 		msg.BotForward = tgUserRef(u.Username, u.ID)

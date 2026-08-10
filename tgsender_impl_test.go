@@ -374,6 +374,43 @@ func TestConvertMsg_ForwardOriginNonChannel(t *testing.T) {
 	}
 }
 
+func TestConvertMsg_InlineBotAnimationRemainsUserMessage(t *testing.T) {
+	m := &models.Message{
+		ID:        1,
+		Chat:      models.Chat{ID: -1001, Type: "supergroup"},
+		From:      &models.User{ID: 42, FirstName: "Видимый"},
+		ViaBot:    &models.User{ID: 99, IsBot: true, Username: "coboldbot"},
+		Animation: &models.Animation{FileID: "inline-video", FileName: "clip.mp4", FileSize: 1024},
+	}
+
+	got := convertMsg(m)
+	if got.ViaInlineBot != "@coboldbot" {
+		t.Fatalf("ViaInlineBot = %q, want @coboldbot", got.ViaInlineBot)
+	}
+	if got.BotForward != "" {
+		t.Fatalf("inline result must not be a bot-forward spam signal: %q", got.BotForward)
+	}
+	if got.Animation == nil || got.Animation.FileID != "inline-video" {
+		t.Fatalf("Animation = %+v", got.Animation)
+	}
+}
+
+func TestConvertMsg_ForwardedBotRemainsModerationSignal(t *testing.T) {
+	m := &models.Message{
+		ID:   1,
+		Chat: models.Chat{ID: -1001, Type: "supergroup"},
+		From: &models.User{ID: 42, FirstName: "Пользователь"},
+		ForwardOrigin: &models.MessageOrigin{MessageOriginUser: &models.MessageOriginUser{
+			SenderUser: models.User{ID: 99, IsBot: true, Username: "scam_bot"},
+		}},
+	}
+
+	got := convertMsg(m)
+	if got.BotForward != "@scam_bot" {
+		t.Fatalf("BotForward = %q, want @scam_bot", got.BotForward)
+	}
+}
+
 func TestConvertMsg_Media(t *testing.T) {
 	m := &models.Message{
 		ID:   1,

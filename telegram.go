@@ -108,7 +108,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					}
 					if b.moderateGroupMessage(ctx, GroupMessage{
 						Platform: "tg", ChatID: edited.Chat.ID, UserID: edited.From.ID, UserName: edited.From.FirstName,
-						TgMsgID: edited.MessageID, Text: mtext, ViaBot: edited.BotForward, HasLink: tgMsgHasLink(edited), IsAdmin: isAdmin,
+						TgMsgID: edited.MessageID, Text: mtext, BotForward: edited.BotForward, HasLink: tgMsgHasLink(edited), IsAdmin: isAdmin,
 						ExtReply: edited.HasExternalReply,
 					}) {
 						continue
@@ -230,7 +230,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					}
 				}
 			}
-			slog.Debug("TG msg received", "uid", tgUserID(msg), "chat", msg.Chat.ID, "type", msg.Chat.Type)
+			slog.Debug("TG msg received", "uid", tgUserID(msg), "chat", msg.Chat.ID, "type", msg.Chat.Type, "viaBot", msg.ViaInlineBot)
 			startPayload, isStart := telegramStartParam(text)
 
 			// Запоминаем юзера при личном сообщении
@@ -951,7 +951,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					}
 					if b.moderateGroupMessage(ctx, GroupMessage{
 						Platform: "tg", ChatID: msg.Chat.ID, UserID: msg.From.ID, UserName: msg.From.FirstName,
-						TgMsgID: msg.MessageID, Text: mtext, ViaBot: msg.BotForward, HasLink: hasLink, IsAdmin: isAdmin,
+						TgMsgID: msg.MessageID, Text: mtext, BotForward: msg.BotForward, HasLink: hasLink, IsAdmin: isAdmin,
 						ExtReply: msg.HasExternalReply,
 					}) {
 						continue
