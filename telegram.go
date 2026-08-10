@@ -2297,10 +2297,16 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *TGMessag
 		return
 	}
 
-	text := edited.Text
-	if text == "" {
-		text = edited.Caption
+	if edited.Text == "" && edited.Caption == "" {
+		return
 	}
+
+	// Редактирование обязано проходить тот же пайплайн, что и первичная
+	// публикация. Иначе Telegram-автоправка возвращает в MAX удалённые футеры и
+	// ссылки, а также сбрасывает жирный текст и цитаты.
+	repl := b.repo.GetCrosspostReplacements(maxChatID)
+	text := formatTgCrosspostCaptionRepl(edited, repl.TgToMax)
+	text = collapseWhitespace(text)
 	if text == "" {
 		return
 	}
@@ -2336,7 +2342,7 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *TGMessag
 	// сообщения и удаляет уже опубликованные фото/видео. При правке подписи в
 	// Telegram сами медиа не меняются, поэтому отправляем прямой PUT только с
 	// полями text/format: отсутствие attachments в JSON сохраняет вложения MAX.
-	if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, text, ""); err != nil {
+	if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, text, "html"); err != nil {
 		slog.Error("TG→MAX crosspost edit failed", "err", err)
 	} else {
 		slog.Info("TG→MAX crosspost edited", "mid", maxMsgID)

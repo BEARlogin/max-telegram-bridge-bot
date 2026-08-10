@@ -67,7 +67,7 @@ func (b *Bridge) editTgCrosspostMediaInMax(
 	maxMsgID, text string,
 ) {
 	ctx = b.withMaxToken(ctx, b.maxTokenFor(ctx, maxChatID))
-	m := maxbot.NewMessage().SetChat(maxChatID).SetText(text)
+	m := maxbot.NewMessage().SetChat(maxChatID).SetText(text).SetFormat(maxschemes.HTML)
 	for _, state := range states {
 		switch state.Kind {
 		case "photo":

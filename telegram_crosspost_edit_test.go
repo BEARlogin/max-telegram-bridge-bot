@@ -29,6 +29,11 @@ func TestTgCrosspostEditPreservesMaxMedia(t *testing.T) {
 	if err := repo.SetCrosspostSyncEdits(maxChatID, true); err != nil {
 		t.Fatal(err)
 	}
+	if err := repo.SetCrosspostReplacements(maxChatID, CrosspostReplacements{TgToMax: []Replacement{
+		{From: "• Мы в МАХ", To: "", Target: "all"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	repo.SaveMsgOrigin(tgChatID, tgMsgID, maxChatID, maxMsgID, 0, "tg")
 	repo.SaveTgMediaState(tgChatID, TgMediaState{
 		TgMsgID: tgMsgID, Kind: "photo", FileID: "existing-photo",
@@ -65,12 +70,18 @@ func TestTgCrosspostEditPreservesMaxMedia(t *testing.T) {
 	bridge.handleTgEditedChannelPost(ctx, &TGMessage{
 		MessageID: tgMsgID,
 		Chat:      ChatInfo{ID: tgChatID, Type: "channel"},
-		Caption:   "Исправленная подпись",
+		Caption:   "Исправленная подпись\n\n• Мы в МАХ",
 		Photo:     []PhotoSize{{FileID: "existing-photo"}},
 	})
 
 	if !bytes.Contains(requestBody, []byte(`"text":"Исправленная подпись"`)) {
 		t.Fatalf("body=%s", requestBody)
+	}
+	if !bytes.Contains(requestBody, []byte(`"format":"html"`)) {
+		t.Fatalf("edit must preserve MAX HTML formatting: %s", requestBody)
+	}
+	if bytes.Contains(requestBody, []byte("Мы в МАХ")) {
+		t.Fatalf("edit must reapply TG→MAX replacements: %s", requestBody)
 	}
 	if bytes.Contains(requestBody, []byte("attachments")) {
 		t.Fatalf("edit must omit attachments to preserve MAX media: %s", requestBody)
