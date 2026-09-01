@@ -15,7 +15,7 @@ func (f crosspostEditRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	return f(req)
 }
 
-func TestTgCrosspostEditPreservesMaxMedia(t *testing.T) {
+func TestTgCrosspostCaptionEditSeedsUnknownMediaAndPreservesMaxAttachments(t *testing.T) {
 	repo := testRepo(t)
 	const (
 		tgChatID  = int64(-100101)
@@ -35,10 +35,6 @@ func TestTgCrosspostEditPreservesMaxMedia(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo.SaveMsgOrigin(tgChatID, tgMsgID, maxChatID, maxMsgID, 0, "tg")
-	repo.SaveTgMediaState(tgChatID, TgMediaState{
-		TgMsgID: tgMsgID, Kind: "photo", FileID: "existing-photo",
-		Fingerprint: "photo:existing-photo",
-	})
 
 	var requestBody []byte
 	bridge := &Bridge{
@@ -85,6 +81,10 @@ func TestTgCrosspostEditPreservesMaxMedia(t *testing.T) {
 	}
 	if bytes.Contains(requestBody, []byte("attachments")) {
 		t.Fatalf("edit must omit attachments to preserve MAX media: %s", requestBody)
+	}
+	state, ok := repo.GetTgMediaState(tgChatID, tgMsgID)
+	if !ok || state.Fingerprint != "photo:existing-photo" {
+		t.Fatalf("legacy media state was not seeded: state=%+v ok=%v", state, ok)
 	}
 }
 

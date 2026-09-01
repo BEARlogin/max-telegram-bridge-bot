@@ -2313,8 +2313,9 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *TGMessag
 
 	if currentMedia, hasMedia := tgMediaStateFromMessage(edited); hasMedia {
 		previousMedia, known := b.repo.GetTgMediaState(edited.Chat.ID, edited.MessageID)
-		mediaChanged := !known || previousMedia.Fingerprint != currentMedia.Fingerprint
-		if mediaChanged {
+		if !known {
+			b.repo.SaveTgMediaState(edited.Chat.ID, currentMedia)
+		} else if previousMedia.Fingerprint != currentMedia.Fingerprint {
 			states := []TgMediaState{currentMedia}
 			if edited.MediaGroupID != "" {
 				states = replaceTgMediaState(
