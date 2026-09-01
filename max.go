@@ -2124,9 +2124,6 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	if !isCrosspost && !b.pairDeliverable(ctx, tgChatID, maxChatID) {
 		return
 	}
-	if b.cbBlocked(tgChatID) {
-		return
-	}
 
 	body := msgUpd.Message.Body
 	chatID := maxChatID
