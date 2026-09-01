@@ -22,8 +22,9 @@ type UserInfo struct {
 }
 
 type PhotoSize struct {
-	FileID   string
-	FileSize int
+	FileID       string
+	FileUniqueID string
+	FileSize     int
 }
 
 // ContactInfo — контакт (sharing телефона).
@@ -35,22 +36,25 @@ type ContactInfo struct {
 }
 
 type FileInfo struct {
-	FileID   string
-	FileName string
-	FileSize int
+	FileID       string
+	FileUniqueID string
+	FileName     string
+	FileSize     int
 }
 
 type DocInfo struct {
-	FileID   string
-	FileName string
-	FileSize int
-	MimeType string
+	FileID       string
+	FileUniqueID string
+	FileName     string
+	FileSize     int
+	MimeType     string
 }
 
 type AudioInfo struct {
-	FileID   string
-	FileName string
-	FileSize int
+	FileID       string
+	FileUniqueID string
+	FileName     string
+	FileSize     int
 }
 
 type StickerInfo struct {

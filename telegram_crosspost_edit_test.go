@@ -115,6 +115,56 @@ func TestTgMediaStateDetectsReplacementAndRebuildsAlbum(t *testing.T) {
 	}
 }
 
+func TestTgMediaIdentityUsesStableUniqueID(t *testing.T) {
+	previous, ok := tgMediaStateFromMessage(&TGMessage{
+		MessageID: 1,
+		Video:     &FileInfo{FileID: "old-file-id", FileUniqueID: "same-video"},
+	})
+	if !ok {
+		t.Fatal("previous media missing")
+	}
+	current, ok := tgMediaStateFromMessage(&TGMessage{
+		MessageID: 1,
+		Video:     &FileInfo{FileID: "rotated-file-id", FileUniqueID: "same-video"},
+	})
+	if !ok || !sameTgMediaIdentity(previous, current) {
+		t.Fatalf("same Telegram media was treated as replacement: previous=%+v current=%+v", previous, current)
+	}
+	legacy := previous
+	legacy.Fingerprint = legacy.Kind + ":" + legacy.FileID
+	if !sameTgMediaIdentity(legacy, current) {
+		t.Fatalf("legacy media was not accepted for one-time fingerprint upgrade: legacy=%+v current=%+v", legacy, current)
+	}
+	replacement := current
+	replacement.Fingerprint = "video:u:another-video"
+	if sameTgMediaIdentity(previous, replacement) {
+		t.Fatal("actual media replacement was not detected")
+	}
+}
+
+func TestTgMediaEditFailureFallsBackToText(t *testing.T) {
+	var requestBody []byte
+	bridge := &Bridge{
+		cfg: Config{MaxToken: "test-token"},
+		apiClient: &http.Client{Transport: crosspostEditRoundTripper(func(req *http.Request) (*http.Response, error) {
+			var err error
+			requestBody, err = io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil)), Header: make(http.Header)}, nil
+		})},
+		maxBotCache: make(map[int64]string),
+	}
+	bridge.editTgCrosspostMediaInMax(context.Background(),
+		&TGMessage{Chat: ChatInfo{ID: -1001}},
+		[]TgMediaState{{Kind: "unsupported", FileID: "file"}},
+		-2002, "mid", "Исправленная подпись")
+	if !bytes.Contains(requestBody, []byte(`"text":"Исправленная подпись"`)) || bytes.Contains(requestBody, []byte("attachments")) {
+		t.Fatalf("fallback body=%s", requestBody)
+	}
+}
+
 func TestTgMediaStatePersistsForCompleteAlbum(t *testing.T) {
 	repo := testRepo(t)
 	const tgChatID = int64(-100777)

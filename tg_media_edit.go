@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
@@ -14,23 +15,31 @@ func tgMediaStateFromMessage(msg *TGMessage) (TgMediaState, bool) {
 		return TgMediaState{}, false
 	}
 	state := TgMediaState{TgMsgID: msg.MessageID, MediaGroupID: msg.MediaGroupID}
+	var uniqueID string
 	switch {
 	case len(msg.Photo) > 0:
 		state.Kind = "photo"
 		state.FileID = msg.Photo[len(msg.Photo)-1].FileID
+		uniqueID = msg.Photo[len(msg.Photo)-1].FileUniqueID
 	case msg.Video != nil:
 		state.Kind, state.FileID, state.FileName = "video", msg.Video.FileID, msg.Video.FileName
+		uniqueID = msg.Video.FileUniqueID
 	case msg.Animation != nil:
 		state.Kind, state.FileID, state.FileName = "animation", msg.Animation.FileID, msg.Animation.FileName
+		uniqueID = msg.Animation.FileUniqueID
 	case msg.Document != nil:
 		state.Kind, state.FileID, state.FileName = "document", msg.Document.FileID, msg.Document.FileName
 		state.MimeType = msg.Document.MimeType
+		uniqueID = msg.Document.FileUniqueID
 	case msg.Audio != nil:
 		state.Kind, state.FileID, state.FileName = "audio", msg.Audio.FileID, msg.Audio.FileName
+		uniqueID = msg.Audio.FileUniqueID
 	case msg.Voice != nil:
 		state.Kind, state.FileID, state.FileName = "voice", msg.Voice.FileID, msg.Voice.FileName
+		uniqueID = msg.Voice.FileUniqueID
 	case msg.VideoNote != nil:
 		state.Kind, state.FileID = "video_note", msg.VideoNote.FileID
+		uniqueID = msg.VideoNote.FileUniqueID
 	default:
 		return TgMediaState{}, false
 	}
@@ -38,7 +47,23 @@ func tgMediaStateFromMessage(msg *TGMessage) (TgMediaState, bool) {
 		return TgMediaState{}, false
 	}
 	state.Fingerprint = state.Kind + ":" + state.FileID
+	if uniqueID != "" {
+		state.Fingerprint = state.Kind + ":u:" + uniqueID
+	}
 	return state, true
+}
+
+func sameTgMediaIdentity(previous, current TgMediaState) bool {
+	if previous.Kind != current.Kind {
+		return false
+	}
+	if previous.Fingerprint == current.Fingerprint {
+		return true
+	}
+	// Legacy rows used the unstable file_id. The first edit upgrades them to
+	// file_unique_id without attempting a destructive MAX attachment rewrite.
+	return previous.Fingerprint == previous.Kind+":"+previous.FileID &&
+		strings.HasPrefix(current.Fingerprint, current.Kind+":u:")
 }
 
 func (b *Bridge) saveTgMediaState(msg *TGMessage) {
@@ -66,6 +91,17 @@ func (b *Bridge) editTgCrosspostMediaInMax(
 	maxChatID int64,
 	maxMsgID, text string,
 ) {
+	replaced := false
+	defer func() {
+		if replaced {
+			return
+		}
+		if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, text, "html"); err != nil {
+			slog.Error("TG→MAX media edit text fallback failed", "err", err, "tgChat", msg.Chat.ID, "maxMsgID", maxMsgID)
+		} else {
+			slog.Info("TG→MAX media edit fell back to text", "tgChat", msg.Chat.ID, "maxMsgID", maxMsgID)
+		}
+	}()
 	ctx = b.withMaxToken(ctx, b.maxTokenFor(ctx, maxChatID))
 	m := maxbot.NewMessage().SetChat(maxChatID).SetText(text).SetFormat(maxschemes.HTML)
 	for _, state := range states {
@@ -130,6 +166,7 @@ func (b *Bridge) editTgCrosspostMediaInMax(
 	for _, state := range states {
 		b.repo.SaveTgMediaState(msg.Chat.ID, state)
 	}
+	replaced = true
 	slog.Info("TG→MAX crosspost media replaced", "mid", maxMsgID, "items", len(states),
 		"tgChat", msg.Chat.ID, "tgMsg", msg.MessageID)
 }

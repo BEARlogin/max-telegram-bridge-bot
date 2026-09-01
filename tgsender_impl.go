@@ -1035,31 +1035,32 @@ func convertMsg(m *models.Message) *TGMessage {
 	// Photo
 	for _, p := range m.Photo {
 		msg.Photo = append(msg.Photo, PhotoSize{
-			FileID:   p.FileID,
-			FileSize: p.FileSize,
+			FileID:       p.FileID,
+			FileUniqueID: p.FileUniqueID,
+			FileSize:     p.FileSize,
 		})
 	}
 
 	if m.Video != nil {
-		msg.Video = &FileInfo{FileID: m.Video.FileID, FileName: m.Video.FileName, FileSize: int(m.Video.FileSize)}
+		msg.Video = &FileInfo{FileID: m.Video.FileID, FileUniqueID: m.Video.FileUniqueID, FileName: m.Video.FileName, FileSize: int(m.Video.FileSize)}
 	}
 	if m.Document != nil {
-		msg.Document = &DocInfo{FileID: m.Document.FileID, FileName: m.Document.FileName, FileSize: int(m.Document.FileSize), MimeType: m.Document.MimeType}
+		msg.Document = &DocInfo{FileID: m.Document.FileID, FileUniqueID: m.Document.FileUniqueID, FileName: m.Document.FileName, FileSize: int(m.Document.FileSize), MimeType: m.Document.MimeType}
 	}
 	if m.Animation != nil {
-		msg.Animation = &FileInfo{FileID: m.Animation.FileID, FileName: m.Animation.FileName, FileSize: int(m.Animation.FileSize)}
+		msg.Animation = &FileInfo{FileID: m.Animation.FileID, FileUniqueID: m.Animation.FileUniqueID, FileName: m.Animation.FileName, FileSize: int(m.Animation.FileSize)}
 	}
 	if m.Sticker != nil {
 		msg.Sticker = &StickerInfo{FileID: m.Sticker.FileID, FileSize: m.Sticker.FileSize, IsAnimated: m.Sticker.IsAnimated}
 	}
 	if m.Voice != nil {
-		msg.Voice = &FileInfo{FileID: m.Voice.FileID, FileSize: int(m.Voice.FileSize)}
+		msg.Voice = &FileInfo{FileID: m.Voice.FileID, FileUniqueID: m.Voice.FileUniqueID, FileSize: int(m.Voice.FileSize)}
 	}
 	if m.Audio != nil {
-		msg.Audio = &AudioInfo{FileID: m.Audio.FileID, FileName: m.Audio.FileName, FileSize: int(m.Audio.FileSize)}
+		msg.Audio = &AudioInfo{FileID: m.Audio.FileID, FileUniqueID: m.Audio.FileUniqueID, FileName: m.Audio.FileName, FileSize: int(m.Audio.FileSize)}
 	}
 	if m.VideoNote != nil {
-		msg.VideoNote = &FileInfo{FileID: m.VideoNote.FileID, FileSize: m.VideoNote.FileSize}
+		msg.VideoNote = &FileInfo{FileID: m.VideoNote.FileID, FileUniqueID: m.VideoNote.FileUniqueID, FileSize: m.VideoNote.FileSize}
 	}
 
 	if m.ReplyToMessage != nil {
