@@ -54,6 +54,12 @@ type MessageAuthor struct {
 	UserID   int64
 }
 
+type MessageRoute struct {
+	TgChatID int64
+	TgMsgID  int
+	Origin   string
+}
+
 // Repository — абстракция хранилища для bridge.
 type Repository interface {
 	// Register обрабатывает /bridge команду.
@@ -90,6 +96,7 @@ type Repository interface {
 	LookupTgMsgID(maxMsgID string) (tgChatID int64, tgMsgID int, tgThreadID int, ok bool)
 	LookupMessageRouteByTg(tgChatID int64, tgMsgID int) (maxChatID int64, maxMsgID, origin string, ok bool)
 	LookupMessageRouteByMax(maxMsgID string) (tgChatID int64, tgMsgID int, maxChatID int64, origin string, ok bool)
+	ListMessageRoutesByMax(maxChatID int64, maxMsgID string) []MessageRoute
 	ListTgMsgIDs(maxMsgID string, tgChatID int64) []int
 	DeleteTgMsgMapping(tgChatID int64, tgMsgID int)
 	// RetainTgMessage records a Telegram pin event. The marker is stored even

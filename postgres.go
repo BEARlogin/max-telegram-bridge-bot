@@ -231,6 +231,23 @@ func (r *pgRepo) LookupMessageRouteByMax(maxMsgID string) (int64, int, int64, st
 	return tgChatID, tgMsgID, maxChatID, origin, err == nil
 }
 
+func (r *pgRepo) ListMessageRoutesByMax(maxChatID int64, maxMsgID string) []MessageRoute {
+	rows, err := r.db.Query(`SELECT tg_chat_id,tg_msg_id,COALESCE(origin,'')
+		FROM messages WHERE max_chat_id=$1 AND max_msg_id=$2 ORDER BY tg_chat_id,tg_msg_id`, maxChatID, maxMsgID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var routes []MessageRoute
+	for rows.Next() {
+		var route MessageRoute
+		if rows.Scan(&route.TgChatID, &route.TgMsgID, &route.Origin) == nil {
+			routes = append(routes, route)
+		}
+	}
+	return routes
+}
+
 func (r *pgRepo) ListTgMsgIDs(maxMsgID string, tgChatID int64) []int {
 	rows, err := r.db.Query(`SELECT tg_msg_id FROM messages
 		WHERE max_msg_id=$1 AND tg_chat_id=$2 ORDER BY tg_msg_id`, maxMsgID, tgChatID)

@@ -253,35 +253,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 
-			// Обработка удаления (только bridge, не crosspost)
+			// Обработка удаления
 			if delUpd, isDel := upd.(*maxschemes.MessageRemovedUpdate); isDel {
-				if b.isSuppressedMaxDelete(delUpd.MessageId) {
-					slog.Info("MAX delete sync suppressed", "maxMid", delUpd.MessageId, "maxChat", delUpd.ChatID)
-					continue
-				}
-				if b.addon != nil {
-					b.addon.HandleMaxMessageRemoved(ctx, delUpd.ChatID, delUpd.MessageId)
-				}
-				tgChatID, tgMsgID, _, ok := b.repo.LookupTgMsgID(delUpd.MessageId)
-				if !ok {
-					continue
-				}
-				origin, _ := b.repo.LookupTgMsgOrigin(delUpd.MessageId)
-				if !shouldSyncMaxDelete(origin) {
-					slog.Info("MAX delete ignored for non-MAX source", "maxMid", delUpd.MessageId, "maxChat", delUpd.ChatID, "origin", origin)
-					continue
-				}
-				// Delete sync для crosspost: проверяем настройку sync_edits и direction
-				if maxCP, dir, cpOk := b.repo.GetCrosspostMaxChat(tgChatID); cpOk {
-					if !b.repo.GetCrosspostSyncEdits(maxCP) || dir == "tg>max" {
-						continue
-					}
-				}
-				if err := b.tg.DeleteMessage(ctx, tgChatID, tgMsgID); err != nil {
-					slog.Error("MAX→TG delete failed", "err", err, "maxMid", delUpd.MessageId, "tgChat", tgChatID)
-				} else {
-					slog.Info("MAX→TG deleted", "tgMsg", tgMsgID, "tgChat", tgChatID)
-				}
+				b.handleMaxMessageRemoved(ctx, delUpd)
 				continue
 			}
 
@@ -480,7 +454,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			}
 			// Дуал-бот: одно и то же сообщение приходит от ОБОИХ ботов (если оба в чате) —
 			// обрабатываем один раз (mid уникален per-сообщение). Заодно метим бот чата.
-			if b.maxDupMid(msgUpd.Message.Body.Mid) {
+			if b.maxDupMid("message_created:" + msgUpd.Message.Body.Mid) {
 				continue
 			}
 
@@ -2541,6 +2515,38 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				Fingerprint: "rich:" + body.Mid,
 			})
 		}
+	}
+}
+
+func (b *Bridge) handleMaxMessageRemoved(ctx context.Context, upd *maxschemes.MessageRemovedUpdate) {
+	if b.isSuppressedMaxDelete(upd.MessageId) {
+		slog.Info("MAX delete sync suppressed", "maxMid", upd.MessageId, "maxChat", upd.ChatID)
+		return
+	}
+	if b.maxDupMid(fmt.Sprintf("message_removed:%d:%s", upd.ChatID, upd.MessageId)) {
+		return
+	}
+	if b.addon != nil {
+		b.addon.HandleMaxMessageRemoved(ctx, upd.ChatID, upd.MessageId)
+	}
+	crossposts := make(map[int64]string)
+	for _, link := range b.repo.GetCrosspostTgChats(upd.ChatID) {
+		crossposts[link.TgChatID] = link.Direction
+	}
+	for _, route := range b.repo.ListMessageRoutesByMax(upd.ChatID, upd.MessageId) {
+		if !shouldSyncMaxDelete(route.Origin) {
+			slog.Info("MAX delete ignored for non-MAX source", "maxMid", upd.MessageId, "maxChat", upd.ChatID, "tgChat", route.TgChatID, "origin", route.Origin)
+			continue
+		}
+		if direction, crosspost := crossposts[route.TgChatID]; crosspost &&
+			(!b.repo.GetCrosspostSyncEdits(upd.ChatID) || direction == "tg>max") {
+			continue
+		}
+		if err := b.tg.DeleteMessage(ctx, route.TgChatID, route.TgMsgID); err != nil {
+			slog.Error("MAX→TG delete failed", "err", err, "maxMid", upd.MessageId, "tgChat", route.TgChatID, "tgMsg", route.TgMsgID)
+			continue
+		}
+		slog.Info("MAX→TG deleted", "tgMsg", route.TgMsgID, "tgChat", route.TgChatID)
 	}
 }
 
