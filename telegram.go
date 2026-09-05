@@ -272,6 +272,9 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						continue
 					}
 				}
+				if b.addon.HandleDMBroadcastMessage(ctx, msg.From.ID, msg.Chat.ID, msg.MessageID, msg.MediaGroupID, text) {
+					continue
+				}
 				if msg.ForwardOriginChat != nil && msg.ForwardOriginChat.Type == "channel" {
 					if b.addon.HandleDMForward(ctx, msg.From.ID, msg.Chat.ID, msg.ForwardOriginChat.ID, msg.ForwardOriginChat.Title, msg.ForwardOriginMsgID) {
 						continue

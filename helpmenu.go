@@ -42,6 +42,7 @@ func (b *Bridge) tgStartMenu() (string, *InlineKeyboardMarkup) {
 
 	kb := NewInlineKeyboard(
 		NewInlineRow(NewInlineButton("⭐ Оформить PRO", "help:pro")),
+		NewInlineRow(NewInlineButton("📣 Создать рассылку", "help:broadcast")),
 		NewInlineRow(NewInlineButton("➕ Добавить бота", "help:add")),
 		NewInlineRow(NewInlineButton("📋 Как связать группы", "help:groups")),
 		NewInlineRow(NewInlineButton("🧵 Темы форума", "help:threads")),
@@ -155,6 +156,7 @@ func (b *Bridge) helpCmdsText() string {
 		"<code>/thread_bridge</code> — связать тред с отдельной MAX-группой\n" +
 		"<code>/thread_unbridge</code> — разорвать связку треда\n" +
 		"<code>/crosspost</code> — связки каналов и управление\n" +
+		"<code>/broadcast</code> — собрать рассылку по выбранным группам и каналам (PRO)\n" +
 		"<code>/workspace</code> — выбрать рабочее пространство и его общий тариф\n" +
 		"<code>/doctor</code> — приватный отчёт по всем вашим подключениям"
 }
@@ -189,6 +191,14 @@ func (b *Bridge) handleHelpMenuCallback(ctx context.Context, query *TGCallback, 
 			return true
 		}
 		_, _ = b.tg.SendMessage(ctx, chatID, "Оформление PRO временно недоступно. Попробуйте команду /pro позже.", nil)
+		return true
+	}
+	if data == "help:broadcast" {
+		b.tg.AnswerCallback(ctx, query.ID, "")
+		if b.addon != nil && b.addon.HandleDMCommand(ctx, query.From.ID, chatID, "/broadcast") {
+			return true
+		}
+		_, _ = b.tg.SendMessage(ctx, chatID, "Рассылки временно недоступны. Попробуйте команду /broadcast позже.", nil)
 		return true
 	}
 

@@ -15,6 +15,10 @@ import (
 type Addon interface {
 	Start(ctx context.Context) error
 	HandleDMCommand(ctx context.Context, userID, chatID int64, text string) (handled bool)
+	// HandleDMBroadcastMessage перехватывает следующее личное сообщение после запуска
+	// конструктора рассылки. Ядро передаёт только технические идентификаторы и подпись;
+	// контент и медиа остаются в Telegram до штатного copy/forward при отправке.
+	HandleDMBroadcastMessage(ctx context.Context, userID, chatID int64, messageID int, mediaGroupID, text string) (handled bool)
 	// HandleDMForward вызывается, когда юзер пересылает в личку пост из канала.
 	// sourceMsgID — msg_id оригинала в канале (0 если неизвестен).
 	HandleDMForward(ctx context.Context, userID, dmChatID, sourceChatID int64, sourceTitle string, sourceMsgID int) (handled bool)
