@@ -666,6 +666,17 @@ func (b *Bridge) crosspostDeliverablePair(ctx context.Context, tgChatID, maxChat
 	return b.addon.CrosspostDeliverable(ctx, maxOwner, tgOwner, maxChatID)
 }
 
+func (b *Bridge) crosspostProPair(ctx context.Context, tgChatID, maxChatID int64) bool {
+	checker, ok := b.addon.(interface {
+		CrosspostProActive(context.Context, int64, int64) bool
+	})
+	if !ok {
+		return false
+	}
+	maxOwner, tgOwner := b.repo.GetCrosspostOwnerPair(tgChatID, maxChatID)
+	return checker.CrosspostProActive(ctx, maxOwner, tgOwner)
+}
+
 func normalizePairDirection(direction string) string {
 	switch direction {
 	case "tg>max", "max>tg", "both":

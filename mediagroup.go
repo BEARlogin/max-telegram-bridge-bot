@@ -144,7 +144,7 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 			return "", fmt.Errorf("media group: chat is not linked")
 		}
 	}
-	if isCrosspost {
+	if isCrosspost && b.crosspostProPair(ctx, items[0].msg.Chat.ID, maxChatID) {
 		filters := b.repo.GetCrosspostReplacementsFor(items[0].msg.Chat.ID, maxChatID).TgToMaxExcludeContains
 		if tgCrosspostAlbumExcluded(items, filters) {
 			slog.Info("skip excluded TG crosspost album", "tgChat", items[0].msg.Chat.ID, "mediaGroup", items[0].msg.MediaGroupID, "maxChat", maxChatID)

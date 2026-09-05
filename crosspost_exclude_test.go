@@ -1,6 +1,45 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
+
+type crosspostProTestAddon struct {
+	Addon
+	active bool
+	owners [2]int64
+}
+
+func (a *crosspostProTestAddon) CrosspostProActive(_ context.Context, maxOwner, tgOwner int64) bool {
+	a.owners = [2]int64{maxOwner, tgOwner}
+	return a.active
+}
+
+func TestCrosspostFiltersRequireActivePROForExactPair(t *testing.T) {
+	repo := testRepo(t)
+	if err := repo.PairCrosspost(-1001, -2001, 11, 21); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PairCrosspost(-1002, -2001, 12, 22); err != nil {
+		t.Fatal(err)
+	}
+	checker := &crosspostProTestAddon{}
+	b := &Bridge{repo: repo, addon: checker}
+	if b.crosspostProPair(context.Background(), -1001, -2001) {
+		t.Fatal("inactive PRO enabled filters")
+	}
+	if checker.owners != [2]int64{11, 21} {
+		t.Fatalf("owners=%v want [11 21]", checker.owners)
+	}
+	checker.active = true
+	if !b.crosspostProPair(context.Background(), -1002, -2001) {
+		t.Fatal("active PRO did not enable filters")
+	}
+	if checker.owners != [2]int64{12, 22} {
+		t.Fatalf("owners=%v want [12 22]", checker.owners)
+	}
+}
 
 func TestTgCrosspostExcluded(t *testing.T) {
 	filters := []string{"#реклама", "партнёрский материал"}

@@ -1817,7 +1817,8 @@ func (b *Bridge) publishTgCrosspostWithMode(ctx context.Context, msg *TGMessage,
 	// Замены TG→MAX применяем на уровне (текст+entities) до HTML — чтобы вырезание
 	// видимого текста ссылки убирало и сам text_link. Схлопывание пробелов — после.
 	repl := b.repo.GetCrosspostReplacementsFor(msg.Chat.ID, maxChatID)
-	if msg.MediaGroupID == "" && tgCrosspostExcluded(msg, repl.TgToMaxExcludeContains) {
+	excluded := b.crosspostProPair(ctx, msg.Chat.ID, maxChatID) && tgCrosspostExcluded(msg, repl.TgToMaxExcludeContains)
+	if msg.MediaGroupID == "" && excluded {
 		slog.Info("skip excluded TG crosspost", "tgChat", msg.Chat.ID, "tgMsg", msg.MessageID, "maxChat", maxChatID)
 		return
 	}
@@ -1827,7 +1828,7 @@ func (b *Bridge) publishTgCrosspostWithMode(ctx context.Context, msg *TGMessage,
 	// Footer расширения (раз в N постов). Для альбома — только на непустой части
 	// (сборка альбома берёт caption первой НЕпустой части) и один вызов на альбом:
 	// crosspostFooter инкрементит счётчик постов связки.
-	if includeFooter && !tgCrosspostExcluded(msg, repl.TgToMaxExcludeContains) && (msg.MediaGroupID == "" || caption != "") {
+	if includeFooter && !excluded && (msg.MediaGroupID == "" || caption != "") {
 		caption += b.crosspostFooter(ctx, maxChatID, "max")
 	}
 
