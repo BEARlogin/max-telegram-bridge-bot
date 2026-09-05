@@ -1289,7 +1289,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				caption := formatMaxCrosspostCaption(msgUpd)
 
 				// Замены MAX→TG — на исходном тексте, схлопывание пробелов — после.
-				repl := b.repo.GetCrosspostReplacements(chatID)
+				repl := b.repo.GetCrosspostReplacementsFor(tgChatID, chatID)
 				if len(repl.MaxToTg) > 0 {
 					caption = applyReplacements(caption, repl.MaxToTg)
 				}
@@ -1300,8 +1300,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				// Идемпотентность per-destination: один MAX-пост можно доставить в несколько
 				// TG-чатов, но нельзя дублировать в тот же адресат при ретрае вебхука.
 				claimKey := body.Mid + ":" + strconv.FormatInt(tgChatID, 10)
-				if !b.repo.ClaimCrosspost("max", chatID, claimKey) {
-					slog.Info("skip duplicate crosspost MAX→TG (already claimed)", "maxChannel", chatID, "mid", body.Mid, "tgChat", tgChatID)
+				if !b.claimMaxCrosspost(ctx, tgChatID, chatID, claimKey, msgUpd) {
 					continue
 				}
 				go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption, true)
@@ -2095,6 +2094,10 @@ func (b *Bridge) sendMaxAlbumToTg(ctx context.Context, tgChatID int64, items []m
 // Если isCrosspost=true, caption используется как финальный текст (с заменами, без атрибуции).
 func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageCreatedUpdate, tgChatID int64, caption string, isCrosspost bool) {
 	maxChatID := msgUpd.Message.Recipient.ChatId
+	if isCrosspost && b.maxCrosspostExcluded(ctx, tgChatID, maxChatID, msgUpd) {
+		slog.Info("skip excluded MAX crosspost", "maxChat", maxChatID, "mid", msgUpd.Message.Body.Mid, "tgChat", tgChatID)
+		return
+	}
 	if !isCrosspost && !b.pairDeliverable(ctx, tgChatID, maxChatID) {
 		return
 	}

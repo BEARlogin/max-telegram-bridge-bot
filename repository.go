@@ -19,6 +19,7 @@ type CrosspostReplacements struct {
 	TgToMax                []Replacement `json:"tg>max,omitempty"`
 	MaxToTg                []Replacement `json:"max>tg,omitempty"`
 	TgToMaxExcludeContains []string      `json:"tg>max_exclude_contains,omitempty"`
+	MaxToTgExcludeContains []string      `json:"max>tg_exclude_contains,omitempty"`
 }
 
 // CrosspostLink — одна связка кросспостинга.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -29,11 +30,46 @@ func parseCrosspostReplacements(raw string) CrosspostReplacements {
 
 // marshalCrosspostReplacements сериализует структуру в JSON.
 func marshalCrosspostReplacements(r CrosspostReplacements) string {
-	if len(r.TgToMax) == 0 && len(r.MaxToTg) == 0 && len(r.TgToMaxExcludeContains) == 0 {
+	if len(r.TgToMax) == 0 && len(r.MaxToTg) == 0 && len(r.TgToMaxExcludeContains) == 0 && len(r.MaxToTgExcludeContains) == 0 {
 		return ""
 	}
 	data, _ := json.Marshal(r)
 	return string(data)
+}
+
+func maxCrosspostExcluded(msg *maxschemes.MessageCreatedUpdate, filters []string) bool {
+	if msg == nil {
+		return false
+	}
+	texts := []string{msg.Message.Body.Text}
+	if msg.Message.Link != nil {
+		texts = append(texts, msg.Message.Link.Message.Text)
+	}
+	for _, filter := range filters {
+		for _, text := range texts {
+			if filter != "" && strings.Contains(text, filter) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (b *Bridge) maxCrosspostExcluded(ctx context.Context, tgChatID, maxChatID int64, msg *maxschemes.MessageCreatedUpdate) bool {
+	return b.crosspostProPair(ctx, tgChatID, maxChatID) && maxCrosspostExcluded(msg,
+		b.repo.GetCrosspostReplacementsFor(tgChatID, maxChatID).MaxToTgExcludeContains)
+}
+
+func (b *Bridge) claimMaxCrosspost(ctx context.Context, tgChatID, maxChatID int64, claimKey string, msg *maxschemes.MessageCreatedUpdate) bool {
+	if b.maxCrosspostExcluded(ctx, tgChatID, maxChatID, msg) {
+		slog.Info("skip excluded MAX crosspost", "maxChat", maxChatID, "mid", msg.Message.Body.Mid, "tgChat", tgChatID)
+		return false
+	}
+	if !b.repo.ClaimCrosspost("max", maxChatID, claimKey) {
+		slog.Info("skip duplicate crosspost MAX→TG (already claimed)", "maxChannel", maxChatID, "mid", msg.Message.Body.Mid, "tgChat", tgChatID)
+		return false
+	}
+	return true
 }
 
 func tgCrosspostExcluded(msg *TGMessage, filters []string) bool {
