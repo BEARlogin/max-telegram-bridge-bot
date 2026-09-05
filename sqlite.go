@@ -851,6 +851,12 @@ func (r *sqliteRepo) GetCrosspostReplacements(maxChatID int64) CrosspostReplacem
 	return parseCrosspostReplacements(raw)
 }
 
+func (r *sqliteRepo) GetCrosspostReplacementsFor(tgChatID, maxChatID int64) CrosspostReplacements {
+	var raw string
+	r.db.QueryRow("SELECT replacements FROM crossposts WHERE tg_chat_id = ? AND max_chat_id = ? AND deleted_at = 0", tgChatID, maxChatID).Scan(&raw)
+	return parseCrosspostReplacements(raw)
+}
+
 func (r *sqliteRepo) SetCrosspostReplacements(maxChatID int64, repl CrosspostReplacements) error {
 	data := marshalCrosspostReplacements(repl)
 	r.mu.Lock()

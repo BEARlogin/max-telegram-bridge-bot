@@ -29,11 +29,32 @@ func parseCrosspostReplacements(raw string) CrosspostReplacements {
 
 // marshalCrosspostReplacements сериализует структуру в JSON.
 func marshalCrosspostReplacements(r CrosspostReplacements) string {
-	if len(r.TgToMax) == 0 && len(r.MaxToTg) == 0 {
+	if len(r.TgToMax) == 0 && len(r.MaxToTg) == 0 && len(r.TgToMaxExcludeContains) == 0 {
 		return ""
 	}
 	data, _ := json.Marshal(r)
 	return string(data)
+}
+
+func tgCrosspostExcluded(msg *TGMessage, filters []string) bool {
+	if msg == nil {
+		return false
+	}
+	for _, filter := range filters {
+		if filter != "" && (strings.Contains(msg.Text, filter) || strings.Contains(msg.Caption, filter)) {
+			return true
+		}
+	}
+	return false
+}
+
+func tgCrosspostAlbumExcluded(items []mediaGroupItem, filters []string) bool {
+	for _, item := range items {
+		if tgCrosspostExcluded(item.msg, filters) {
+			return true
+		}
+	}
+	return false
 }
 
 // urlRegex матчит URL в тексте.

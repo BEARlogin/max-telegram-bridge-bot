@@ -16,8 +16,9 @@ type Replacement struct {
 
 // CrosspostReplacements — замены по направлениям.
 type CrosspostReplacements struct {
-	TgToMax []Replacement `json:"tg>max,omitempty"`
-	MaxToTg []Replacement `json:"max>tg,omitempty"`
+	TgToMax                []Replacement `json:"tg>max,omitempty"`
+	MaxToTg                []Replacement `json:"max>tg,omitempty"`
+	TgToMaxExcludeContains []string      `json:"tg>max_exclude_contains,omitempty"`
 }
 
 // CrosspostLink — одна связка кросспостинга.
@@ -173,6 +174,7 @@ type Repository interface {
 	SetCrosspostDirection(maxChatID int64, direction string) bool
 	UnpairCrosspost(maxChatID, deletedBy int64) bool
 	GetCrosspostReplacements(maxChatID int64) CrosspostReplacements
+	GetCrosspostReplacementsFor(tgChatID, maxChatID int64) CrosspostReplacements
 	SetCrosspostReplacements(maxChatID int64, repl CrosspostReplacements) error
 	GetCrosspostSyncEdits(maxChatID int64) bool
 	SetCrosspostSyncEdits(maxChatID int64, on bool) error

@@ -1816,14 +1816,18 @@ func (b *Bridge) publishTgCrosspost(ctx context.Context, msg *TGMessage, maxChat
 func (b *Bridge) publishTgCrosspostWithMode(ctx context.Context, msg *TGMessage, maxChatID int64, includeFooter, manualAlbumFlush bool) {
 	// Замены TG→MAX применяем на уровне (текст+entities) до HTML — чтобы вырезание
 	// видимого текста ссылки убирало и сам text_link. Схлопывание пробелов — после.
-	repl := b.repo.GetCrosspostReplacements(maxChatID)
+	repl := b.repo.GetCrosspostReplacementsFor(msg.Chat.ID, maxChatID)
+	if msg.MediaGroupID == "" && tgCrosspostExcluded(msg, repl.TgToMaxExcludeContains) {
+		slog.Info("skip excluded TG crosspost", "tgChat", msg.Chat.ID, "tgMsg", msg.MessageID, "maxChat", maxChatID)
+		return
+	}
 	caption := formatTgCrosspostCaptionRepl(msg, repl.TgToMax)
 	caption = collapseWhitespace(caption)
 
 	// Footer расширения (раз в N постов). Для альбома — только на непустой части
 	// (сборка альбома берёт caption первой НЕпустой части) и один вызов на альбом:
 	// crosspostFooter инкрементит счётчик постов связки.
-	if includeFooter && (msg.MediaGroupID == "" || caption != "") {
+	if includeFooter && !tgCrosspostExcluded(msg, repl.TgToMaxExcludeContains) && (msg.MediaGroupID == "" || caption != "") {
 		caption += b.crosspostFooter(ctx, maxChatID, "max")
 	}
 
@@ -2152,8 +2156,11 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 		if err != nil {
 			return
 		}
-		b.repo.SetCrosspostReplacements(maxChatID, CrosspostReplacements{})
 		repl := b.repo.GetCrosspostReplacements(maxChatID)
+		repl.TgToMax = nil
+		repl.MaxToTg = nil
+		b.repo.SetCrosspostReplacements(maxChatID, repl)
+		repl = b.repo.GetCrosspostReplacements(maxChatID)
 		kb := tgReplacementsKeyboard(maxChatID)
 		b.tg.EditMessageText(ctx, chatID, msgID, formatReplacementsHeader(repl), &SendOpts{ReplyMarkup: kb})
 		b.tg.AnswerCallback(ctx, query.ID, "Очищено")

@@ -144,6 +144,13 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 			return "", fmt.Errorf("media group: chat is not linked")
 		}
 	}
+	if isCrosspost {
+		filters := b.repo.GetCrosspostReplacementsFor(items[0].msg.Chat.ID, maxChatID).TgToMaxExcludeContains
+		if tgCrosspostAlbumExcluded(items, filters) {
+			slog.Info("skip excluded TG crosspost album", "tgChat", items[0].msg.Chat.ID, "mediaGroup", items[0].msg.MediaGroupID, "maxChat", maxChatID)
+			return "", nil
+		}
+	}
 	// Пауза связки — альбом тоже не пересылаем.
 	if isCrosspost {
 		if b.repo.CrosspostPaused(maxChatID) {
@@ -291,7 +298,7 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 			var cap string
 			if isCrosspost {
 				// Замены на уровне (текст+entities) до HTML, схлопывание — после.
-				repl := b.repo.GetCrosspostReplacements(maxChatID)
+				repl := b.repo.GetCrosspostReplacementsFor(it.msg.Chat.ID, maxChatID)
 				cap = formatTgCrosspostCaptionRepl(it.msg, repl.TgToMax)
 				cap = collapseWhitespace(cap)
 			} else {

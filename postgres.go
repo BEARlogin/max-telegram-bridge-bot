@@ -852,6 +852,12 @@ func (r *pgRepo) GetCrosspostReplacements(maxChatID int64) CrosspostReplacements
 	return parseCrosspostReplacements(raw)
 }
 
+func (r *pgRepo) GetCrosspostReplacementsFor(tgChatID, maxChatID int64) CrosspostReplacements {
+	var raw string
+	r.db.QueryRow("SELECT replacements FROM crossposts WHERE tg_chat_id = $1 AND max_chat_id = $2 AND deleted_at = 0", tgChatID, maxChatID).Scan(&raw)
+	return parseCrosspostReplacements(raw)
+}
+
 func (r *pgRepo) SetCrosspostReplacements(maxChatID int64, repl CrosspostReplacements) error {
 	data := marshalCrosspostReplacements(repl)
 	r.mu.Lock()
