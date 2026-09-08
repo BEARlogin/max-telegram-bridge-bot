@@ -51,6 +51,25 @@ func logLevel() slog.Level {
 	}
 }
 
+func parseTgIgnoredBotIDs(value string) (map[int64]struct{}, error) {
+	ids := make(map[int64]struct{})
+	for _, raw := range strings.Split(value, ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			if err == nil {
+				err = fmt.Errorf("must be positive")
+			}
+			return nil, fmt.Errorf("invalid Telegram bot ID %q: %w", raw, err)
+		}
+		ids[id] = struct{}{}
+	}
+	return ids, nil
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()})))
 
@@ -66,6 +85,16 @@ func main() {
 		TgWebhookURL:          os.Getenv("TG_WEBHOOK_URL"),
 		TgWebhookPort:         envOr("TG_WEBHOOK_PORT", "8444"),
 		TgAPIURL:              os.Getenv("TG_API_URL"),
+	}
+
+	if v := os.Getenv("TG_IGNORED_BOT_IDS"); v != "" {
+		ignoredBotIDs, parseErr := parseTgIgnoredBotIDs(v)
+		if parseErr != nil {
+			slog.Error("Invalid TG_IGNORED_BOT_IDS value", "value", v, "err", parseErr)
+			os.Exit(1)
+		}
+		cfg.TgIgnoredBotIDs = ignoredBotIDs
+		slog.Info("Telegram bot sender ignore list enabled", "count", len(cfg.TgIgnoredBotIDs))
 	}
 
 	// Parse ALLOWED_USERS whitelist

@@ -47,6 +47,9 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				slog.Warn("TG updates channel closed")
 				return
 			}
+			if b.shouldIgnoreTgUpdate(update) {
+				continue
+			}
 
 			if update.BusinessConnection != nil {
 				slog.Info("TG business connection parsed", "user", update.BusinessConnection.UserID, "enabled", update.BusinessConnection.IsEnabled, "canReply", update.BusinessConnection.CanReply)
@@ -1087,6 +1090,29 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			go b.forwardTgToMax(ctx, msg, maxChatID, caption, false, msg.IsAutomaticForward)
 		}
 	}
+}
+
+// shouldIgnoreTgUpdate drops only messages actually authored by a configured
+// Telegram bot. In particular, it does not treat all bots, forwarded bot
+// content, inline-bot results, or channel sender_chat identities as ignored.
+func (b *Bridge) shouldIgnoreTgUpdate(update TGUpdate) bool {
+	for _, msg := range []*TGMessage{
+		update.Message,
+		update.EditedMessage,
+		update.ChannelPost,
+		update.EditedChannelPost,
+		update.BusinessMessage,
+		update.EditedBusinessMessage,
+	} {
+		if msg == nil || msg.From == nil || !msg.From.IsBot {
+			continue
+		}
+		if _, ignored := b.cfg.TgIgnoredBotIDs[msg.From.ID]; ignored {
+			slog.Debug("TG message from configured bot ignored", "bot", msg.From.ID, "chat", msg.Chat.ID, "msg", msg.MessageID)
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Bridge) retainTgPinnedMessage(msg *TGMessage) {

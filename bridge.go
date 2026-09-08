@@ -36,8 +36,11 @@ type Config struct {
 	TgWebhookPort         string  // порт HTTP-сервера для TG webhook (по умолчанию 8444)
 	TgAPIURL              string  // custom TG Bot API URL (если пусто — api.telegram.org)
 	AllowedUsers          []int64 // whitelist TG user IDs (empty = allow all)
-	TgMaxFileSizeMB       int     // max file size TG->MAX in MB (0 = unlimited)
-	MaxMaxFileSizeMB      int     // max file size MAX->TG in MB (0 = unlimited)
+	// TgIgnoredBotIDs — Telegram bot accounts whose authored messages are dropped
+	// at the dispatcher boundary before moderation, admin checks, or routing.
+	TgIgnoredBotIDs  map[int64]struct{}
+	TgMaxFileSizeMB  int // max file size TG->MAX in MB (0 = unlimited)
+	MaxMaxFileSizeMB int // max file size MAX->TG in MB (0 = unlimited)
 	// MaxAllowedExts — whitelist расширений для TG→MAX (nil = не проверять локально).
 	// Если задан, файлы с не-вхождением блокируются до отправки на CDN.
 	MaxAllowedExts map[string]struct{}
