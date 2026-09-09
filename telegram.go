@@ -132,48 +132,29 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 				maxMsgID, hasMapping := b.repo.LookupMaxMsgID(edited.Chat.ID, edited.MessageID)
 
-				// Если маппинг не найден и есть медиа — отправляем как новое сообщение (fallback)
-				if hasMedia && !hasMapping {
-					name := b.pairRelayName(ctx, edited.Chat.ID, maxChatID, b.tgRelayName(edited))
-					caption := formatTgCaptionWithName(edited, name, false, b.cfg.MessageNewline)
-					go b.forwardTgToMax(ctx, edited, maxChatID, caption, false, false)
-					continue
-				}
-
 				if !hasMapping {
+					if hasMedia {
+						slog.Warn("TG→MAX media edit skipped without mapping", "tgChat", edited.Chat.ID, "tgMsg", edited.MessageID)
+					}
 					continue
 				}
 
-				// Правка АЛЬБОМА: в TG редактируется ОДНО сообщение группы, а MAX-альбом — это
-				// одно сообщение с несколькими фото. EditMessage с единственным вложением затирает
-				// остальные (в MAX остаётся 1 фото). Поэтому обновляем только текст, вообще не
-				// отправляя attachments: MAX сохранит старые фото/видео.
-				if edited.MediaGroupID != "" && hasMedia {
+				if hasMedia {
 					rawText := edited.Caption
 					editEntities := edited.CaptionEntities
 					if rawText == "" {
 						rawText = edited.Text
 						editEntities = edited.Entities
 					}
-					if rawText == "" {
-						continue
-					}
 					mdText := tgEntitiesToHTML(rawText, editEntities)
 					name := b.pairRelayName(ctx, edited.Chat.ID, maxChatID, b.tgRelayName(edited))
 					fwd := formatAttributionHTML(name, mdText, b.cfg.MessageNewline)
-					if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, fwd, "html"); err != nil {
-						slog.Error("TG→MAX album caption edit failed", "err", err, "uid", tgUserID(edited), "tgChat", edited.Chat.ID, "maxMsgID", maxMsgID)
-					} else {
-						slog.Info("TG→MAX edited album caption", "mid", maxMsgID, "uid", tgUserID(edited), "tgChat", edited.Chat.ID)
-					}
-					continue
-				}
 
-				if hasMedia {
-					// Edit с медиа — редактируем сообщение в MAX с новым вложением
-					name := b.pairRelayName(ctx, edited.Chat.ID, maxChatID, b.tgRelayName(edited))
-					caption := formatTgCaptionWithName(edited, name, false, b.cfg.MessageNewline)
-					go b.editTgMediaInMax(ctx, edited, maxChatID, maxMsgID, caption)
+					if err := b.editTgMediaCaptionInMax(ctx, edited, maxChatID, maxMsgID, fwd); err != nil {
+						slog.Error("TG→MAX media caption edit failed", "err", err, "uid", tgUserID(edited), "tgChat", edited.Chat.ID, "maxMsgID", maxMsgID)
+					} else {
+						slog.Info("TG→MAX edited media caption", "mid", maxMsgID, "uid", tgUserID(edited), "tgChat", edited.Chat.ID)
+					}
 					continue
 				}
 
@@ -190,9 +171,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				mdText := tgEntitiesToHTML(rawText, editEntities)
 				name := b.pairRelayName(ctx, edited.Chat.ID, maxChatID, b.tgRelayName(edited))
 				fwd := formatAttributionHTML(name, mdText, b.cfg.MessageNewline)
-				m := maxbot.NewMessage().SetChat(maxChatID).SetText(fwd)
-				m.SetFormat("html")
-				if err := b.maxClientFor(ctx, maxChatID).Messages.EditMessage(ctx, maxMsgID, m); err != nil {
+				if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, fwd, "html"); err != nil {
 					slog.Error("TG→MAX edit failed", "err", err, "uid", tgUserID(edited), "tgChat", edited.Chat.ID)
 				} else {
 					slog.Info("TG→MAX edited", "mid", maxMsgID, "uid", tgUserID(edited), "tgChat", edited.Chat.ID)
@@ -1628,19 +1607,17 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID int64, maxMsgID string, caption string) {
 	uid := tgUserID(msg)
 	m := maxbot.NewMessage().SetChat(maxChatID)
-
-	// Конвертируем entities в markdown на сыром тексте (до атрибуции)
-	rawText := msg.Caption
-	editEntities := msg.CaptionEntities
-	if rawText == "" {
-		rawText = msg.Text
-		editEntities = msg.Entities
-	}
-	mdText := tgEntitiesToHTML(rawText, editEntities)
-	name := b.pairRelayName(ctx, msg.Chat.ID, maxChatID, b.tgRelayName(msg))
-	mdCaption := formatAttributionHTML(name, mdText, b.cfg.MessageNewline)
-	m.SetText(mdCaption)
+	m.SetText(caption)
 	m.SetFormat("html")
+	replaced := false
+	defer func() {
+		if replaced {
+			return
+		}
+		if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, caption, "html"); err != nil {
+			slog.Error("TG→MAX media edit text fallback failed", "err", err, "uid", uid, "tgChat", msg.Chat.ID, "maxMsgID", maxMsgID)
+		}
+	}()
 
 	if msg.Photo != nil {
 		photo := msg.Photo[len(msg.Photo)-1]
@@ -1666,7 +1643,7 @@ func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID
 			return
 		}
 	} else if msg.Video != nil {
-		// MAX SDK EditMessage без вложений стирает медиа на стороне MAX. Перезаливаем видео.
+		// Здесь меняется само видео, поэтому передаём новое вложение целиком.
 		name := "video.mp4"
 		if msg.Video.FileName != "" {
 			name = msg.Video.FileName
@@ -1725,6 +1702,8 @@ func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID
 	if err := b.maxClientFor(ctx, maxChatID).Messages.EditMessage(ctx, maxMsgID, m); err != nil {
 		slog.Error("TG→MAX edit media failed", "err", err, "uid", uid, "tgChat", msg.Chat.ID, "maxMsgID", maxMsgID)
 	} else {
+		b.saveTgMediaState(msg)
+		replaced = true
 		slog.Info("TG→MAX edited media", "mid", maxMsgID, "uid", uid, "tgChat", msg.Chat.ID)
 	}
 }
@@ -2334,7 +2313,8 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *TGMessag
 		return
 	}
 
-	if edited.Text == "" && edited.Caption == "" {
+	_, hasMedia := tgMediaStateFromMessage(edited)
+	if edited.Text == "" && edited.Caption == "" && !hasMedia {
 		return
 	}
 
@@ -2344,47 +2324,19 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *TGMessag
 	repl := b.repo.GetCrosspostReplacements(maxChatID)
 	text := formatTgCrosspostCaptionRepl(edited, repl.TgToMax)
 	text = collapseWhitespace(text)
-	if text == "" {
+	if text == "" && !hasMedia {
 		return
 	}
 
-	if currentMedia, hasMedia := tgMediaStateFromMessage(edited); hasMedia {
-		previousMedia, known := b.repo.GetTgMediaState(edited.Chat.ID, edited.MessageID)
-		if !known {
-			b.repo.SaveTgMediaState(edited.Chat.ID, currentMedia)
-		} else if sameTgMediaIdentity(previousMedia, currentMedia) {
-			if previousMedia.Fingerprint != currentMedia.Fingerprint || previousMedia.FileID != currentMedia.FileID {
-				b.repo.SaveTgMediaState(edited.Chat.ID, currentMedia)
-			}
+	if !hasMedia {
+		if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, text, "html"); err != nil {
+			slog.Error("TG→MAX crosspost text edit failed", "err", err)
 		} else {
-			states := []TgMediaState{currentMedia}
-			if edited.MediaGroupID != "" {
-				states = replaceTgMediaState(
-					b.repo.ListTgMediaStates(edited.Chat.ID, maxMsgID),
-					currentMedia,
-				)
-				if err := validateAlbumMediaStates(states, edited.MediaGroupID); err != nil {
-					// Старые альбомы ещё не имеют сохранённого состава. Запоминаем
-					// увиденную часть, но не рискуем затереть остальные вложения.
-					b.repo.SaveTgMediaState(edited.Chat.ID, currentMedia)
-					slog.Warn("TG→MAX album media replacement deferred", "err", err,
-						"tgChat", edited.Chat.ID, "tgMsg", edited.MessageID)
-				} else {
-					go b.editTgCrosspostMediaInMax(ctx, edited, states, maxChatID, maxMsgID, text)
-					return
-				}
-			} else {
-				go b.editTgCrosspostMediaInMax(ctx, edited, states, maxChatID, maxMsgID, text)
-				return
-			}
+			slog.Info("TG→MAX crosspost edited", "mid", maxMsgID)
 		}
+		return
 	}
-
-	// MAX трактует SDK EditMessage без явно добавленных вложений как полную замену
-	// сообщения и удаляет уже опубликованные фото/видео. При правке подписи в
-	// Telegram сами медиа не меняются, поэтому отправляем прямой PUT только с
-	// полями text/format: отсутствие attachments в JSON сохраняет вложения MAX.
-	if err := b.editMaxTextOnly(ctx, maxChatID, maxMsgID, text, "html"); err != nil {
+	if err := b.editTgMediaCaptionInMax(ctx, edited, maxChatID, maxMsgID, text); err != nil {
 		slog.Error("TG→MAX crosspost edit failed", "err", err)
 	} else {
 		slog.Info("TG→MAX crosspost edited", "mid", maxMsgID)

@@ -480,7 +480,7 @@ func (b *Bridge) sendMaxDirect(ctx context.Context, chatID int64, text string, a
 // Sending attachments=[] to MAX edit clears media; omitting it preserves photos/videos.
 func (b *Bridge) editMaxTextOnly(ctx context.Context, chatID int64, maxMsgID, text, format string) error {
 	type msgBody struct {
-		Text   string `json:"text,omitempty"`
+		Text   string `json:"text"`
 		Format string `json:"format,omitempty"`
 	}
 	if text == "" {
@@ -506,6 +506,18 @@ func (b *Bridge) editMaxTextOnly(ctx context.Context, chatID int64, maxMsgID, te
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("MAX API %d: %s", resp.StatusCode, string(respBody))
+	}
+	if len(bytes.TrimSpace(respBody)) > 0 {
+		var result struct {
+			Success *bool  `json:"success"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			return fmt.Errorf("decode MAX edit response: %w", err)
+		}
+		if result.Success != nil && !*result.Success {
+			return fmt.Errorf("MAX edit failed: %s", result.Message)
+		}
 	}
 	b.markChatBot(chatID, sendTok)
 	return nil

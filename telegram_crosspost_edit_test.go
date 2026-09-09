@@ -88,6 +88,77 @@ func TestTgCrosspostCaptionEditSeedsUnknownMediaAndPreservesMaxAttachments(t *te
 	}
 }
 
+func TestTgCrosspostTextEditAndMediaCaptionClearUseTextOnlyPut(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  TGMessage
+		seed *TgMediaState
+		want string
+	}{
+		{
+			name: "plain text channel post",
+			msg:  TGMessage{Text: "Исправленный текст"},
+			want: `"text":"Исправленный текст"`,
+		},
+		{
+			name: "clear media caption",
+			msg:  TGMessage{Photo: []PhotoSize{{FileID: "photo-1"}}},
+			seed: &TgMediaState{Kind: "photo", FileID: "photo-1", Fingerprint: "photo:photo-1"},
+			want: `"text":""`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := testRepo(t)
+			const (
+				tgChatID  = int64(-100111)
+				maxChatID = int64(-200222)
+				tgMsgID   = 88
+				maxMsgID  = "mid-edit"
+			)
+			if err := repo.PairCrosspost(tgChatID, maxChatID, 11, 22); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.SetCrosspostSyncEdits(maxChatID, true); err != nil {
+				t.Fatal(err)
+			}
+			repo.SaveMsgOrigin(tgChatID, tgMsgID, maxChatID, maxMsgID, 0, "tg")
+			if tt.seed != nil {
+				state := *tt.seed
+				state.TgMsgID = tgMsgID
+				repo.SaveTgMediaState(tgChatID, state)
+			}
+
+			var requestBody []byte
+			requests := 0
+			bridge := &Bridge{
+				repo: repo,
+				apiClient: &http.Client{Transport: crosspostEditRoundTripper(func(req *http.Request) (*http.Response, error) {
+					requests++
+					var err error
+					requestBody, err = io.ReadAll(req.Body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil)), Header: make(http.Header)}, nil
+				})},
+				maxBotCache: make(map[int64]string),
+			}
+			msg := tt.msg
+			msg.MessageID = tgMsgID
+			msg.Chat = ChatInfo{ID: tgChatID, Type: "channel"}
+			bridge.handleTgEditedChannelPost(bridge.withMaxToken(context.Background(), "test-token"), &msg)
+
+			if requests != 1 || !bytes.Contains(requestBody, []byte(tt.want)) {
+				t.Fatalf("requests=%d body=%s", requests, requestBody)
+			}
+			if bytes.Contains(requestBody, []byte("attachments")) {
+				t.Fatalf("text-only edit included attachments: %s", requestBody)
+			}
+		})
+	}
+}
+
 func TestTgMediaStateDetectsReplacementAndRebuildsAlbum(t *testing.T) {
 	before, ok := tgMediaStateFromMessage(&TGMessage{
 		MessageID: 10, MediaGroupID: "album-1",
@@ -132,8 +203,13 @@ func TestTgMediaIdentityUsesStableUniqueID(t *testing.T) {
 	}
 	legacy := previous
 	legacy.Fingerprint = legacy.Kind + ":" + legacy.FileID
-	if !sameTgMediaIdentity(legacy, current) {
-		t.Fatalf("legacy media was not accepted for one-time fingerprint upgrade: legacy=%+v current=%+v", legacy, current)
+	if sameTgMediaIdentity(legacy, current) {
+		t.Fatalf("legacy media with changed file ID was treated as unchanged: legacy=%+v current=%+v", legacy, current)
+	}
+	legacyCurrent := current
+	legacyCurrent.FileID = legacy.FileID
+	if !sameTgMediaIdentity(legacy, legacyCurrent) {
+		t.Fatalf("legacy media with the same file ID was not upgraded: legacy=%+v current=%+v", legacy, legacyCurrent)
 	}
 	replacement := current
 	replacement.Fingerprint = "video:u:another-video"
@@ -142,26 +218,135 @@ func TestTgMediaIdentityUsesStableUniqueID(t *testing.T) {
 	}
 }
 
-func TestTgMediaEditFailureFallsBackToText(t *testing.T) {
-	var requestBody []byte
+func TestTgMediaEditFailureDoesNotImplicitlyFallBackToText(t *testing.T) {
+	requests := 0
 	bridge := &Bridge{
 		cfg: Config{MaxToken: "test-token"},
 		apiClient: &http.Client{Transport: crosspostEditRoundTripper(func(req *http.Request) (*http.Response, error) {
-			var err error
-			requestBody, err = io.ReadAll(req.Body)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requests++
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil)), Header: make(http.Header)}, nil
 		})},
 		maxBotCache: make(map[int64]string),
 	}
-	bridge.editTgCrosspostMediaInMax(context.Background(),
+	err := bridge.editTgCrosspostMediaInMax(context.Background(),
 		&TGMessage{Chat: ChatInfo{ID: -1001}},
 		[]TgMediaState{{Kind: "unsupported", FileID: "file"}},
 		-2002, "mid", "Исправленная подпись")
-	if !bytes.Contains(requestBody, []byte(`"text":"Исправленная подпись"`)) || bytes.Contains(requestBody, []byte("attachments")) {
-		t.Fatalf("fallback body=%s", requestBody)
+	if err == nil {
+		t.Fatal("unsupported rebuild unexpectedly succeeded")
+	}
+	if requests != 0 {
+		t.Fatalf("failure issued %d unsafe fallback requests", requests)
+	}
+}
+
+func seedTwoPhotoAlbum(t *testing.T, repo Repository, tgChatID int64, maxMsgID string) {
+	t.Helper()
+	for i, fileID := range []string{"photo-1", "photo-2"} {
+		msgID := i + 1
+		repo.SaveMsgOrigin(tgChatID, msgID, -2002, maxMsgID, 0, "tg")
+		repo.SaveTgMediaState(tgChatID, TgMediaState{
+			TgMsgID: msgID, MediaGroupID: "album", Kind: "photo",
+			FileID: fileID, Fingerprint: "photo:" + fileID,
+		})
+	}
+}
+
+func TestOrdinaryAlbumURLCaptionEditPlansCompleteAttachmentRebuild(t *testing.T) {
+	repo := testRepo(t)
+	const tgChatID = int64(-100901)
+	seedTwoPhotoAlbum(t, repo, tgChatID, "mid-album")
+	b := &Bridge{repo: repo}
+
+	plan, err := b.planTgMediaEdit(&TGMessage{
+		MessageID: 1, MediaGroupID: "album", Chat: ChatInfo{ID: tgChatID, Type: "group"},
+		Caption: "Новая подпись https://example.com/page",
+		Photo:   []PhotoSize{{FileID: "photo-1"}},
+	}, "mid-album", "Новая подпись https://example.com/page")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.rebuild || len(plan.states) != 2 {
+		t.Fatalf("plan=%+v", plan)
+	}
+	if plan.states[0].FileID != "photo-1" || plan.states[1].FileID != "photo-2" {
+		t.Fatalf("states=%+v", plan.states)
+	}
+}
+
+func TestCrosspostReplacementIntroducingURLPlansCompleteAttachmentRebuild(t *testing.T) {
+	repo := testRepo(t)
+	const tgChatID = int64(-100905)
+	seedTwoPhotoAlbum(t, repo, tgChatID, "mid-album")
+	b := &Bridge{repo: repo}
+
+	plan, err := b.planTgMediaEdit(&TGMessage{
+		MessageID: 1, MediaGroupID: "album", Chat: ChatInfo{ID: tgChatID, Type: "channel"},
+		Caption: "Подпись без ссылки PLACEHOLDER",
+		Photo:   []PhotoSize{{FileID: "photo-1"}},
+	}, "mid-album", "Подпись без ссылки https://example.com/from-replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.rebuild || len(plan.states) != 2 {
+		t.Fatalf("plan=%+v", plan)
+	}
+}
+
+func TestOrdinaryAlbumCaptionEditWithoutURLPlansTextOnlyPut(t *testing.T) {
+	repo := testRepo(t)
+	const tgChatID = int64(-100902)
+	seedTwoPhotoAlbum(t, repo, tgChatID, "mid-album")
+	b := &Bridge{repo: repo}
+
+	plan, err := b.planTgMediaEdit(&TGMessage{
+		MessageID: 1, MediaGroupID: "album", Chat: ChatInfo{ID: tgChatID, Type: "group"},
+		Caption: "Обычная исправленная подпись",
+		Photo:   []PhotoSize{{FileID: "photo-1"}},
+	}, "mid-album", "Обычная исправленная подпись")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.rebuild || len(plan.states) != 0 {
+		t.Fatalf("plan=%+v, want raw text-only PUT", plan)
+	}
+}
+
+func TestOrdinaryAlbumMediaReplacementPlansCompleteAttachmentRebuild(t *testing.T) {
+	repo := testRepo(t)
+	const tgChatID = int64(-100903)
+	seedTwoPhotoAlbum(t, repo, tgChatID, "mid-album")
+	b := &Bridge{repo: repo}
+
+	plan, err := b.planTgMediaEdit(&TGMessage{
+		MessageID: 1, MediaGroupID: "album", Chat: ChatInfo{ID: tgChatID, Type: "group"},
+		Caption: "Без ссылки",
+		Photo:   []PhotoSize{{FileID: "photo-replaced"}},
+	}, "mid-album", "Без ссылки")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.rebuild || len(plan.states) != 2 {
+		t.Fatalf("plan=%+v", plan)
+	}
+	if plan.states[0].FileID != "photo-replaced" || plan.states[1].FileID != "photo-2" {
+		t.Fatalf("states=%+v", plan.states)
+	}
+}
+
+func TestIncompleteAlbumURLCaptionEditIsRejected(t *testing.T) {
+	repo := testRepo(t)
+	const tgChatID = int64(-100904)
+	repo.SaveMsgOrigin(tgChatID, 1, -2002, "mid-album", 0, "tg")
+	b := &Bridge{repo: repo}
+
+	plan, err := b.planTgMediaEdit(&TGMessage{
+		MessageID: 1, MediaGroupID: "album", Chat: ChatInfo{ID: tgChatID, Type: "group"},
+		Caption: "https://example.com/page",
+		Photo:   []PhotoSize{{FileID: "photo-1"}},
+	}, "mid-album", "https://example.com/page")
+	if err == nil || plan.rebuild {
+		t.Fatalf("plan=%+v err=%v, want safe rejection", plan, err)
 	}
 }
 
