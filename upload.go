@@ -188,7 +188,14 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	// 2. Загружаем файл на CDN (multipart). Тело собираем во ВРЕМЕННОМ ФАЙЛЕ, а не в
 	// памяти: видео бывают сотни МБ, полная буферизация в RAM валила процесс по OOM.
 	// Заодно ограничиваем размер и число параллельных заливок (mediaUpSem).
-	mediaUpSem <- struct{}{}
+	// Ждём слот только пока жив ctx: выше он получил дедлайн maxUploadTimeout,
+	// поэтому ожидание слота ограничено тем же сроком, что и сама загрузка, и
+	// зависший вызывающий не держит глобальный семафор вечно.
+	select {
+	case mediaUpSem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	defer func() { <-mediaUpSem }()
 
 	tmp, err := os.CreateTemp("", "maxup-*")

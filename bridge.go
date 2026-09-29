@@ -120,6 +120,11 @@ type Bridge struct {
 	mgMu      sync.Mutex
 	mgBuffers map[string]*mediaGroupBuffer // MediaGroupID → buffer
 
+	// Очереди доставки: внутри чата и направления — порядок получения, между
+	// чатами — параллельно. Мьютекс на чат порядок не даёт: он не FIFO, а
+	// горутины стартуют в случайном порядке, поэтому нужна именно очередь.
+	lanes *laneDispatcher
+
 	// Опциональный аддон-расширение. Подключается через build-tag,
 	// в публичной сборке всегда nil.
 	addon Addon
@@ -170,6 +175,7 @@ func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api, max
 		queueDestInFlight:  make(map[string]struct{}),
 		queueMediaInFlight: make(map[int64]struct{}),
 		mgBuffers:          make(map[string]*mediaGroupBuffer),
+		lanes:              newLaneDispatcher(nil),
 		maxBotCache:        make(map[int64]string),
 		maxSeenMid:         make(map[string]int64),
 	}

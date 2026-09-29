@@ -1248,7 +1248,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if !strings.HasPrefix(text, "[TG]") && !strings.HasPrefix(text, "[MAX]") {
 					caption := formatMaxCaptionWithName(msgUpd, b.maxRelayName(msgUpd), false, b.cfg.MessageNewline)
 					if threadLinked {
-						go b.forwardMaxToTg(ctx, msgUpd, threadTg, caption, false)
+						b.submitMaxToTg(ctx, msgUpd, threadTg, caption, false)
 					} else {
 						// Несколько TG-групп → одна MAX-группа: обратку (MAX→TG) шлём
 						// в каждую пару, чьё направление разрешает max>tg (both/max>tg).
@@ -1259,7 +1259,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 							if !b.pairDirectionAllows(ctx, tgChatID, chatID, "max>tg") {
 								continue
 							}
-							go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption, false)
+							b.submitMaxToTg(ctx, msgUpd, tgChatID, caption, false)
 						}
 					}
 				}
@@ -1303,7 +1303,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if !b.claimMaxCrosspost(ctx, tgChatID, chatID, claimKey, msgUpd) {
 					continue
 				}
-				go b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption, true)
+				b.submitMaxToTg(ctx, msgUpd, tgChatID, caption, true)
 			}
 		}
 	}
@@ -2090,6 +2090,15 @@ func (b *Bridge) sendMaxAlbumToTg(ctx context.Context, tgChatID int64, items []m
 	return msgs, nil
 }
 
+// submitMaxToTg ставит доставку в очередь TG-чата назначения: сообщения одного
+// чата уходят по одному, в порядке получения, а разные чаты идут параллельно.
+// Замыкание несёт ctx апдейта — в нём лежит токен бота-источника (дуал-бот).
+func (b *Bridge) submitMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageCreatedUpdate, tgChatID int64, caption string, isCrosspost bool) {
+	b.lanes.Submit(laneMaxToTg(tgChatID), func() {
+		b.forwardMaxToTg(ctx, msgUpd, tgChatID, caption, isCrosspost)
+	})
+}
+
 // maxToTgRetryAttempts — сколько раз доставка MAX→TG повторяется изнутри себя
 // (миграция TG-чата в супергруппу, сброшенный тред). Один повтор: он исправляет
 // разовое расхождение состояния, а не транзиентную ошибку сети — та уходит в очередь.
@@ -2462,7 +2471,10 @@ func (b *Bridge) forwardMaxToTgAttempt(ctx context.Context, msgUpd *maxschemes.M
 			if err := b.repo.MigrateTgChat(tgChatID, newChatID); err != nil {
 				slog.Error("MigrateTgChat failed", "err", err)
 			} else if attempt < maxToTgRetryAttempts {
-				// Повторяем отправку с новым ID
+				// Повторяем отправку с новым ID. Повтор идёт в очереди СТАРОГО чата
+				// и с очередью нового не синхронизирован: это разовое событие
+				// (группа стала супергруппой), дальше все сообщения приходят уже
+				// с новым ID и встают в его очередь.
 				b.forwardMaxToTgAttempt(ctx, msgUpd, newChatID, caption, isCrosspost, attempt+1)
 			} else {
 				slog.Warn("MAX→TG giving up after retry", "reason", "chat migrated",

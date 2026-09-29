@@ -1040,35 +1040,44 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				continue
 			}
 
-			// Media group (альбом) — буферизуем и отправляем вместе
-			if msg.MediaGroupID != "" {
-				videoID := ""
-				if msg.Video != nil {
-					videoID = msg.Video.FileID
-				}
-				documentID, documentName := tgMediaGroupDocument(msg)
-				go b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
-					photoSizes:     msg.Photo,
-					videoFileID:    videoID,
-					documentFileID: documentID,
-					documentName:   documentName,
-					caption:        caption,
-					replyToMsg:     msg.ReplyToMessage,
-					entities:       msg.CaptionEntities,
-					msg:            msg,
-					// Передаём уже резолвнутый maxChatID (в т.ч. thread-bridge): иначе flush
-					// перерезолвит через GetMaxChat (вся группа) и дропнет альбом для связок,
-					// где связан ТОЛЬКО тред (pairs пуст, есть только thread_pairs).
-					maxChatID: maxChatID,
-				})
-				continue
-			}
-
-			// Пост канала в группе обсуждения — доверенный контент канала, а не
-			// пользовательское сообщение. Его нельзя отправлять в relay-антиспам.
-			go b.forwardTgToMax(ctx, msg, maxChatID, caption, false, msg.IsAutomaticForward)
+			b.routeTgMessageToMax(ctx, msg, maxChatID, caption)
 		}
 	}
+}
+
+// routeTgMessageToMax отправляет сообщение в очередь его MAX-чата. Буферизация
+// альбома идёт СИНХРОННО, в порядке получения частей: своя горутина на часть
+// перемешивала бы их внутри буфера, и альбом уходил в MAX вперемешку.
+func (b *Bridge) routeTgMessageToMax(ctx context.Context, msg *TGMessage, maxChatID int64, caption string) {
+	// Media group (альбом) — буферизуем и отправляем вместе
+	if msg.MediaGroupID != "" {
+		videoID := ""
+		if msg.Video != nil {
+			videoID = msg.Video.FileID
+		}
+		documentID, documentName := tgMediaGroupDocument(msg)
+		b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
+			photoSizes:     msg.Photo,
+			videoFileID:    videoID,
+			documentFileID: documentID,
+			documentName:   documentName,
+			caption:        caption,
+			replyToMsg:     msg.ReplyToMessage,
+			entities:       msg.CaptionEntities,
+			msg:            msg,
+			// Передаём уже резолвнутый maxChatID (в т.ч. thread-bridge): иначе flush
+			// перерезолвит через GetMaxChat (вся группа) и дропнет альбом для связок,
+			// где связан ТОЛЬКО тред (pairs пуст, есть только thread_pairs).
+			maxChatID: maxChatID,
+		})
+		return
+	}
+
+	// Пост канала в группе обсуждения — доверенный контент канала, а не
+	// пользовательское сообщение. Его нельзя отправлять в relay-антиспам.
+	b.lanes.Submit(laneTgToMax(maxChatID), func() {
+		b.forwardTgToMax(ctx, msg, maxChatID, caption, false, msg.IsAutomaticForward)
+	})
 }
 
 // shouldIgnoreTgUpdate drops only messages actually authored by a configured
@@ -1785,7 +1794,15 @@ func (b *Bridge) dispatchTgCrossposts(ctx context.Context, msg *TGMessage) bool 
 			slog.Info("skip duplicate crosspost TG→MAX (already claimed)", "tgChannel", msg.Chat.ID, "tgMsg", msg.MessageID, "maxChat", maxChatID)
 			continue
 		}
-		go b.publishTgCrosspost(ctx, msg, maxChatID, true)
+		if msg.MediaGroupID != "" {
+			// Часть альбома: буфер сам ставит задачу сброса, и она должна занять
+			// место ПЕРВОЙ части. Поэтому вызов синхронный, не через Submit.
+			b.publishTgCrosspost(ctx, msg, maxChatID, true)
+		} else {
+			b.lanes.Submit(laneTgToMax(maxChatID), func() {
+				b.publishTgCrosspost(ctx, msg, maxChatID, true)
+			})
+		}
 	}
 	return true
 }
