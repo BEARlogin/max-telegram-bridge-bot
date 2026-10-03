@@ -29,11 +29,12 @@ type tgBotSender struct {
 
 const tgUpdatesBuffer = 4096
 
-// enqueueUpdate never silently drops an update. Telegram can deliver a burst much
-// faster than the bridge's ordered dispatcher can consume it (especially while a
-// moderation/API call is in flight). The bot library invokes handlers in separate
-// goroutines, so applying backpressure here is safe: the handler waits for room or
-// stops with the application context instead of losing a message/command forever.
+// enqueueUpdate никогда не теряет апдейт молча. Telegram отдаёт всплеск быстрее,
+// чем мост успевает его разобрать (особенно пока идёт загрузка медиа). Обработчик
+// вызывается синхронно (WithNotAsyncHandlers), поэтому ожидание здесь тормозит
+// приём: непрочитанные апдейты копятся в канале библиотеки (1024) и в буфере
+// s.updates, а не пропадают. Остановленный приём безопаснее потерянного
+// сообщения или команды.
 func (s *tgBotSender) enqueueUpdate(ctx context.Context, update TGUpdate) {
 	select {
 	case s.updates <- update:
@@ -57,6 +58,11 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 		// короткий контекст для текста и длинный для медиа, поэтому транспортный
 		// timeout должен позволять тяжёлому запросу завершиться.
 		bot.WithHTTPClient(25*time.Second, httpClient),
+		// Обработчик вызывается в горутине опроса, а не в своей на каждое
+		// обновление: иначе библиотека стартует их через `go r(ctx, b, upd)`
+		// и порядок сообщений теряется ещё до моста. Обработчик только кладёт
+		// апдейт в s.updates, поэтому опрос он практически не задерживает.
+		bot.WithNotAsyncHandlers(),
 		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			tgu := convertUpdate(update)
 			s.enqueueUpdate(ctx, tgu)

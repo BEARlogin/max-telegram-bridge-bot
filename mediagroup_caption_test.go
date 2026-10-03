@@ -21,9 +21,10 @@ func TestCrosspostMediaGroupBuffersAreIsolatedPerDestination(t *testing.T) {
 		msg: msg, crosspost: true, maxChatID: -2002, caption: "второй",
 	})
 
+	var keys []string
 	b.mgMu.Lock()
-	defer b.mgMu.Unlock()
 	if len(b.mgBuffers) != 2 {
+		b.mgMu.Unlock()
 		t.Fatalf("crosspost album buffers=%d want 2", len(b.mgBuffers))
 	}
 	for key, buf := range b.mgBuffers {
@@ -31,7 +32,18 @@ func TestCrosspostMediaGroupBuffersAreIsolatedPerDestination(t *testing.T) {
 			buf.timer.Stop()
 		}
 		if len(buf.items) != 1 {
+			b.mgMu.Unlock()
 			t.Fatalf("buffer %q items=%d want 1", key, len(buf.items))
+		}
+		keys = append(keys, key)
+	}
+	b.mgMu.Unlock()
+
+	// Оба буфера отсоединяем: иначе задачи их очередей останутся ждать сборки
+	// альбома до конца тестового процесса.
+	for _, key := range keys {
+		if _, _, err := b.detachMediaGroup(key, 0); err != nil {
+			t.Fatalf("detach %q: %v", key, err)
 		}
 	}
 }

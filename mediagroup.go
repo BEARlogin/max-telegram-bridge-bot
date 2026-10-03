@@ -35,6 +35,20 @@ type mediaGroupBuffer struct {
 	timer       *time.Timer
 	manualFlush bool
 	generation  uint64
+	// ready закрывается, когда альбом собран (истёк таймер) либо его отсоединили
+	// явным flush. Задача очереди ждёт этот канал, поэтому альбом занимает в
+	// очереди место своей ПЕРВОЙ части, а не момента сборки.
+	ready       chan struct{}
+	readyClosed bool
+}
+
+// closeMediaGroupReady закрывается один раз; вызывать под mgMu.
+func closeMediaGroupReady(buf *mediaGroupBuffer) {
+	if buf == nil || buf.ready == nil || buf.readyClosed {
+		return
+	}
+	buf.readyClosed = true
+	close(buf.ready)
 }
 
 // bufferMediaGroup добавляет сообщение в буфер альбома.
@@ -65,6 +79,9 @@ func (b *Bridge) bufferMediaGroupMode(ctx context.Context, groupID string, item 
 	buf, ok := b.mgBuffers[bufferID]
 	if !ok {
 		buf = &mediaGroupBuffer{manualFlush: manual}
+		if !manual {
+			buf.ready = make(chan struct{})
+		}
 		b.mgBuffers[bufferID] = buf
 	}
 
@@ -72,6 +89,15 @@ func (b *Bridge) bufferMediaGroupMode(ctx context.Context, groupID string, item 
 	buf.generation++
 	if buf.manualFlush {
 		return
+	}
+
+	if !ok {
+		// Место в очереди занимает первая часть альбома: задача уже стоит, пока
+		// остальные части только подтягиваются. Submit под mgMu безопасен —
+		// lanes.mu листовой, других замков под ним не берут.
+		b.lanes.Submit(laneTgToMax(item.maxChatID), func() {
+			b.deliverBufferedMediaGroup(ctx, bufferID, buf)
+		})
 	}
 
 	// Каждый элемент получает новый timer generation. Stop/Reset недостаточно:
@@ -83,8 +109,71 @@ func (b *Bridge) bufferMediaGroupMode(ctx context.Context, groupID string, item 
 	}
 	generation := buf.generation
 	buf.timer = time.AfterFunc(mediaGroupTimeout, func() {
-		_, _ = b.flushMediaGroupGeneration(ctx, bufferID, generation)
+		b.signalMediaGroupReady(bufferID, buf, generation)
 	})
+}
+
+// signalMediaGroupReady сообщает задаче очереди, что альбом собран. Отправляет не
+// таймер, а задача: у неё занято место в очереди своего чата. Сверка указателя и
+// поколения защищает от старого таймера — у нового буфера с тем же id поколение
+// снова начинается с 1.
+func (b *Bridge) signalMediaGroupReady(groupID string, buf *mediaGroupBuffer, expectedGeneration uint64) {
+	b.mgMu.Lock()
+	defer b.mgMu.Unlock()
+	if b.mgBuffers[groupID] != buf {
+		return
+	}
+	if expectedGeneration != 0 && buf.generation != expectedGeneration {
+		return
+	}
+	closeMediaGroupReady(buf)
+}
+
+// deliverBufferedMediaGroup ждёт сборку своего альбома и отправляет его. Буфер
+// отсоединяется ПО УКАЗАТЕЛЮ: если его уже забрал явный flush или новый буфер
+// занял тот же id, задача выходит без ошибки.
+func (b *Bridge) deliverBufferedMediaGroup(ctx context.Context, groupID string, buf *mediaGroupBuffer) {
+	select {
+	case <-buf.ready:
+	case <-ctx.Done():
+		// Раньше отказ уходил в запасной путь; теперь части не должны исчезать молча.
+		b.mgMu.Lock()
+		parts := 0
+		if b.mgBuffers[groupID] == buf {
+			parts = len(buf.items)
+			delete(b.mgBuffers, groupID)
+			if buf.timer != nil {
+				buf.timer.Stop()
+			}
+			closeMediaGroupReady(buf)
+		}
+		b.mgMu.Unlock()
+		if parts > 0 {
+			slog.Warn("media group dropped on shutdown", "groupID", groupID, "parts", parts)
+		}
+		return
+	}
+
+	if !b.detachOwnedMediaGroup(groupID, buf) {
+		return
+	}
+	if _, err := b.sendMediaGroup(ctx, groupID, buf); err != nil {
+		slog.Error("media group delivery failed", "err", err, "groupID", groupID)
+	}
+}
+
+// detachOwnedMediaGroup убирает из карты именно этот буфер (а не любой с тем же id).
+func (b *Bridge) detachOwnedMediaGroup(groupID string, buf *mediaGroupBuffer) bool {
+	b.mgMu.Lock()
+	defer b.mgMu.Unlock()
+	if b.mgBuffers[groupID] != buf {
+		return false
+	}
+	delete(b.mgBuffers, groupID)
+	if buf.timer != nil {
+		buf.timer.Stop()
+	}
+	return true
 }
 
 // flushMediaGroup отправляет все накопленные фото/видео альбома одним сообщением в MAX.
@@ -93,7 +182,13 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) (string, e
 }
 
 // detachMediaGroup атомарно отсоединяет готовый буфер. expectedGeneration=0
-// означает явный flush; timer flush проходит только для актуального поколения.
+// означает явный flush; ненулевое поколение отсоединяет буфер только пока в него
+// не добавили новую часть.
+//
+// Живой поток TG→MAX ходит сюда только с нулевым поколением: собранность буфера
+// сторожит ready, а отсоединяет его задача очереди по указателю. Сверка поколения
+// остаётся для flushMediaGroupGeneration (её зовёт сборка с аддоном) и для тестов,
+// которые этой сверкой охраняют защиту от устаревшего таймера.
 func (b *Bridge) detachMediaGroup(groupID string, expectedGeneration uint64) (*mediaGroupBuffer, bool, error) {
 	b.mgMu.Lock()
 	defer b.mgMu.Unlock()
@@ -108,6 +203,9 @@ func (b *Bridge) detachMediaGroup(groupID string, expectedGeneration uint64) (*m
 	if buf.timer != nil {
 		buf.timer.Stop()
 	}
+	// Задача очереди, если она ещё ждёт этот буфер, должна освободить место: буфер
+	// у неё уже забрали, отправит его тот, кто вызвал явный flush.
+	closeMediaGroupReady(buf)
 	return buf, true, nil
 }
 
@@ -119,6 +217,11 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 	if !detached {
 		return "", nil
 	}
+	return b.sendMediaGroup(ctx, groupID, buf)
+}
+
+// sendMediaGroup отправляет УЖЕ отсоединённый буфер альбома в MAX.
+func (b *Bridge) sendMediaGroup(ctx context.Context, groupID string, buf *mediaGroupBuffer) (string, error) {
 	items := buf.items
 	manualFlush := buf.manualFlush
 	if len(items) == 0 {
@@ -305,7 +408,10 @@ func (b *Bridge) flushMediaGroupGeneration(ctx context.Context, groupID string, 
 				name := b.pairRelayName(ctx, it.msg.Chat.ID, maxChatID, b.tgRelayName(it.msg))
 				cap = formatTgCaptionWithName(it.msg, name, false, b.cfg.MessageNewline)
 			}
-			go b.forwardTgToMax(ctx, it.msg, maxChatID, cap, isCrosspost, false)
+			// Прямой последовательный вызов, без go и без Submit: задача альбома
+			// сейчас и есть текущая задача очереди этого чата — через Submit
+			// запасной путь встал бы в очередь за самим собой.
+			b.forwardTgToMax(ctx, it.msg, maxChatID, cap, isCrosspost, false)
 		}
 		return "", err
 	}
