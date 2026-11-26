@@ -1,0 +1,1 @@
+ALTER TABLE pairs ADD COLUMN service_messages TEXT NOT NULL DEFAULT '';

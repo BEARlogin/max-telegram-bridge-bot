@@ -29,6 +29,20 @@ type tgBotSender struct {
 
 const tgUpdatesBuffer = 4096
 
+func telegramAllowedUpdates() []string {
+	return []string{
+		models.AllowedUpdateMessage, // includes new_chat_members and left_chat_member
+		models.AllowedUpdateEditedMessage,
+		models.AllowedUpdateChannelPost,
+		models.AllowedUpdateEditedChannelPost,
+		models.AllowedUpdateCallbackQuery,
+		models.AllowedUpdateBusinessConnection,
+		models.AllowedUpdateBusinessMessage,
+		models.AllowedUpdateEditedBusinessMessage,
+		models.AllowedUpdateDeletedBusinessMessages,
+	}
+}
+
 // enqueueUpdate never silently drops an update. Telegram can deliver a burst much
 // faster than the bridge's ordered dispatcher can consume it (especially while a
 // moderation/API call is in flight). The bot library invokes handlers in separate
@@ -52,6 +66,7 @@ func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, er
 	}
 
 	opts := []bot.Option{
+		bot.WithAllowedUpdates(bot.AllowedUpdates(telegramAllowedUpdates())),
 		// Загрузка фото/видео через отдельный Telegram Bot API server под
 		// нагрузкой регулярно занимает больше 30 секунд. Очередь сама задаёт
 		// короткий контекст для текста и длинный для медиа, поэтому транспортный
@@ -131,18 +146,8 @@ func (s *tgBotSender) StartWebhook(ctx context.Context, path string) <-chan TGUp
 
 func (s *tgBotSender) SetWebhook(ctx context.Context, url string) error {
 	_, err := s.b.SetWebhook(ctx, &bot.SetWebhookParams{
-		URL: url,
-		AllowedUpdates: []string{
-			models.AllowedUpdateMessage,
-			models.AllowedUpdateEditedMessage,
-			models.AllowedUpdateChannelPost,
-			models.AllowedUpdateEditedChannelPost,
-			models.AllowedUpdateCallbackQuery,
-			models.AllowedUpdateBusinessConnection,
-			models.AllowedUpdateBusinessMessage,
-			models.AllowedUpdateEditedBusinessMessage,
-			models.AllowedUpdateDeletedBusinessMessages,
-		},
+		URL:            url,
+		AllowedUpdates: telegramAllowedUpdates(),
 	})
 	return wrapErr(err)
 }

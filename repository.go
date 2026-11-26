@@ -182,6 +182,7 @@ type Repository interface {
 
 	// Пауза связок (временно не пересылаем, не удаляя)
 	PairPaused(tgChatID, maxChatID int64) bool
+	PairServiceMessages(tgChatID, maxChatID int64) ServiceMessageSettings
 	SetPairPaused(tgChatID, maxChatID int64, paused bool) error
 	CrosspostPaused(maxChatID int64) bool
 	SetCrosspostPaused(maxChatID int64, paused bool) error

@@ -882,6 +882,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 							b.memberJoined(ctx, "tg", msg.Chat.ID, nm.ID, strings.TrimSpace(nm.FirstName+" "+nm.LastName), nm.UserName, nm.IsBot)
 						}
 					}
+					go b.relayTgServiceMessage(ctx, msg)
 					// Удаление служебного «вошёл», если включено владельцем (после капчи/рейда).
 					if b.delServiceMsgs("tg", msg.Chat.ID) {
 						b.tg.DeleteMessage(ctx, msg.Chat.ID, msg.MessageID)
@@ -896,6 +897,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					// 90с-свипа, а пользователя уже нет в чате).
 					if msg.LeftChatMember != nil {
 						b.memberLeft(ctx, "tg", msg.Chat.ID, msg.LeftChatMember.ID)
+						go b.relayTgServiceMessage(ctx, msg)
 					}
 					if b.delServiceMsgs("tg", msg.Chat.ID) {
 						b.tg.DeleteMessage(ctx, msg.Chat.ID, msg.MessageID)

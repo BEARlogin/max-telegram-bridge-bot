@@ -110,6 +110,14 @@ func (b *Bridge) noteBotChatMax(ctx context.Context, chatID int64, chatType stri
 	b.repo.RecordBotChat("max", chatID, title, chatType)
 }
 
+func maxWebhookUpdateTypes() []string {
+	return []string{
+		"message_created", "message_edited", "message_removed",
+		"message_callback", "bot_added", "bot_removed",
+		"user_added", "user_removed", "chat_title_changed", "bot_started",
+	}
+}
+
 func (b *Bridge) listenMax(ctx context.Context) {
 	var updates <-chan maxschemes.UpdateInterface
 	var oldUpdates <-chan maxschemes.UpdateInterface // вебхук старого бота (дуал); nil иначе
@@ -120,12 +128,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 		ch := make(chan maxschemes.UpdateInterface, 100)
 		commentProbe := newMaxCommentProbe(b.cfg.MaxCommentProbeMarker)
 		http.HandleFunc(whPath, commentProbe.Wrap(b.maxApi.GetHandler(ch)))
-		updateTypes := []string{
-			"message_created", "message_edited", "message_removed",
-			"message_callback", "bot_added", "bot_removed",
-			"user_added", "user_removed", "chat_title_changed",
-			"bot_started", // кнопка «Начать» в MAX — иначе бот молчит на старте
-		}
+		updateTypes := maxWebhookUpdateTypes()
 		if commentProbe.Enabled() {
 			// Пустой update_types просит MAX присылать все доступные события. Это
 			// нужно только на короткое окно PoC: отдельное имя события комментария
@@ -250,6 +253,12 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					name = strings.TrimSpace(add.User.FirstName + " " + add.User.LastName)
 				}
 				b.memberJoined(ctx, "max", add.ChatId, add.User.UserId, name, add.User.Username, add.User.IsBot)
+				go b.relayMaxServiceMessage(ctx, serviceMemberJoined, add.ChatId, int64(add.Timestamp), add.User, add.InviterId)
+				continue
+			}
+			if removed, ok := upd.(*maxschemes.UserRemovedFromChatUpdate); ok {
+				b.memberLeft(ctx, "max", removed.ChatId, removed.User.UserId)
+				go b.relayMaxServiceMessage(ctx, serviceMemberLeft, removed.ChatId, int64(removed.Timestamp), removed.User, removed.AdminId)
 				continue
 			}
 
