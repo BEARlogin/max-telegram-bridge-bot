@@ -344,6 +344,26 @@ func TestMaxServiceRelayFanoutThreadTypesAndSelf(t *testing.T) {
 	}
 }
 
+func TestMaxServiceRelayDoesNotBorrowAnotherGroupsTopic(t *testing.T) {
+	repo := testRepo(t)
+	insertPair(t, repo, -101, -201, 42)
+	setServiceSettings(t, repo, -101, -201, `{"enabled":true,"types":["member_joined"]}`)
+	if err := repo.SetTgThreadID(-101, 15); err != nil {
+		t.Fatal(err)
+	}
+	// A legacy/imported thread route can share a MAX source with an ordinary
+	// pair. Its topic ID is meaningful only within its own Telegram group.
+	if _, err := repo.db.Exec(`INSERT INTO thread_pairs(tg_chat_id,tg_thread_id,max_chat_id,created_at) VALUES(-102,77,-201,0)`); err != nil {
+		t.Fatal(err)
+	}
+	tg := &serviceTGSender{}
+	b := &Bridge{repo: repo, tg: tg}
+	b.relayMaxServiceMessage(context.Background(), serviceMemberJoined, -201, 100, maxschemes.User{UserId: 7}, 0)
+	if len(tg.sends) != 1 || tg.sends[0].chat != -101 || tg.sends[0].opts.ThreadID != 15 {
+		t.Fatalf("notification used another group's topic: %+v", tg.sends)
+	}
+}
+
 func TestMaxSDKMembershipWebhookAndPolling(t *testing.T) {
 	for _, transport := range []string{"webhook", "polling"} {
 		t.Run(transport, func(t *testing.T) {

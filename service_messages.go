@@ -157,7 +157,7 @@ func (b *Bridge) relayMaxServiceMessage(ctx context.Context, kind string, chatID
 			continue
 		}
 		threadID := b.repo.GetTgThreadID(tgChatID)
-		if _, tid, ok := b.repo.GetThreadTgPair(chatID); ok {
+		if threadChat, tid, ok := b.repo.GetThreadTgPair(chatID); ok && threadChat == tgChatID {
 			threadID = tid
 		}
 		if _, err := b.tg.SendMessage(ctx, tgChatID, text, &SendOpts{ThreadID: threadID}); err != nil {

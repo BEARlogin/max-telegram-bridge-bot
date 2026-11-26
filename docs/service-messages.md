@@ -68,3 +68,16 @@ HTTP servers. They prove the local API contract and behavior, not real delivery
 or the actual permissions of any deployed bot. A release must verify the active
 schema/migration sequence and build with the deployment's optional extensions.
 No production subscriptions or chats need to be changed for these local tests.
+
+Migration `000039_service_messages` adds the setting. This source lineage jumps
+from 26 to 39 intentionally; migration numbers need not be contiguous. A bundle
+integrated with another supported source lineage must retain that lineage's
+existing migrations as well. Renumbering this file alone does not make a bundle
+compatible with a database whose recorded version is absent from its source.
+The migration engine validates the current version before applying later files.
+
+For a data-preserving application rollback, keep both the added column and the
+recorded migration version, and use a compatible previous application build
+that includes migration 39 but ignores the setting. An unmodified older binary
+can reject the newer migration version at startup. The down migration removes
+the setting and is not a data-preserving application rollback.
